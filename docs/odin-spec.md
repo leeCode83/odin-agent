@@ -170,7 +170,53 @@ Wallet-based login, bukan email/password:
 
 Configurable — semua aset yang listed di Hyperliquid bisa masuk watchlist user. Kategori aset (major/L1, DeFi, meme, dst) menentukan due diligence pipeline mana yang jalan.
 
-## 12. Autonomy Gating Logic
+## 12. Kategorisasi Aset
+
+Kategori menentukan sub-analisa mana yang aktif di Due Diligence Agent (§4.1) dan bobot tiap faktor di confidence scoring.
+
+### 12.1 Daftar Kategori
+
+| Kategori | Contoh | DD Aktif | Bobot Khusus |
+|---|---|---|---|
+| `major` | BTC, ETH | technical, onchain, sentiment, fundamental | Onchain + technical leading, fundamental = macro |
+| `layer1` | SOL, SUI, AVAX | technical, onchain, sentiment, fundamental | Fundamental = ekosistem, TVL, dev activity |
+| `defi` | UNI, AAVE, LINK | technical, onchain, sentiment, fundamental | Fundamental = protocol revenue, tokenomics |
+| `meme` | DOGE, PEPE, WIF | technical, onchain, sentiment | **Skip fundamental.** Berat ke sentiment + onchain |
+
+### 12.2 Fallback
+
+Aset yang belum dikategorikan di-mapping — gunakan `major` sebagai default (full pipeline, safe: better over-analyze than skip).
+
+### 12.3 Implementasi
+
+Disimpan sebagai kode (bukan file config terpisah) di module `lib/asset-categories.ts`:
+
+```ts
+type CategoryConfig = {
+  activeSections: ("technical" | "onchain" | "sentiment" | "fundamental")[];
+};
+
+const CATEGORIES: Record<string, CategoryConfig> = {
+  major:  { activeSections: ["technical", "onchain", "sentiment", "fundamental"] },
+  layer1: { activeSections: ["technical", "onchain", "sentiment", "fundamental"] },
+  defi:   { activeSections: ["technical", "onchain", "sentiment", "fundamental"] },
+  meme:   { activeSections: ["technical", "onchain", "sentiment"] },
+};
+
+const ASSET_CATEGORY: Record<string, string> = {
+  BTC: "major", ETH: "major",
+  SOL: "layer1", SUI: "layer1", AVAX: "layer1",
+  UNI: "defi", AAVE: "defi", LINK: "defi",
+  DOGE: "meme", PEPE: "meme", WIF: "meme",
+};
+
+export function getCategory(asset: string): CategoryConfig {
+  const category = ASSET_CATEGORY[asset] ?? "major";
+  return CATEGORIES[category];
+}
+```
+
+## 13. Autonomy Gating Logic
 
 ```
 IF confidence_score >= threshold_confidence
@@ -181,7 +227,7 @@ ELSE push to dashboard for user approval
 
 Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user.
 
-## 13. LLM Model per Agent (DeepSeek)
+## 14. LLM Model per Agent (DeepSeek)
 
 > ⚠️ Alias lama `deepseek-chat` / `deepseek-reasoner` **retired 24 Juli 2026**. Pakai nama model baru: `deepseek-v4-flash` (non-thinking/thinking mode) atau `deepseek-v4-pro`.
 
@@ -191,7 +237,7 @@ Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user
 | Planning & Decision Agent | `deepseek-v4-flash` (thinking mode) / `deepseek-v4-pro` | Butuh reasoning terdalam — thesis, confidence score, position sizing. |
 | Execution Agent | `deepseek-v4-flash` (non-thinking) | Kerjaan deterministic (construct order, handle SDK response/error), gak butuh reasoning berat. |
 
-## 14. Flow End-to-End User
+## 15. Flow End-to-End User
 
 1. **Landing** → user buka dashboard, connect wallet (wagmi/RainbowKit).
 2. **Onboarding** → user deposit USDC ke Hyperliquid (bridge dari Arbitrum).
@@ -203,7 +249,7 @@ Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user
 8. **Monitoring** → posisi terbuka dipantau agent (SL/TP, funding cost), history & P&L kelihatan di dashboard.
 9. **Withdraw** → user withdraw dana kapan saja langsung dari Hyperliquid, gak lewat agent.
 
-## 15. Background Execution (Browser Independence)
+## 16. Background Execution (Browser Independence)
 
 Agent **harus** jalan server-side, bukan bergantung ke browser kebuka. Next.js App Router gak punya persistent background process bawaan, jadi butuh scheduler terpisah:
 
@@ -212,7 +258,7 @@ Agent **harus** jalan server-side, bukan bergantung ke browser kebuka. Next.js A
 
 Dashboard cuma jendela buat lihat & approve, bukan yang "menjalankan" agent.
 
-## 16. Tech Stack
+## 17. Tech Stack
 
 - **Frontend + Backend**: Next.js 16 (dashboard + API routes/server actions buat orchestrate 3 agent)
 - **Wallet connect**: wagmi (+ viem)
@@ -222,14 +268,14 @@ Dashboard cuma jendela buat lihat & approve, bukan yang "menjalankan" agent.
 - **Auth**: SIWE + JWT session
 - **Venue**: Hyperliquid perpetual futures (testnet dulu buat dev/demo)
 
-## 17. Scope MVP vs Stretch (Hackathon Timeline)
+## 18. Scope MVP vs Stretch (Hackathon Timeline)
 
 - **MVP**: 3 agent jalan end-to-end di testnet, due diligence basic (technical+onchain dulu, sentiment+fundamental kalau waktu cukup), dashboard approval simpel, graph memory basic record+query.
 - **Stretch**: fundamental analysis penuh, Telegram notifikasi, multi-asset paralel monitoring, backtesting dashboard.
 
 ---
 
-## 18. Resources & Dokumentasi
+## 19. Resources & Dokumentasi
 
 | Kategori | Resource | Link |
 |---|---|---|
