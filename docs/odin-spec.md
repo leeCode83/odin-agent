@@ -1,0 +1,255 @@
+# Odin — AI Agent Trading System (Hyperliquid Perpetual Futures)
+
+> Single source of truth untuk project Odin. Hackathon track: **Finance & Commerce**.
+
+---
+
+## 1. Latar Belakang & Problem Statement
+
+Mayoritas retail trader futures kripto rugi. Riset akademik nunjukin 68%–97% retail trader berakhir dengan modal lebih kecil dari awal, dan data spesifik futures market nunjukin 97% trader yang aktif lebih dari 300 hari akhirnya rugi, cuma 0.4% yang untung signifikan. Di crypto leverage khususnya, studi lain sebut angka serupa — sekitar 80–95% margin trader rugi.
+
+**Akar masalah:**
+1. **Leverage gak ampun** — pergerakan kecil bisa liquidate posisi.
+2. **Market 24/7** — gak mungkin dipantau manusia terus-menerus.
+3. **Riset multi-faktor makan waktu & expertise** — due diligence yang bener (technical + onchain + sentiment + fundamental) itu kerjaan level institutional/fund.
+4. **Emosi** — FOMO, revenge trade, overleverage.
+
+**Gap di solusi AI trading agent yang ada sekarang:** polarized antara full-autonomous (blackbox, gak dipercaya user buat taruh dana) atau manual/co-pilot (approval tiap trade, balik lagi ke masalah manusia gak bisa monitor 24/7 & gampang emosi approve). Kompetisi "Human vs AI" nunjukin ini nyata: 43% trader manusia kena liquidated sementara 30 AI agent semuanya survive, dengan ROI -4.48% (AI) vs -32.22% (manusia).
+
+## 2. Solusi
+
+Odin adalah AI agent trading dengan **confidence-gated autonomy**: melakukan due diligence komprehensif (technical + onchain + sentiment + fundamental) kayak tim analis, lalu eksekusi otonom **hanya** kalau confidence tinggi DAN dana di bawah threshold. Kalau confidence rendah atau dana besar, minta approval user.
+
+Beda dari existing player (Kora, Singularry, Neyro, Bankr) yang pakai static mode selection (user pilih Autopilot vs Co-Pilot di awal) — Odin melakukan **dynamic/adaptive autonomy gating per-trade**, bukan per-mode. Agent sendiri yang memutuskan tiap kali mau auto-execute atau minta izin, berdasarkan confidence score aktual dari analisisnya.
+
+## 3. Nama Project
+
+**Odin** — dipilih oleh user.
+
+## 4. Arsitektur — 3 Agent
+
+```
+[Market Data + News + Onchain Data]
+            │
+            ▼
+   ① Due Diligence Agent
+   (technical + onchain + sentiment + fundamental,
+    pipeline menyesuaikan kategori aset)
+            │
+            ▼  research summary (structured JSON)
+   ② Planning & Decision Agent
+   (rancang plan: entry/size/SL-TP/leverage,
+    hitung confidence score,
+    query Graph Memory buat historical pattern,
+    cek terhadap threshold dana)
+            │
+      ┌─────┴─────┐
+ confidence tinggi   confidence rendah /
+ + dana < limit      dana > limit
+      │                    │
+      ▼                    ▼
+③ Execution Agent    Dashboard (approval UI)
+(place order ke              │
+Hyperliquid,          user approve/reject
+monitor fill)                │
+      │                      ▼
+      └──────► ③ Execution Agent (kalau approved)
+            │
+            ▼
+   Record ke Graph Memory (ArangoDB)
+   (decision + reasoning + outcome)
+```
+
+### 4.1 Due Diligence Agent
+- Input: asset dari watchlist user.
+- Kategorisasi aset (major/L1, DeFi token, meme coin, dst) menentukan sub-analisa mana yang relevan (contoh: meme coin skip fundamental, berat ke sentiment+onchain).
+- 4 faktor analisa: **technical**, **onchain**, **sentiment**, **fundamental**.
+- Output: DD Report berformat JSON standar (lihat §7).
+
+### 4.2 Planning & Decision Agent
+- Terima DD Report.
+- Query Graph Memory (ArangoDB) buat cari pola/keputusan historis yang mirip.
+- Rancang trade plan (entry, position size, SL/TP, leverage).
+- Hitung confidence score.
+- Bandingkan terhadap threshold dana & threshold confidence user → gate keputusan.
+- Metodologi detail: lihat §6.
+
+### 4.3 Execution Agent
+- Eksekusi trade plan via `@nktkas/hyperliquid` SDK.
+- Monitor order fill & posisi terbuka.
+- Tulis hasil eksekusi (outcome) balik ke Graph Memory setelah posisi closed.
+
+#### 4.3.1 Order Placement — Exchange-Side Execution (bukan agent polling)
+
+Prinsip utama: begitu plan dieksekusi, **entry + TP + SL semua "dititip" ke Hyperliquid**, dieksekusi oleh exchange itu sendiri — agent gak perlu mantengin harga terus-menerus buat nge-trigger close posisi.
+
+1. **Entry** — pasang **limit order** biasa, resting di on-chain orderbook (HyperCore). Nunggu match sesuai price-time priority.
+2. **TP/SL** — begitu entry fill, pasang **trigger order** (stop-market/stop-limit buat SL, take-profit market/limit buat TP) dengan flag **`reduceOnly: true`** (cuma boleh mengecilkan/menutup posisi, gak bisa flip/buka posisi baru). Trigger dievaluasi terhadap **mark price** (bukan last trade price) — lebih tahan terhadap wick/flash spike palsu. Eksekusi trigger dilakukan exchange, bukan agent.
+3. **Grouping (OCO-style)** — TP dan SL di-pasang sebagai satu paket order via field `grouping` (`"normalTpsl"` / `"positionTpsl"`). Begitu salah satu ke-trigger, order satunya otomatis di-cancel oleh exchange. Gak ada race condition dua order jalan bareng.
+
+Konsekuensi desain: Execution Agent **tidak perlu polling harga secara terus-menerus** untuk mengeksekusi TP/SL — itu tanggung jawab exchange. Agent cukup event-driven untuk hal-hal lain (lihat 4.3.2).
+
+#### 4.3.2 Monitoring (Event-Driven, bukan Polling)
+
+- **Fill/order status** — subscribe ke **WebSocket** (`SubscriptionClient` — channel `orderUpdates`/`userEvents`) buat tau kapan entry/TP/SL ke-fill, dipakai buat update Graph Memory (outcome record). Event-driven, bukan polling loop.
+- **Thesis re-evaluation** (opsional, stretch) — kalau kondisi market berubah signifikan sebelum TP/SL kena (fundamental shift, funding rate meledak), agent bisa punya opsi re-evaluate & adjust/cancel order manual.
+- **Funding rate monitoring** — posisi perpetual bayar/terima funding tiap periode, di-track buat akurasi P&L di dashboard.
+
+#### 4.3.3 Known Limitation
+
+Trigger order (TP/SL) tersimpan & dieksekusi di sisi Hyperliquid. Kalau platform Hyperliquid mengalami downtime, trigger order yang sudah dipasang **tidak akan tereksekusi** sampai platform kembali normal — ini risiko di level exchange, bukan cacat desain agent, tapi perlu didokumentasikan sebagai known limitation/disclaimer ke user.
+
+## 5. Wallet & Custody Model
+
+Odin non-custodial, pakai konsep **Hyperliquid API Wallet (Agent Wallet)**:
+
+- User deposit USDC ke akun Hyperliquid miliknya sendiri (via main wallet, bridge dari Arbitrum) — dana tetap di kontrol user.
+- User approve satu **Agent Wallet** terpisah dengan permission terbatas: **cuma bisa trade, TIDAK bisa withdraw**.
+- Private key Agent Wallet disimpan encrypted di server, dipakai Execution Agent buat sign order atas nama akun user.
+- User bisa **revoke approval kapan saja** langsung dari Hyperliquid app — agent langsung kehilangan akses.
+- Withdraw dana dilakukan user langsung dari Hyperliquid (native), agent sama sekali gak punya akses withdraw.
+
+## 6. Metodologi Planning & Decision (Hybrid)
+
+Bukan pure-LLM decision — kombinasi reasoning + kode deterministic:
+
+1. **LLM reasoning (thinking mode)** — synthesize DD Report jadi trading thesis (arah, alasan, risk factor).
+2. **Structured confidence scoring** — rubric eksplisit di prompt (alignment antar 4 faktor, historical pattern match dari Graph Memory, kekuatan sinyal) → LLM keluarkan confidence 0–100 dengan breakdown alasan per komponen.
+3. **Self-consistency check** — reasoning dijalankan 2–3x (temperature rendah); hasil konsisten → confidence naik, hasil beda-beda → confidence turun otomatis (proxy uncertainty).
+4. **Deterministic risk engine** (kode biasa, bukan LLM) — hitung position size pakai fixed-fractional risk model (risk maks 1–2% equity per trade), tentukan SL/TP dari volatility (ATR-based).
+5. **Gate logic** (kode biasa) — bandingkan confidence & position size ke threshold user → auto-execute atau push approval ke dashboard.
+
+Prinsip: LLM buat "mikir" (thesis & confidence), kode deterministic buat "hitung risiko" (position size, SL/TP) — biar angka penting gak murni hasil LLM hallucination.
+
+## 7. Format DD Report (Standardized)
+
+```json
+{
+  "asset": "BTC",
+  "category": "major",
+  "timestamp": "2026-07-16T10:00:00Z",
+  "sections": {
+    "technical": { "score": 72, "summary": "...", "signals": ["RSI oversold", "..."] },
+    "onchain": { "score": 65, "summary": "...", "signals": ["funding rate negatif", "..."] },
+    "sentiment": { "score": 58, "summary": "...", "sources": ["..."] },
+    "fundamental": { "score": null, "summary": "N/A untuk kategori major", "note": "..." }
+  },
+  "aggregated_thesis": "...",
+  "confidence_score": 78,
+  "risk_flags": ["high funding cost", "..."]
+}
+```
+
+`category` menentukan section mana yang aktif per aset. Format konsisten ini juga dipakai buat konversi deterministic ke Graph Memory (lihat §8).
+
+## 8. Graph Memory (ArangoDB)
+
+- **Node**: `Asset`, `Category`, `Signal`, `Decision`, `Outcome`.
+- **Edge**: `Decision -[ANALYZED]-> Asset`, `Decision -[TRIGGERED_BY]-> Signal`, `Decision -[RESULTED_IN]-> Outcome`, `Asset -[BELONGS_TO]-> Category`.
+- Karena Decision object sudah structured JSON, konversi ke graph adalah **deterministic mapping** (bukan butuh LLM lagi) — mapper function insert node/edge via `arangojs` di step terakhir Execution Agent (setelah posisi closed).
+- Planning Agent query graph ini buat cari: "pola sinyal X di kategori aset Y historically berujung outcome apa?" — jadi semacam explainable memory, bukan cuma blackbox confidence number.
+
+## 9. Database Strategy
+
+**Satu instance ArangoDB (multi-model), gak perlu SQL terpisah:**
+
+- **Document collections** (data flat/relational-like): `users` (wallet address, profile), `agent_wallets` (encrypted private key), `watchlist_config`, `risk_thresholds`, `sessions`.
+- **Graph collections**: `decisions`, `signals`, `outcomes`, `assets` + edge collections (§8).
+
+Kapan baru butuh SQL beneran (Postgres dkk): kalau nanti production-scale dan butuh strict ACID transactional integrity (ledger keuangan, reconciliation dana) atau tooling ekosistem lebih matang (ORM/migration). Untuk scope hackathon/portfolio project, ArangoDB cukup.
+
+## 10. Auth
+
+Wallet-based login, bukan email/password:
+
+- **SIWE (Sign-In With Ethereum)** buat verifikasi wallet ownership.
+- Session token JWT.
+- User profile disimpan di collection `users` (ArangoDB), keyed by wallet address.
+
+## 11. Asset Scope
+
+Configurable — semua aset yang listed di Hyperliquid bisa masuk watchlist user. Kategori aset (major/L1, DeFi, meme, dst) menentukan due diligence pipeline mana yang jalan.
+
+## 12. Autonomy Gating Logic
+
+```
+IF confidence_score >= threshold_confidence
+   AND position_size <= threshold_fund
+THEN auto-execute
+ELSE push to dashboard for user approval
+```
+
+Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user.
+
+## 13. LLM Model per Agent (DeepSeek)
+
+> ⚠️ Alias lama `deepseek-chat` / `deepseek-reasoner` **retired 24 Juli 2026**. Pakai nama model baru: `deepseek-v4-flash` (non-thinking/thinking mode) atau `deepseek-v4-pro`.
+
+| Agent | Model | Alasan |
+|---|---|---|
+| Due Diligence Agent | `deepseek-v4-flash` (non-thinking) | Ekstraksi & summarize data, gak butuh deep reasoning, murah & cepat, throughput tinggi (banyak aset di-scan). |
+| Planning & Decision Agent | `deepseek-v4-flash` (thinking mode) / `deepseek-v4-pro` | Butuh reasoning terdalam — thesis, confidence score, position sizing. |
+| Execution Agent | `deepseek-v4-flash` (non-thinking) | Kerjaan deterministic (construct order, handle SDK response/error), gak butuh reasoning berat. |
+
+## 14. Flow End-to-End User
+
+1. **Landing** → user buka dashboard, connect wallet (wagmi/RainbowKit).
+2. **Onboarding** → user deposit USDC ke Hyperliquid (bridge dari Arbitrum).
+3. **Approve Agent Wallet** → user approve API Wallet dengan permission terbatas (trade-only, no withdraw).
+4. **Setup config** → pilih watchlist aset, set threshold confidence & threshold dana per trade.
+5. **Agent jalan background** → scheduler jalanin DD Agent → Planning Agent tiap interval/trigger, untuk tiap aset di watchlist.
+6. **Notifikasi** → auto-execute langsung jalan + muncul di log dashboard; kalau butuh approval, muncul card "Pending Approval" dengan DD report + plan.
+7. **User approve/reject** kapan saja buka dashboard (gak harus real-time).
+8. **Monitoring** → posisi terbuka dipantau agent (SL/TP, funding cost), history & P&L kelihatan di dashboard.
+9. **Withdraw** → user withdraw dana kapan saja langsung dari Hyperliquid, gak lewat agent.
+
+## 15. Background Execution (Browser Independence)
+
+Agent **harus** jalan server-side, bukan bergantung ke browser kebuka. Next.js App Router gak punya persistent background process bawaan, jadi butuh scheduler terpisah:
+
+- **Vercel Cron Jobs** (kalau deploy di Vercel) — trigger endpoint tiap interval.
+- Atau self-host: **node-cron** / **BullMQ** (queue) jalan di server terpisah, trigger agent pipeline independen dari browser session.
+
+Dashboard cuma jendela buat lihat & approve, bukan yang "menjalankan" agent.
+
+## 16. Tech Stack
+
+- **Frontend + Backend**: Next.js 16 (dashboard + API routes/server actions buat orchestrate 3 agent)
+- **Wallet connect**: wagmi (+ viem)
+- **Execution**: `@nktkas/hyperliquid` SDK (TypeScript)
+- **Memory/DB**: ArangoDB (multi-model: document + graph), driver `arangojs`
+- **LLM**: DeepSeek API (`deepseek-v4-flash`, `deepseek-v4-pro`)
+- **Auth**: SIWE + JWT session
+- **Venue**: Hyperliquid perpetual futures (testnet dulu buat dev/demo)
+
+## 17. Scope MVP vs Stretch (Hackathon Timeline)
+
+- **MVP**: 3 agent jalan end-to-end di testnet, due diligence basic (technical+onchain dulu, sentiment+fundamental kalau waktu cukup), dashboard approval simpel, graph memory basic record+query.
+- **Stretch**: fundamental analysis penuh, Telegram notifikasi, multi-asset paralel monitoring, backtesting dashboard.
+
+---
+
+## 18. Resources & Dokumentasi
+
+| Kategori | Resource | Link |
+|---|---|---|
+| Hyperliquid | Dokumentasi API resmi | https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api |
+| Hyperliquid | Agent Wallet / Approve API Wallet | https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/exchange-endpoint#approve-an-api-wallet |
+| Hyperliquid | TypeScript SDK — `@nktkas/hyperliquid` (GitHub) | https://github.com/nktkas/hyperliquid |
+| Hyperliquid | TypeScript SDK — dokumentasi lengkap | https://nktkas.gitbook.io/hyperliquid |
+| Hyperliquid | TypeScript SDK — npm package | https://www.npmjs.com/package/@nktkas/hyperliquid |
+| Hyperliquid | Python SDK (referensi, opsional) | https://github.com/hyperliquid-dex/hyperliquid-python-sdk |
+| Next.js | Dokumentasi resmi Next.js | https://nextjs.org/docs |
+| wagmi | Dokumentasi resmi wagmi | https://wagmi.sh |
+| viem | Dokumentasi resmi viem | https://viem.sh |
+| SIWE | Sign-In With Ethereum spec & docs | https://docs.login.xyz |
+| ArangoDB | Dokumentasi resmi ArangoDB | https://docs.arangodb.com |
+| ArangoDB | JavaScript driver — `arangojs` (GitHub) | https://github.com/arangodb/arangojs |
+| ArangoDB | `arangojs` — npm package | https://www.npmjs.com/package/arangojs |
+| ArangoDB | AQL (query language) reference | https://docs.arangodb.com/stable/aql/ |
+| DeepSeek | Dokumentasi resmi API & pricing | https://api-docs.deepseek.com/quick_start/pricing/ |
+| DeepSeek | List models | https://api-docs.deepseek.com/api/list-models/ |
+
+---
+
+*Dokumen ini adalah single source of truth untuk project Odin. Update dokumen ini setiap ada keputusan arsitektur baru.*
