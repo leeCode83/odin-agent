@@ -1,0 +1,61 @@
+{
+    "report": {
+        "asset": "BTC",
+        "category": "major",
+        "timestamp": "2026-07-16T13:14:59.243Z",
+        "sections": {
+            "technical": {
+                "score": 45,
+                "summary": "The asset is showing short-term weakness after a failed bounce, with price trading near key support levels. Volume spikes indicate potential accumulation but overall trend remains uncertain.",
+                "signals": [
+                    "Price testing support near 64000",
+                    "Bearish momentum from 24h decline",
+                    "High volume bounce from lows suggests possible reversal",
+                    "Resistance at 65000 remains intact"
+                ]
+            },
+            "onchain": {
+                "score": 55,
+                "summary": "The market exhibits neutral sentiment with a negligible positive funding rate, indicating a balanced long-short ratio. No premium between mark and oracle prices suggests no arbitrage pressure. Open interest and volume are moderate, reflecting steady trading activity without extreme positioning.",
+                "signals": [
+                    "Low funding rate near zero",
+                    "No premium between mark and oracle",
+                    "Moderate open interest",
+                    "Low 24h volume relative to open interest",
+                    "No OI cap reached"
+                ]
+            },
+            "sentiment": {
+                "score": 25,
+                "summary": "The market is in a state of Extreme Fear, indicating high bearish sentiment. Despite being the top trending asset, fear dominates investor behavior, suggesting potential panic selling or low confidence. This low score typically signals a possible buying opportunity for contrarian investors.",
+                "signals": [
+                    "Extreme Fear",
+                    "High Trending Rank",
+                    "Bearish Sentiment"
+                ]
+            },
+            "fundamental": {
+                "score": 88,
+                "summary": "Bitcoin, the first decentralized cryptocurrency, maintains strong fundamentals with a fixed supply of 21 million and increasing institutional adoption via spot ETFs and corporate treasuries. Despite being 49% below its all-time high, its network security and deflationary design position it as a leading digital store of value. Ongoing ecosystem developments like Ordinals and BTCFi expand Bitcoin's utility beyond simple transactions.",
+                "signals": [
+                    "Fixed 21M supply with programmatic halvings",
+                    "Growing institutional adoption (ETFs, corporate treasuries)",
+                    "Decentralized and secure Proof of Work network",
+                    "Expanding utility with Ordinals and BTCFi"
+                ]
+            }
+        },
+        "aggregated_thesis": "Bitcoin exhibits a dichotomy: strong long-term fundamentals (fixed supply, institutional adoption) but short-term technical weakness and extreme fear sentiment. On-chain metrics show neutrality, suggesting no extreme positioning. This combination often precedes a reversal, but the near-term trend remains uncertain. Overall, a cautiously optimistic view with key support levels to watch.",
+        "confidence_score": 55,
+        "risk_flags": [
+            "Technical breakdown below $64,000 support",
+            "Prolonged bearish sentiment",
+            "Low trading volume reducing liquidity"
+        ]
+    },
+    "timing": {
+        "fetchMs": 903,
+        "llmMs": 15432,
+        "totalMs": 16335
+    }
+}
