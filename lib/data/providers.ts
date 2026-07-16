@@ -1,13 +1,14 @@
 import { fetchAllHLData } from "@/lib/data/hyperliquid"
-import { fetchPrice, fetchMetadata, fetchTrending } from "@/lib/data/coingecko"
+import { fetchMetadata, fetchTrending } from "@/lib/data/coingecko"
 import { fetchFearGreedIndex } from "@/lib/data/sentiment"
 import { getCoinGeckoId } from "@/lib/asset-categories"
 import type { CategoryConfig } from "@/lib/asset-categories"
+import type { CandleData } from "@/lib/data/types"
 
 interface RawFactorTechnical {
-  candles1h: any[]
-  candles15m: any[]
-  candles1d: any[]
+  candles1h: CandleData[]
+  candles15m: CandleData[]
+  candles1d: CandleData[]
   currentPrice: number
   priceChange24h: number
 }
@@ -38,7 +39,7 @@ interface RawFactorFundamental {
   description: string | null
 }
 
-interface RawFactorData {
+export interface RawFactorData {
   technical: RawFactorTechnical | null
   onchain: RawFactorOnchain | null
   sentiment: RawFactorSentiment | null
@@ -53,10 +54,6 @@ export async function fetchAllRawData(asset: string, category: CategoryConfig): 
     ? fetchAllHLData(asset).catch(() => null)
     : Promise.resolve(null)
 
-  const pricePromise = cgId && (active.has("technical") || active.has("fundamental"))
-    ? fetchPrice(cgId)
-    : Promise.resolve(null)
-
   const metadataPromise = cgId && active.has("fundamental")
     ? fetchMetadata(cgId)
     : Promise.resolve(null)
@@ -69,8 +66,8 @@ export async function fetchAllRawData(asset: string, category: CategoryConfig): 
     ? fetchFearGreedIndex()
     : Promise.resolve(null)
 
-  const [hlData, priceData, metadataData, trendingData, fgData] = await Promise.all([
-    hlPromise, pricePromise, metadataPromise, trendingPromise, fgPromise,
+  const [hlData, metadataData, trendingData, fgData] = await Promise.all([
+    hlPromise, metadataPromise, trendingPromise, fgPromise,
   ])
 
   return {

@@ -17,6 +17,7 @@ vi.mock("@/lib/agent/llm", () => ({
 
 import { getCategory, getCategoryName } from "@/lib/asset-categories"
 import { fetchAllRawData } from "@/lib/data/providers"
+import type { RawFactorData } from "@/lib/data/providers"
 import { analyzeSection, synthesizeSections } from "@/lib/agent/llm"
 
 const MOCK_SECTION = { score: 70, summary: "bullish", signals: ["signal"] }
@@ -32,7 +33,7 @@ describe("runDDPipeline", () => {
       onchain: MOCK_SECTION,
       sentiment: null,
       fundamental: null,
-    } as any)
+    } as unknown as RawFactorData)
     vi.mocked(analyzeSection).mockResolvedValue(MOCK_SECTION)
     vi.mocked(synthesizeSections).mockResolvedValue(MOCK_SYNTHESIS)
   })

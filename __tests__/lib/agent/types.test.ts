@@ -71,7 +71,8 @@ describe("DDReportSchema", () => {
   })
 
   it("rejects report with missing asset", () => {
-    const { asset, ...noAsset } = validReport
+    const noAsset = { ...validReport }
+    delete (noAsset as Record<string, unknown>).asset
     expect(() => DDReportSchema.parse(noAsset)).toThrow()
   })
 
@@ -81,7 +82,8 @@ describe("DDReportSchema", () => {
   })
 
   it("accepts report without errors field (optional)", () => {
-    const { errors, ...noErrors } = validReport
+    const noErrors = { ...validReport }
+    delete (noErrors as Record<string, unknown>).errors
     const result = DDReportSchema.parse(noErrors)
     expect(result.asset).toBe("BTC")
   })

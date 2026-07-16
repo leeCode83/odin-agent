@@ -63,9 +63,9 @@ export default function Home() {
       {result ? (
         <div className="bg-zinc-50 border rounded p-4 w-full max-w-2xl">
           <p className="text-zinc-500 text-xs mb-2">
-            fetch: {(result as Record<string, any>).timing?.fetchMs}ms &middot;
-            llm: {(result as Record<string, any>).timing?.llmMs}ms &middot;
-            total: {(result as Record<string, any>).timing?.totalMs}ms
+            fetch: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.fetchMs}ms &middot;
+            llm: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.llmMs}ms &middot;
+            total: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.totalMs}ms
           </p>
           <pre className="text-sm overflow-x-auto">{JSON.stringify(result, null, 2)}</pre>
         </div>

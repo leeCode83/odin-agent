@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { NextRequest } from "next/server"
+import type { DDReport } from "@/lib/agent/types"
 
 vi.mock("@/lib/agent/pipeline", () => ({
   runDDPipeline: vi.fn(),
@@ -49,7 +50,7 @@ describe("POST /api/agent/dd", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(runDDPipeline).mockResolvedValue({
-      report: MOCK_REPORT as any,
+      report: MOCK_REPORT as DDReport,
       timing: MOCK_TIMING,
     })
   })

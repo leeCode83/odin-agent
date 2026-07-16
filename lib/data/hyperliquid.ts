@@ -92,7 +92,7 @@ async function fetchCandlesByInterval(
     client.candleSnapshot({ coin: asset, interval, startTime, endTime }),
     15_000
   )
-  return candles.map((c: any) => ({
+  return candles.map((c) => ({
     timestamp: c.t,
     open: parseFloat(c.o),
     high: parseFloat(c.h),

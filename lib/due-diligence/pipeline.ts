@@ -3,8 +3,6 @@ import { fetchAllRawData } from "@/lib/data/providers"
 import { analyzeSection, synthesizeSections } from "@/lib/agent/llm"
 import type { DDPipelineInput, DDPipelineOutput, DDReport, Factor, SectionResult } from "@/lib/agent/types"
 
-const ALL_FACTORS: Factor[] = ["technical", "onchain", "sentiment", "fundamental"]
-
 function emptySection(): SectionResult {
   return { score: null, summary: null, signals: [] }
 }

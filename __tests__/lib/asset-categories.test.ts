@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { getCategory, getCategoryName, getCoinGeckoId, CategoryConfig } from "@/lib/asset-categories"
+import { getCategory, getCategoryName, getCoinGeckoId } from "@/lib/asset-categories"
 
 describe("getCategory", () => {
   it("returns major category for BTC", () => {

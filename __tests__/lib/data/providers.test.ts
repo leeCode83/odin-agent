@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import { fetchAllRawData } from "@/lib/data/providers"
+import type { CategoryConfig } from "@/lib/asset-categories"
 
 vi.mock("@/lib/data/hyperliquid", () => ({
   fetchAllHLData: vi.fn().mockResolvedValue({
@@ -27,7 +28,7 @@ const memeCategory = { name: "meme", activeFactors: ["technical", "onchain", "se
 
 describe("fetchAllRawData", () => {
   it("returns all factor data for major category", async () => {
-    const data = await fetchAllRawData("BTC", majorCategory as any)
+    const data = await fetchAllRawData("BTC", majorCategory as unknown as CategoryConfig)
     expect(data).toHaveProperty("technical")
     expect(data).toHaveProperty("onchain")
     expect(data).toHaveProperty("sentiment")
@@ -35,7 +36,7 @@ describe("fetchAllRawData", () => {
   })
 
   it("returns only active factors for meme category", async () => {
-    const data = await fetchAllRawData("DOGE", memeCategory as any)
+    const data = await fetchAllRawData("DOGE", memeCategory as unknown as CategoryConfig)
     expect(data).toHaveProperty("technical")
     expect(data).toHaveProperty("onchain")
     expect(data).toHaveProperty("sentiment")
@@ -44,12 +45,12 @@ describe("fetchAllRawData", () => {
   it("handles partial failure (HL down, CG up)", async () => {
     const hl = await import("@/lib/data/hyperliquid")
     vi.mocked(hl.fetchAllHLData).mockRejectedValueOnce(new Error("HL down"))
-    const data = await fetchAllRawData("BTC", majorCategory as any)
+    const data = await fetchAllRawData("BTC", majorCategory as unknown as CategoryConfig)
     expect(data).toBeDefined()
   })
 
   it("does not crash for meme category", async () => {
-    const data = await fetchAllRawData("DOGE", memeCategory as any)
+    const data = await fetchAllRawData("DOGE", memeCategory as unknown as CategoryConfig)
     expect(data).toBeDefined()
   })
 })
