@@ -41,8 +41,25 @@ beforeEach(() => {
 describe("POST /api/agent/planning", () => {
   it("returns 200 with TradePlan for valid input", async () => {
     mockRunPlanningPipeline.mockResolvedValue({
-      tradePlan: { asset: "BTC", autonomy_decision: "auto" },
-      timing: { totalMs: 100 },
+      plan: {
+        asset: "BTC",
+        side: "long",
+        entry_price: 65000,
+        position_size_usdc: 50,
+        position_size_contracts: 0.001,
+        stop_loss: 64000,
+        take_profit: 68000,
+        leverage: 3,
+        confidence_score: 72,
+        confidence_breakdown: { factor_alignment: 75, historical_match: 60, signal_strength: 80 },
+        thesis: "BTC bullish",
+        reasoning: "Consensus",
+        autonomy_decision: "auto",
+        risk_flags: [],
+        graph_patterns_used: [],
+        timestamp: "2025-01-01T00:00:00Z",
+      },
+      timing: { fetchMs: 50, graphMs: 50, llmMs: 40, riskEngineMs: 10, totalMs: 100 },
     })
 
     const res = await POST(createRequest({
@@ -53,7 +70,7 @@ describe("POST /api/agent/planning", () => {
     const data = await res.json()
 
     expect(res.status).toBe(200)
-    expect(data.tradePlan.asset).toBe("BTC")
+    expect(data.plan.asset).toBe("BTC")
     expect(data.timing.totalMs).toBe(100)
   })
 

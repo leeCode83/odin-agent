@@ -35,11 +35,11 @@ const mockGraphPatterns: GraphPattern[] = [
 
 const validPerspectiveJson = {
   thesis: "Bullish on BTC",
-  confidence: 75,
+  confidence_breakdown: { factor_alignment: 75, historical_match: 60, signal_strength: 80 },
   side: "long",
-  leverage: 5,
+  leverage_suggested: 5,
   reasoning: "Strong technical setup",
-  signals: ["uptrend", "high volume"],
+  risk_flags: ["high volume"],
 }
 
 describe("generatePerspective", () => {
@@ -67,11 +67,11 @@ describe("generatePerspective", () => {
     const result = await generatePerspective("balance", mockDDReport, mockGraphPatterns)
     expect(result).not.toBeNull()
     expect(result!.thesis).toBe("Bullish on BTC")
-    expect(result!.confidence).toBe(75)
+    expect(result!.confidence_breakdown.factor_alignment).toBe(75)
     expect(result!.side).toBe("long")
-    expect(result!.leverage).toBe(5)
+    expect(result!.leverage_suggested).toBe(5)
     expect(result!.reasoning).toBe("Strong technical setup")
-    expect(result!.signals).toEqual(["uptrend", "high volume"])
+    expect(result!.risk_flags).toEqual(["high volume"])
   })
 
   it("returns null when LLM responds with invalid JSON (after retry)", async () => {
@@ -120,32 +120,32 @@ describe("aggregatePerspectives", () => {
     {
       perspective: "conservative" as Perspective,
       thesis: "BTC cautious long",
-      confidence: 45,
+      confidence_breakdown: { factor_alignment: 45, historical_match: 50, signal_strength: 40 },
       side: "long",
-      leverage: 2,
+      leverage_suggested: 2,
       reasoning: "Trend ok but weak conviction",
       reasoningContent: "",
-      signals: ["MA crossover"],
+      risk_flags: ["Weak conviction"],
     },
     {
       perspective: "balance" as Perspective,
       thesis: "BTC moderate long",
-      confidence: 65,
+      confidence_breakdown: { factor_alignment: 65, historical_match: 60, signal_strength: 70 },
       side: "long",
-      leverage: 5,
+      leverage_suggested: 5,
       reasoning: "Balance of factors positive",
       reasoningContent: "",
-      signals: ["RSI > 60", "Exchange outflows"],
+      risk_flags: [],
     },
     {
       perspective: "aggressive" as Perspective,
       thesis: "BTC strong long",
-      confidence: 85,
+      confidence_breakdown: { factor_alignment: 85, historical_match: 70, signal_strength: 90 },
       side: "long",
-      leverage: 10,
+      leverage_suggested: 10,
       reasoning: "Strong momentum, breakout pattern",
       reasoningContent: "",
-      signals: ["Breakout above resistance"],
+      risk_flags: ["Momentum risk"],
     },
   ]
 
@@ -162,18 +162,20 @@ describe("aggregatePerspectives", () => {
     mockCreate.mockResolvedValue({
       choices: [
         {
-          message: {
-            content: JSON.stringify({
-              thesis: "Aggregated thesis",
-              confidence_score: 72,
-              confidence_breakdown: {
-                factor_alignment: 70,
-                historical_match: 50,
-                signal_strength: 80,
-              },
-              direction: "long",
-              reasoning: "Consensus across perspectives",
-            }),
+      message: {
+        content: JSON.stringify({
+          side: "long",
+          thesis: "Aggregated thesis",
+          reasoning: "Consensus across perspectives",
+          confidence_score: 72,
+          confidence_breakdown: {
+            factor_alignment: 70,
+            historical_match: 50,
+            signal_strength: 80,
+          },
+          leverage_suggested: 5,
+          risk_flags: [],
+        }),
           },
         },
       ],
@@ -182,7 +184,8 @@ describe("aggregatePerspectives", () => {
     const result = await aggregatePerspectives(mockResults, mockDDReport)
     expect(result).not.toBeNull()
     expect(result!.thesis).toBe("Aggregated thesis")
-    expect(result!.confidence).toEqual({
+    expect(result!.side).toBe("long")
+    expect(result!.confidence_breakdown).toEqual({
       factor_alignment: 70,
       historical_match: 50,
       signal_strength: 80,

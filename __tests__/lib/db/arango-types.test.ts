@@ -4,26 +4,26 @@ import { RiskThresholdsDocSchema, GraphCollectionNames } from "@/lib/db/arango-t
 describe("RiskThresholdsDocSchema", () => {
   const validDoc = {
     userId: "user-1",
-    confidenceThreshold: 70,
-    maxPositionUsdc: 100,
-    maxLeverage: 10,
-    riskPerTradePercent: 1,
+    confidence_threshold: 70,
+    max_position_usdc: 100,
+    max_leverage: 10,
+    risk_per_trade_percent: 1,
   }
 
   it("validates complete doc", () => {
     const result = RiskThresholdsDocSchema.parse(validDoc)
     expect(result.userId).toBe("user-1")
-    expect(result.confidenceThreshold).toBe(70)
+    expect(result.confidence_threshold).toBe(70)
   })
 
   it("applies defaults for optional fields", () => {
     const result = RiskThresholdsDocSchema.parse({ userId: "user-2" })
-    expect(result.confidenceThreshold).toBe(70)
-    expect(result.maxLeverage).toBe(10)
+    expect(result.confidence_threshold).toBe(70)
+    expect(result.max_leverage).toBe(10)
   })
 
-  it("rejects confidenceThreshold outside 0-100", () => {
-    expect(() => RiskThresholdsDocSchema.parse({ ...validDoc, confidenceThreshold: 200 })).toThrow()
+  it("rejects confidence_threshold outside 0-100", () => {
+    expect(() => RiskThresholdsDocSchema.parse({ ...validDoc, confidence_threshold: 200 })).toThrow()
   })
 
   it("accepts optional _key", () => {
@@ -37,7 +37,7 @@ describe("GraphCollectionNames", () => {
     expect(GraphCollectionNames.DECISIONS).toBe("decisions")
     expect(GraphCollectionNames.SIGNALS).toBe("signals")
     expect(GraphCollectionNames.ASSETS).toBe("assets")
-    expect(GraphCollectionNames.EDGE_DECISION_ANALYZED).toBe("decision_analyzed")
+    expect(GraphCollectionNames.EDGE_ANALYZED).toBe("decision_analyzed")
     expect(GraphCollectionNames.EDGE_ASSET_BELONGS_TO).toBe("asset_belongs_to")
   })
 })

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { runPlanningPipeline } from "@/lib/agent/pipeline"
-import { DDReportSchema } from "@/lib/agent/types"
+import { DDReportSchema, TradePlanSchema } from "@/lib/agent/types"
 
 /**
  * @function POST
@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
       userId: String(userId),
       walletAddress: String(walletAddress),
     })
-    return NextResponse.json(output)
+    const validated = TradePlanSchema.parse(output.plan)
+    return NextResponse.json({ ...output, plan: validated })
   } catch (err) {
     console.error("Planning pipeline error:", err)
     return NextResponse.json(

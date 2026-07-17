@@ -35,7 +35,7 @@ describe("queryGraphPatterns", () => {
     ])
 
     const { queryGraphPatterns } = await import("@/lib/db/graph-memory")
-    const results = await queryGraphPatterns("BTC", "spot")
+    const results = await queryGraphPatterns("BTC", "spot", ["RSI > 60"])
 
     expect(results).toHaveLength(2)
     expect(results[0].pattern).toBe("BTC_spot")
@@ -49,7 +49,7 @@ describe("queryGraphPatterns", () => {
     vi.mocked(getDb).mockReturnValue(null)
 
     const { queryGraphPatterns } = await import("@/lib/db/graph-memory")
-    const results = await queryGraphPatterns("BTC", "spot")
+    const results = await queryGraphPatterns("BTC", "spot", [])
 
     expect(results).toEqual([])
   })
@@ -61,7 +61,7 @@ describe("queryGraphPatterns", () => {
     mockDatabaseInstance.query.mockRejectedValue(new Error("db error"))
 
     const { queryGraphPatterns } = await import("@/lib/db/graph-memory")
-    const results = await queryGraphPatterns("ETH", "defi")
+    const results = await queryGraphPatterns("ETH", "defi", ["volume spike"])
 
     expect(results).toEqual([])
   })
@@ -74,7 +74,7 @@ describe("queryGraphPatterns", () => {
     mockCursor.all.mockResolvedValue([])
 
     const { queryGraphPatterns } = await import("@/lib/db/graph-memory")
-    await queryGraphPatterns("SOL", "defi")
+    await queryGraphPatterns("SOL", "defi", ["breakout"])
 
     expect(mockDatabaseInstance.query).toHaveBeenCalledWith(
       expect.stringContaining("FOR d IN"),

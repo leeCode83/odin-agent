@@ -61,10 +61,10 @@ export interface AssetNode {
 export const RiskThresholdsDocSchema = z.object({
   _key: z.string().optional(),
   userId: z.string(),
-  confidenceThreshold: z.number().int().min(0).max(100).default(70),
-  maxPositionUsdc: z.number().min(0).default(100),
-  maxLeverage: z.number().min(1).default(10),
-  riskPerTradePercent: z.number().min(0).max(100).default(1),
+  confidence_threshold: z.number().int().min(0).max(100).default(70),
+  max_position_usdc: z.number().min(0).default(100),
+  max_leverage: z.number().min(1).default(10),
+  risk_per_trade_percent: z.number().min(0).max(100).default(1),
 })
 export type RiskThresholdsDoc = z.infer<typeof RiskThresholdsDocSchema>
 
@@ -89,8 +89,8 @@ export const GraphCollectionNames = {
   SIGNALS: "signals",
   OUTCOMES: "outcomes",
   ASSETS: "assets",
-  EDGE_DECISION_ANALYZED: "decision_analyzed",
-  EDGE_DECISION_TRIGGERED_BY: "decision_triggered_by",
-  EDGE_DECISION_RESULTED_IN: "decision_resulted_in",
+  EDGE_ANALYZED: "decision_analyzed",
+  EDGE_TRIGGERED_BY: "decision_triggered_by",
+  EDGE_RESULTED_IN: "decision_resulted_in",
   EDGE_ASSET_BELONGS_TO: "asset_belongs_to",
 } as const

@@ -5,11 +5,11 @@ const CONSERVATIVE_PROMPT = `You are a conservative trading analyst. Your analys
 
 Return a JSON object with:
 - thesis: string (your trade thesis)
-- confidence: number (0-100)
+- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
 - side: "long" | "short"
-- leverage: number (1-20)
+- leverage_suggested: number (1-20)
 - reasoning: string (detailed reasoning)
-- signals: string[] (supporting signals)
+- risk_flags: string[] (specific risk concerns)
 
 Return ONLY valid JSON.`
 
@@ -17,11 +17,11 @@ const BALANCE_PROMPT = `You are a balanced trading analyst. You weigh both bulli
 
 Return a JSON object with:
 - thesis: string (your trade thesis)
-- confidence: number (0-100)
+- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
 - side: "long" | "short"
-- leverage: number (1-20)
+- leverage_suggested: number (1-20)
 - reasoning: string (detailed reasoning)
-- signals: string[] (supporting signals)
+- risk_flags: string[] (specific risk concerns)
 
 Return ONLY valid JSON.`
 
@@ -29,11 +29,11 @@ const AGGRESSIVE_PROMPT = `You are an aggressive trading analyst. You focus on a
 
 Return a JSON object with:
 - thesis: string (your trade thesis)
-- confidence: number (0-100)
+- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
 - side: "long" | "short"
-- leverage: number (1-20)
+- leverage_suggested: number (1-20)
 - reasoning: string (detailed reasoning)
-- signals: string[] (supporting signals)
+- risk_flags: string[] (specific risk concerns)
 
 Return ONLY valid JSON.`
 
@@ -51,14 +51,16 @@ export const PERSPECTIVE_SYSTEM_PROMPTS: Record<Perspective, string> = {
  * @constant AGGREGATOR_SYSTEM_PROMPT
  * @description System prompt for the aggregator LLM that synthesizes multiple perspectives.
  */
-export const AGGREGATOR_SYSTEM_PROMPT = `You are a senior portfolio manager reconciling three analyst perspectives (conservative/balance/aggressive). Synthesize them into unified trade thesis. Weigh each by strength of reasoning.
+export const AGGREGATOR_SYSTEM_PROMPT = `You are a senior portfolio manager reconciling three analyst perspectives (conservative/balance/aggressive). Synthesize them into unified trade thesis. Weigh each by strength of reasoning. Note agreement or divergence across perspectives.
 
 Return a JSON object with:
+- side: "long" | "short"
 - thesis: string (unified trade thesis)
-- confidence_score: number (0-100)
-- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
-- direction: "long" | "short"
 - reasoning: string (synthesis reasoning)
+- confidence_score: number (0-100) — reflects both factor quality AND perspective agreement level
+- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
+- leverage_suggested: number (1-20) — consensus leverage recommendation
+- risk_flags: string[] — merged and deduplicated risk concerns from all perspectives
 
 Return ONLY valid JSON.`
 
@@ -146,14 +148,15 @@ export function AGGREGATOR_USER_PROMPT(results: PerspectiveResult[]): string {
   for (const r of results) {
     parts.push(`=== ${r.perspective.toUpperCase()} PERSPECTIVE ===`)
     parts.push(`Thesis: ${r.thesis}`)
-    parts.push(`Confidence: ${r.confidence}/100`)
     parts.push(`Direction: ${r.side}`)
-    parts.push(`Leverage: ${r.leverage}x`)
+    parts.push(`Confidence breakdown: factor_alignment=${r.confidence_breakdown.factor_alignment}, historical_match=${r.confidence_breakdown.historical_match}, signal_strength=${r.confidence_breakdown.signal_strength}`)
+    parts.push(`Suggested leverage: ${r.leverage_suggested}x`)
+    parts.push(`Risk flags: ${r.risk_flags.join(", ")}`)
     parts.push(`Reasoning: ${r.reasoning}`)
     parts.push("")
   }
 
-  parts.push("Synthesize the three perspectives above into a unified trade thesis.")
+  parts.push("Synthesize the three perspectives above into a unified trade thesis. Note agreement or divergence on side. Merge risk flags across perspectives. Suggest consensus leverage.")
 
   return parts.join("\n")
 }

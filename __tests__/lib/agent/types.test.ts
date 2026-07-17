@@ -139,12 +139,12 @@ describe("GraphPatternSchema", () => {
 })
 
 describe("RiskThresholdsSchema", () => {
-  const valid = { confidenceThreshold: 70, maxPositionUsdc: 100, maxLeverage: 10, riskPerTradePercent: 1 }
+  const valid = { confidence_threshold: 70, max_position_usdc: 100, max_leverage: 10, risk_per_trade_percent: 1 }
   it("validates complete thresholds", () => {
     expect(RiskThresholdsSchema.parse(valid)).toEqual(valid)
   })
-  it("rejects confidenceThreshold outside 0-100", () => {
-    expect(() => RiskThresholdsSchema.parse({ ...valid, confidenceThreshold: 200 })).toThrow()
+  it("rejects confidence_threshold outside 0-100", () => {
+    expect(() => RiskThresholdsSchema.parse({ ...valid, confidence_threshold: 200 })).toThrow()
   })
 })
 

@@ -124,15 +124,17 @@ export async function aggregatePerspectives(
     const parsed = JSON.parse(content)
 
     return {
+      side: parsed.side ?? "long",
       thesis: parsed.thesis || "",
-      confidence: {
+      reasoning: parsed.reasoning || "",
+      confidence_score: parsed.confidence_score ?? 0,
+      confidence_breakdown: {
         factor_alignment: parsed.confidence_breakdown?.factor_alignment ?? 0,
         historical_match: parsed.confidence_breakdown?.historical_match ?? 0,
         signal_strength: parsed.confidence_breakdown?.signal_strength ?? 0,
       },
-      confidenceScore: parsed.confidence_score ?? 0,
-      direction: parsed.direction ?? "long",
-      reasoning: parsed.reasoning || "",
+      leverage_suggested: parsed.leverage_suggested ?? 1,
+      risk_flags: parsed.risk_flags ?? [],
     }
   } catch {
     return null

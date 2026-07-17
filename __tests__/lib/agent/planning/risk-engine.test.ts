@@ -39,12 +39,12 @@ describe("computeATR", () => {
     expect(atr).toBeCloseTo(94 / 9, 4)
   })
 
-  it("returns 0 for empty candle array", () => {
-    expect(computeATR([], 14)).toBe(0)
+  it("throws for empty candle array", () => {
+    expect(() => computeATR([], 14)).toThrow("Insufficient candles for ATR")
   })
 
-  it("returns 0 when candles length < period + 1", () => {
-    expect(computeATR(candles, 14)).toBe(0)
+  it("throws when candles length < period + 1", () => {
+    expect(() => computeATR(candles, 14)).toThrow("Insufficient candles for ATR")
   })
 })
 

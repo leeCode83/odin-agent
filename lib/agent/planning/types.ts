@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ConfidenceBreakdownSchema } from "@/lib/agent/types"
 import type { DDReport, TradePlan, ConfidenceBreakdown } from "@/lib/agent/types"
 
 /**
@@ -20,12 +21,12 @@ export type Perspective = z.infer<typeof PerspectiveSchema>
 export const PerspectiveResultSchema = z.object({
   perspective: PerspectiveSchema,
   thesis: z.string(),
-  confidence: z.number().int().min(0).max(100),
+  confidence_breakdown: ConfidenceBreakdownSchema,
   side: z.enum(["long", "short"]),
-  leverage: z.number().positive(),
+  leverage_suggested: z.number().positive(),
   reasoning: z.string(),
   reasoningContent: z.string(),
-  signals: z.array(z.string()),
+  risk_flags: z.array(z.string()),
 })
 
 /**
@@ -39,11 +40,13 @@ export type PerspectiveResult = z.infer<typeof PerspectiveResultSchema>
  * @description Structure for the synthesized trade thesis from multiple perspectives.
  */
 export interface AggregatedReasoning {
+  side: "long" | "short"
   thesis: string
-  confidence: ConfidenceBreakdown
-  confidenceScore: number
-  direction: "long" | "short"
   reasoning: string
+  confidence_score: number
+  confidence_breakdown: ConfidenceBreakdown
+  leverage_suggested: number
+  risk_flags: string[]
 }
 
 /**
@@ -61,13 +64,12 @@ export interface PlanningPipelineInput {
  * @description Output of the trade planning pipeline including the plan and execution timings.
  */
 export interface PlanningPipelineOutput {
-  tradePlan: TradePlan
+  plan: TradePlan
   timing: {
-    equityMs: number
-    candleMs: number
+    fetchMs: number
     graphMs: number
     llmMs: number
-    riskMs: number
+    riskEngineMs: number
     totalMs: number
   }
 }

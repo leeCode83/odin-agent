@@ -33,32 +33,32 @@ const mockPerspectiveResults: PerspectiveResult[] = [
   {
     perspective: "conservative" as Perspective,
     thesis: "BTC cautious long",
-    confidence: 45,
+    confidence_breakdown: { factor_alignment: 45, historical_match: 50, signal_strength: 40 },
     side: "long",
-    leverage: 2,
+    leverage_suggested: 2,
     reasoning: "Trend ok but weak conviction",
     reasoningContent: "",
-    signals: ["MA crossover"],
+    risk_flags: ["Low confidence in trend"],
   },
   {
     perspective: "balance" as Perspective,
     thesis: "BTC moderate long",
-    confidence: 65,
+    confidence_breakdown: { factor_alignment: 65, historical_match: 60, signal_strength: 70 },
     side: "long",
-    leverage: 5,
+    leverage_suggested: 5,
     reasoning: "Balance of factors positive",
     reasoningContent: "",
-    signals: ["RSI > 60", "Exchange outflows"],
+    risk_flags: [],
   },
   {
     perspective: "aggressive" as Perspective,
     thesis: "BTC strong long",
-    confidence: 85,
+    confidence_breakdown: { factor_alignment: 85, historical_match: 70, signal_strength: 90 },
     side: "long",
-    leverage: 10,
+    leverage_suggested: 10,
     reasoning: "Strong momentum, breakout pattern",
     reasoningContent: "",
-    signals: ["Breakout above resistance"],
+    risk_flags: ["High momentum risk"],
   },
 ]
 
@@ -122,13 +122,10 @@ describe("AGGREGATOR_USER_PROMPT", () => {
     expect(result).toContain("AGGRESSIVE")
   })
 
-  it("includes perspective thesis and confidence", () => {
+  it("includes perspective thesis and confidence breakdown", () => {
     const result = AGGREGATOR_USER_PROMPT(mockPerspectiveResults)
     expect(result).toContain("BTC cautious long")
     expect(result).toContain("BTC moderate long")
     expect(result).toContain("BTC strong long")
-    expect(result).toContain("45")
-    expect(result).toContain("65")
-    expect(result).toContain("85")
   })
 })

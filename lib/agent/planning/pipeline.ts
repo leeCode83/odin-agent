@@ -1,11 +1,10 @@
 import { DDReportSchema, TradePlanSchema } from "@/lib/agent/types"
-import type { Side, ConfidenceBreakdown } from "@/lib/agent/types"
 import type { PerspectiveResult, PlanningPipelineInput, PlanningPipelineOutput } from "./types"
-import { fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
+import { fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 import { queryGraphPatterns } from "@/lib/db/graph-memory"
 import { getRiskThresholds } from "@/lib/db/risk-thresholds"
 import { generatePerspective, aggregatePerspectives } from "./llm"
-import { computeATR, computeSLTP, computePositionSize, capLeverage, computeEntryPrice } from "./risk-engine"
+import { computeATR, computeSLTP, computePositionSize, capLeverage } from "./risk-engine"
 import { autonomyGate } from "./gate"
 
 /**
@@ -29,20 +28,24 @@ export async function runPlanningPipeline(
   input: PlanningPipelineInput
 ): Promise<PlanningPipelineOutput> {
   const ddReport = DDReportSchema.parse(input.ddReport)
+  const errors: string[] = []
   const startTime = Date.now()
 
-  const [equity, candles, graphPatterns, thresholds] = await Promise.all([
-    fetchUserEquity(input.walletAddress).catch(() => 0),
-    fetchCandlesForATR(ddReport.asset).catch(() => []),
-    queryGraphPatterns(ddReport.asset, ddReport.category),
-    getRiskThresholds(input.userId),
+  // 1. Parallel fetch: mark price, equity, candles, thresholds, graph patterns
+  const fetchStart = Date.now()
+  const allSignals = Object.values(ddReport.sections).flatMap((s) => s.signals)
+  const [markPrice, equity, candles, storedThresholds, graphPatterns] = await Promise.all([
+    fetchMarkPrice(ddReport.asset).catch((e) => { errors.push(`mark_price: ${e.message}`); throw e; }),
+    fetchUserEquity(input.walletAddress).catch((e) => { errors.push(`equity: ${e.message}`); throw e; }),
+    fetchCandlesForATR(ddReport.asset).catch((e) => { errors.push(`candles: ${e.message}`); throw e; }),
+    getRiskThresholds(input.userId).catch((e) => { errors.push(`thresholds: ${e.message}`); return null; }),
+    queryGraphPatterns(ddReport.asset, ddReport.category, allSignals).catch((e) => { errors.push(`graph: ${e.message}`); return []; }),
   ])
+  const fetchMs = Date.now() - fetchStart
+  const thresholds = storedThresholds ?? { confidence_threshold: 70, max_position_usdc: 100, max_leverage: 10, risk_per_trade_percent: 1 }
 
-  const afterFetchMs = Date.now()
-  const equityMs = afterFetchMs - startTime
-  const candleMs = afterFetchMs - startTime
-  const graphMs = afterFetchMs - startTime
-
+  // 2. Three perspective LLM runs in parallel (thinking mode)
+  const llmStart = Date.now()
   const [conservative, balance, aggressive] = await Promise.all([
     generatePerspective("conservative", ddReport, graphPatterns),
     generatePerspective("balance", ddReport, graphPatterns),
@@ -54,61 +57,48 @@ export async function runPlanningPipeline(
     throw new PlanningError("All 3 LLM perspectives failed")
   }
 
-  const afterLLMMs = Date.now()
-  const llmMs = afterLLMMs - afterFetchMs
-
+  // 3. Aggregator LLM call (thinking mode)
   const aggregated = await aggregatePerspectives(validPerspectives, ddReport)
-
-  const entry = await computeEntryPrice(ddReport.asset)
-  const atr = computeATR(candles, 14)
-
-  const best = [...validPerspectives].sort((a, b) => b.confidence - a.confidence)[0]
-  const side: Side = aggregated?.direction || best.side
-  const { stopLoss, takeProfit } = computeSLTP(entry, atr, side)
-  const leverage = capLeverage(best.leverage, thresholds.maxLeverage)
-  const { positionSizeUsdc, positionSizeContracts } = computePositionSize(equity, entry, stopLoss, thresholds.riskPerTradePercent)
-
-  const afterRiskMs = Date.now()
-  const riskMs = afterRiskMs - afterLLMMs
-
-  let confidenceScore: number
-  let confidenceBreakdown: ConfidenceBreakdown
-
-  if (aggregated) {
-    confidenceBreakdown = aggregated.confidence
-    confidenceScore = Math.round(
-      (aggregated.confidence.factor_alignment + aggregated.confidence.historical_match + aggregated.confidence.signal_strength) / 3
-    )
-  } else {
-    confidenceBreakdown = { factor_alignment: 50, historical_match: 50, signal_strength: 50 }
-    confidenceScore = best.confidence
+  if (!aggregated) {
+    throw new PlanningError("Aggregator LLM call failed")
   }
+  const llmMs = Date.now() - llmStart
 
-  const autonomyDecision = autonomyGate(confidenceScore, positionSizeUsdc, thresholds)
+  // 4. Deterministic risk engine
+  const riskStart = Date.now()
+  const atr = computeATR(candles)
+  const { stopLoss, takeProfit } = computeSLTP(markPrice, atr, aggregated.side)
+  const leverage = capLeverage(aggregated.leverage_suggested, thresholds.max_leverage)
+  const { positionSizeUsdc, positionSizeContracts } = computePositionSize(equity, markPrice, stopLoss, thresholds.risk_per_trade_percent)
+  const riskEngineMs = Date.now() - riskStart
+
+  // 5. Autonomy gate
+  const autonomyDecision = autonomyGate(aggregated.confidence_score, positionSizeUsdc, thresholds)
 
   const totalMs = Date.now() - startTime
 
-  const tradePlan = TradePlanSchema.parse({
+  const plan = TradePlanSchema.parse({
     asset: ddReport.asset,
-    side,
-    entry_price: entry,
+    side: aggregated.side,
+    entry_price: markPrice,
     position_size_usdc: positionSizeUsdc,
     position_size_contracts: positionSizeContracts,
     stop_loss: stopLoss,
     take_profit: takeProfit,
     leverage,
-    confidence_score: confidenceScore,
-    confidence_breakdown: confidenceBreakdown,
-    thesis: aggregated?.thesis || validPerspectives[0]?.thesis || "",
-    reasoning: aggregated?.reasoning || validPerspectives[0]?.reasoning || "",
+    confidence_score: aggregated.confidence_score,
+    confidence_breakdown: aggregated.confidence_breakdown,
+    thesis: aggregated.thesis,
+    reasoning: aggregated.reasoning,
     autonomy_decision: autonomyDecision,
-    risk_flags: ddReport.risk_flags.concat(entry === 0 ? ["Entry price unavailable"] : []),
+    risk_flags: aggregated.risk_flags,
     graph_patterns_used: graphPatterns,
     timestamp: new Date().toISOString(),
+    errors: errors.length > 0 ? errors : undefined,
   })
 
   return {
-    tradePlan,
-    timing: { equityMs, candleMs, graphMs, llmMs, riskMs, totalMs },
+    plan,
+    timing: { fetchMs, graphMs: fetchMs, llmMs, riskEngineMs, totalMs },
   }
 }

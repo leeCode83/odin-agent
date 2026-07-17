@@ -22,10 +22,10 @@ describe("getRiskThresholds", () => {
     const { getRiskThresholds } = await import("@/lib/db/risk-thresholds")
     const result = await getRiskThresholds("user-1")
 
-    expect(result.confidenceThreshold).toBe(70)
-    expect(result.maxPositionUsdc).toBe(100)
-    expect(result.maxLeverage).toBe(10)
-    expect(result.riskPerTradePercent).toBe(1)
+    expect(result.confidence_threshold).toBe(70)
+    expect(result.max_position_usdc).toBe(100)
+    expect(result.max_leverage).toBe(10)
+    expect(result.risk_per_trade_percent).toBe(1)
   })
 
   it("returns document values when found", async () => {
@@ -34,20 +34,20 @@ describe("getRiskThresholds", () => {
 
     const mockCursor = { next: vi.fn().mockResolvedValue({
       userId: "user-1",
-      confidenceThreshold: 85,
-      maxPositionUsdc: 500,
-      maxLeverage: 5,
-      riskPerTradePercent: 2,
+      confidence_threshold: 85,
+      max_position_usdc: 500,
+      max_leverage: 5,
+      risk_per_trade_percent: 2,
     })}
     mockDatabaseInstance.query.mockResolvedValue(mockCursor)
 
     const { getRiskThresholds } = await import("@/lib/db/risk-thresholds")
     const result = await getRiskThresholds("user-1")
 
-    expect(result.confidenceThreshold).toBe(85)
-    expect(result.maxPositionUsdc).toBe(500)
-    expect(result.maxLeverage).toBe(5)
-    expect(result.riskPerTradePercent).toBe(2)
+    expect(result.confidence_threshold).toBe(85)
+    expect(result.max_position_usdc).toBe(500)
+    expect(result.max_leverage).toBe(5)
+    expect(result.risk_per_trade_percent).toBe(2)
     expect(mockDatabaseInstance.query).toHaveBeenCalledWith(
       expect.stringContaining("risk_thresholds"),
       expect.objectContaining({ userId: "user-1" })
@@ -63,6 +63,6 @@ describe("getRiskThresholds", () => {
     const { getRiskThresholds } = await import("@/lib/db/risk-thresholds")
     const result = await getRiskThresholds("user-1")
 
-    expect(result.confidenceThreshold).toBe(70)
+    expect(result.confidence_threshold).toBe(70)
   })
 })

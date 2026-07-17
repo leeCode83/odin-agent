@@ -9,10 +9,10 @@ import { getDb } from "@/lib/db/arango-client"
  */
 function envDefaults(): RiskThresholds {
   return {
-    confidenceThreshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 70,
-    maxPositionUsdc: Number(process.env.RISK_MAX_POSITION_USDC) || 100,
-    maxLeverage: Number(process.env.RISK_MAX_LEVERAGE) || 10,
-    riskPerTradePercent: Number(process.env.RISK_PER_TRADE_PERCENT) || 1,
+    confidence_threshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 70,
+    max_position_usdc: Number(process.env.RISK_MAX_POSITION_USDC) || 100,
+    max_leverage: Number(process.env.RISK_MAX_LEVERAGE) || 10,
+    risk_per_trade_percent: Number(process.env.RISK_PER_TRADE_PERCENT) || 1,
   }
 }
 
@@ -37,10 +37,10 @@ export async function getRiskThresholds(userId: string): Promise<RiskThresholds>
 
     const parsed = RiskThresholdsDocSchema.parse(doc)
     return {
-      confidenceThreshold: parsed.confidenceThreshold,
-      maxPositionUsdc: parsed.maxPositionUsdc,
-      maxLeverage: parsed.maxLeverage,
-      riskPerTradePercent: parsed.riskPerTradePercent,
+      confidence_threshold: parsed.confidence_threshold,
+      max_position_usdc: parsed.max_position_usdc,
+      max_leverage: parsed.max_leverage,
+      risk_per_trade_percent: parsed.risk_per_trade_percent,
     }
   } catch {
     return envDefaults()

@@ -13,7 +13,7 @@ export function autonomyGate(
   positionSizeUsdc: number,
   thresholds: RiskThresholds,
 ): AutonomyDecision {
-  if (confidence >= thresholds.confidenceThreshold && positionSizeUsdc <= thresholds.maxPositionUsdc) {
+  if (confidence >= thresholds.confidence_threshold && positionSizeUsdc <= thresholds.max_position_usdc) {
     return "auto"
   }
   return "approve"

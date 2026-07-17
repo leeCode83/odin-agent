@@ -162,8 +162,7 @@ interface ClearingState {
 export async function fetchUserEquity(walletAddress: string): Promise<number> {
   const client = createHLClient()
   const state = await withRetry(() => withTimeout(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (client as Record<string, any>).userClearingState({ user: walletAddress }) as Promise<ClearingState>,
+    client.clearinghouseState({ user: walletAddress as `0x${string}` }),
     15_000
   ), { retries: 2 })
   if (!state || !state.crossMarginSummary || !state.crossMarginSummary.accountValue) {

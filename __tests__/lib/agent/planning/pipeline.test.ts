@@ -4,26 +4,27 @@ import type { DDReport } from "@/lib/agent/types"
 import type { PerspectiveResult } from "@/lib/agent/planning/types"
 
 const {
+  mockFetchMarkPrice,
   mockFetchUserEquity,
   mockFetchCandlesForATR,
   mockQueryGraphPatterns,
   mockGetRiskThresholds,
   mockGeneratePerspective,
   mockAggregatePerspectives,
-  mockComputeEntryPrice,
   mockComputePositionSize,
 } = vi.hoisted(() => ({
+  mockFetchMarkPrice: vi.fn(),
   mockFetchUserEquity: vi.fn(),
   mockFetchCandlesForATR: vi.fn(),
   mockQueryGraphPatterns: vi.fn(),
   mockGetRiskThresholds: vi.fn(),
   mockGeneratePerspective: vi.fn(),
   mockAggregatePerspectives: vi.fn(),
-  mockComputeEntryPrice: vi.fn(),
   mockComputePositionSize: vi.fn(() => ({ positionSizeUsdc: 100, positionSizeContracts: 1 })),
 }))
 
 vi.mock("@/lib/data/hyperliquid", () => ({
+  fetchMarkPrice: mockFetchMarkPrice,
   fetchUserEquity: mockFetchUserEquity,
   fetchCandlesForATR: mockFetchCandlesForATR,
 }))
@@ -38,7 +39,6 @@ vi.mock("@/lib/agent/planning/llm", () => ({
   aggregatePerspectives: mockAggregatePerspectives,
 }))
 vi.mock("@/lib/agent/planning/risk-engine", () => ({
-  computeEntryPrice: mockComputeEntryPrice,
   computeATR: vi.fn(() => 5),
   computeSLTP: vi.fn(() => ({ stopLoss: 95, takeProfit: 115 })),
   computePositionSize: mockComputePositionSize,
@@ -64,12 +64,12 @@ const mockDDReport: DDReport = {
 const mockPerspective: PerspectiveResult = {
   perspective: "balance",
   thesis: "BTC bullish",
-  confidence: 75,
+  confidence_breakdown: { factor_alignment: 75, historical_match: 60, signal_strength: 80 },
   side: "long",
-  leverage: 5,
+  leverage_suggested: 5,
   reasoning: "Technical strength",
   reasoningContent: "Analyzing...",
-  signals: ["MA crossover"],
+  risk_flags: [],
 }
 
 beforeEach(() => {
@@ -93,21 +93,23 @@ beforeEach(() => {
     { timestamp: 15, open: 170, high: 180, low: 165, close: 175, volume: 2400 },
   ])
   mockQueryGraphPatterns.mockResolvedValue([{ pattern: "uptrend", outcome: "bullish", frequency: 3 }])
+  mockFetchMarkPrice.mockResolvedValue(100)
   mockGetRiskThresholds.mockResolvedValue({
-    confidenceThreshold: 70,
-    maxPositionUsdc: 100,
-    maxLeverage: 10,
-    riskPerTradePercent: 1,
+    confidence_threshold: 70,
+    max_position_usdc: 100,
+    max_leverage: 10,
+    risk_per_trade_percent: 1,
   })
   mockGeneratePerspective.mockResolvedValue(mockPerspective)
   mockAggregatePerspectives.mockResolvedValue({
+    side: "long",
     thesis: "Aggregated thesis BTC",
-    confidence: { factor_alignment: 70, historical_match: 60, signal_strength: 80 },
-    confidenceScore: 75,
-    direction: "long",
     reasoning: "Consensus bullish",
+    confidence_score: 75,
+    confidence_breakdown: { factor_alignment: 70, historical_match: 60, signal_strength: 80 },
+    leverage_suggested: 5,
+    risk_flags: [],
   })
-  mockComputeEntryPrice.mockResolvedValue(100)
 })
 
 describe("runPlanningPipeline", () => {
@@ -118,16 +120,15 @@ describe("runPlanningPipeline", () => {
       walletAddress: "0x123",
     })
 
-    expect(output.tradePlan).toBeDefined()
-    expect(output.tradePlan.asset).toBe("BTC")
-    expect(output.tradePlan.side).toBe("long")
-    expect(output.tradePlan.entry_price).toBe(100)
-    expect(output.tradePlan.confidence_score).toBeGreaterThanOrEqual(0)
-    expect(output.tradePlan.autonomy_decision).toBe("auto")
-    expect(output.tradePlan.graph_patterns_used).toHaveLength(1)
+    expect(output.plan).toBeDefined()
+    expect(output.plan.asset).toBe("BTC")
+    expect(output.plan.side).toBe("long")
+    expect(output.plan.entry_price).toBe(100)
+    expect(output.plan.confidence_score).toBeGreaterThanOrEqual(0)
+    expect(output.plan.autonomy_decision).toBe("auto")
+    expect(output.plan.graph_patterns_used).toHaveLength(1)
     expect(output.timing.totalMs).toBeGreaterThanOrEqual(0)
-    expect(output.timing.equityMs).toBeGreaterThanOrEqual(0)
-    expect(output.timing.candleMs).toBeGreaterThanOrEqual(0)
+    expect(output.timing.fetchMs).toBeGreaterThanOrEqual(0)
     expect(output.timing.graphMs).toBeGreaterThanOrEqual(0)
     expect(output.timing.llmMs).toBeGreaterThanOrEqual(0)
   })
@@ -138,22 +139,24 @@ describe("runPlanningPipeline", () => {
       userId: "user-1",
       walletAddress: "0x123",
     })
-    expect(output.tradePlan.autonomy_decision).toBe("auto")
+    expect(output.plan.autonomy_decision).toBe("auto")
   })
 
   it("requires approval when confidence below threshold", async () => {
     mockGetRiskThresholds.mockResolvedValue({
-      confidenceThreshold: 95,
-      maxPositionUsdc: 100,
-      maxLeverage: 10,
-      riskPerTradePercent: 1,
+      confidence_threshold: 95,
+      max_position_usdc: 100,
+      max_leverage: 10,
+      risk_per_trade_percent: 1,
     })
     mockAggregatePerspectives.mockResolvedValue({
+      side: "long",
       thesis: "weak",
-      confidence: { factor_alignment: 30, historical_match: 30, signal_strength: 30 },
-      confidenceScore: 30,
-      direction: "long",
       reasoning: "weak",
+      confidence_score: 30,
+      confidence_breakdown: { factor_alignment: 30, historical_match: 30, signal_strength: 30 },
+      leverage_suggested: 1,
+      risk_flags: [],
     })
 
     const output = await runPlanningPipeline({
@@ -161,7 +164,7 @@ describe("runPlanningPipeline", () => {
       userId: "user-1",
       walletAddress: "0x123",
     })
-    expect(output.tradePlan.autonomy_decision).toBe("approve")
+    expect(output.plan.autonomy_decision).toBe("approve")
   })
 
   it("requires approval when size exceeds max", async () => {
@@ -175,7 +178,7 @@ describe("runPlanningPipeline", () => {
       userId: "user-1",
       walletAddress: "0x123",
     })
-    expect(output.tradePlan.autonomy_decision).toBe("approve")
+    expect(output.plan.autonomy_decision).toBe("approve")
   })
 
   it("throws PlanningError when all LLM perspectives fail", async () => {
@@ -189,9 +192,8 @@ describe("runPlanningPipeline", () => {
     ).rejects.toThrow("All 3 LLM perspectives failed")
   })
 
-  it("recovers from fetch failures with defaults", async () => {
-    mockFetchUserEquity.mockRejectedValue(new Error("API down"))
-    mockFetchCandlesForATR.mockRejectedValue(new Error("API down"))
+  it("recovers from non-fatal graph fetch failure", async () => {
+    mockQueryGraphPatterns.mockRejectedValue(new Error("DB down"))
 
     const output = await runPlanningPipeline({
       ddReport: mockDDReport,
@@ -199,21 +201,20 @@ describe("runPlanningPipeline", () => {
       walletAddress: "0x123",
     })
 
-    expect(output.tradePlan).toBeDefined()
-    expect(output.timing.totalMs).toBeGreaterThanOrEqual(0)
+    expect(output.plan).toBeDefined()
+    expect(output.plan.graph_patterns_used).toEqual([])
   })
 
-  it("falls back to best perspective when aggregator fails", async () => {
+  it("throws when aggregator fails", async () => {
     mockAggregatePerspectives.mockResolvedValue(null)
 
-    const output = await runPlanningPipeline({
-      ddReport: mockDDReport,
-      userId: "user-1",
-      walletAddress: "0x123",
-    })
-
-    expect(output.tradePlan).toBeDefined()
-    expect(output.tradePlan.confidence_score).toBeGreaterThanOrEqual(0)
+    await expect(
+      runPlanningPipeline({
+        ddReport: mockDDReport,
+        userId: "user-1",
+        walletAddress: "0x123",
+      })
+    ).rejects.toThrow("Aggregator LLM call failed")
   })
 
   it("handles empty graph patterns gracefully", async () => {
@@ -225,6 +226,6 @@ describe("runPlanningPipeline", () => {
       walletAddress: "0x123",
     })
 
-    expect(output.tradePlan.graph_patterns_used).toEqual([])
+    expect(output.plan.graph_patterns_used).toEqual([])
   })
 })

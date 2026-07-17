@@ -68,10 +68,10 @@ export const GraphPatternSchema = z.object({
 export type GraphPattern = z.infer<typeof GraphPatternSchema>
 
 export const RiskThresholdsSchema = z.object({
-  confidenceThreshold: z.number().int().min(0).max(100),
-  maxPositionUsdc: z.number().min(0),
-  maxLeverage: z.number().min(1),
-  riskPerTradePercent: z.number().min(0).max(100),
+  confidence_threshold: z.number().int().min(0).max(100),
+  max_position_usdc: z.number().min(0),
+  max_leverage: z.number().min(1),
+  risk_per_trade_percent: z.number().min(0).max(100),
 })
 export type RiskThresholds = z.infer<typeof RiskThresholdsSchema>
 

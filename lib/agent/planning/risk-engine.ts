@@ -12,7 +12,7 @@ import { createHLClient, fetchOnchainData } from "@/lib/data/hyperliquid"
  */
 export function computeATR(candles: CandleData[], period: number = 14): number {
   if (candles.length === 0 || candles.length < period + 1) {
-    return 0
+    throw new Error(`Insufficient candles for ATR(${period}): got ${candles.length}, need at least ${period + 1}`)
   }
 
   // Compute true range for each candle starting from index 1
@@ -35,6 +35,10 @@ export function computeATR(candles: CandleData[], period: number = 14): number {
   // Subsequent ATRs use exponential-style smoothing
   for (let i = period; i < trueRanges.length; i++) {
     atr = ((atr * (period - 1)) + trueRanges[i]) / period
+  }
+
+  if (atr === 0) {
+    throw new Error("ATR is zero — cannot compute meaningful SL/TP")
   }
 
   return atr
