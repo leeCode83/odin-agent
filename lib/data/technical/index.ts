@@ -2,6 +2,10 @@ import type { CandleData } from "@/lib/data/types"
 import { fetchCoinLorePrice } from "./coinlore"
 import { fetchCoinGeckoOHLC } from "./coingecko"
 
+/**
+ * @interface TechnicalOutput
+ * @description Standardized output for technical analysis data.
+ */
 export interface TechnicalOutput {
   candles1h: CandleData[]
   candles15m: CandleData[]
@@ -10,6 +14,13 @@ export interface TechnicalOutput {
   priceChange24h: number
 }
 
+/**
+ * @function fetchTechnicalData
+ * @description Orchestrates the fetching of technical data, prioritizing Hyperliquid, then CoinGecko, and finally CoinLore.
+ * @param {string} asset - The ticker symbol.
+ * @param {TechnicalOutput | null} hlTechnical - Existing Hyperliquid technical data, if available.
+ * @returns {Promise<TechnicalOutput | null>} Standardized technical data, or null if all sources fail.
+ */
 export async function fetchTechnicalData(
   asset: string,
   hlTechnical: TechnicalOutput | null

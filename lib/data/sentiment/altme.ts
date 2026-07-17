@@ -1,8 +1,17 @@
 import { withTimeout, withRetry } from "@/lib/utils"
 import type { FearGreedData } from "@/lib/data/fetch-utils"
 
+/**
+ * @constant BASE
+ * @description Base URL for the Alternative.me Fear & Greed Index API.
+ */
 const BASE = process.env.ALTERNATIVE_ME_BASE_URL || "https://api.alternative.me/fng/"
 
+/**
+ * @function fetchFearGreedIndex
+ * @description Fetches the current Fear & Greed index from Alternative.me.
+ * @returns {Promise<FearGreedData>} The numerical value and classification of the index.
+ */
 export async function fetchFearGreedIndex(): Promise<FearGreedData> {
   return withRetry(
     async () => {

@@ -8,6 +8,10 @@ import { generatePerspective, aggregatePerspectives } from "./llm"
 import { computeATR, computeSLTP, computePositionSize, capLeverage, computeEntryPrice } from "./risk-engine"
 import { autonomyGate } from "./gate"
 
+/**
+ * @class PlanningError
+ * @description Custom error class for errors occurring during the planning pipeline.
+ */
 export class PlanningError extends Error {
   constructor(message: string) {
     super(message)
@@ -15,6 +19,12 @@ export class PlanningError extends Error {
   }
 }
 
+/**
+ * @function runPlanningPipeline
+ * @description Executes the full trade planning pipeline, combining DD report analysis, risk thresholds, market data, and multiple LLM perspectives.
+ * @param {PlanningPipelineInput} input - The input containing the DD report, user ID, and wallet address.
+ * @returns {Promise<PlanningPipelineOutput>} The generated trade plan and execution timings.
+ */
 export async function runPlanningPipeline(
   input: PlanningPipelineInput
 ): Promise<PlanningPipelineOutput> {

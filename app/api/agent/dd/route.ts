@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { runDDPipeline } from "@/lib/agent/pipeline"
 import { DDReportSchema } from "@/lib/agent/types"
 
+/**
+ * @function POST
+ * @description API endpoint for running the Due Diligence (DD) pipeline.
+ * @param {NextRequest} req - The incoming Next.js request containing asset and userId.
+ * @returns {Promise<NextResponse>} JSON response containing the DD report or an error.
+ */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try {

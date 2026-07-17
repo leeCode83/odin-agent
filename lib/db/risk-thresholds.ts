@@ -2,6 +2,11 @@ import type { RiskThresholds } from "@/lib/agent/types"
 import { RiskThresholdsDocSchema } from "@/lib/db/arango-types"
 import { getDb } from "@/lib/db/arango-client"
 
+/**
+ * @function envDefaults
+ * @description Provides default risk thresholds based on environment variables.
+ * @returns {RiskThresholds} Default risk settings.
+ */
 function envDefaults(): RiskThresholds {
   return {
     confidenceThreshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 70,
@@ -11,6 +16,12 @@ function envDefaults(): RiskThresholds {
   }
 }
 
+/**
+ * @function getRiskThresholds
+ * @description Retrieves user-specific risk thresholds from the database, falling back to defaults.
+ * @param {string} userId - The ID of the user.
+ * @returns {Promise<RiskThresholds>} The active risk thresholds.
+ */
 export async function getRiskThresholds(userId: string): Promise<RiskThresholds> {
   try {
     const db = getDb()

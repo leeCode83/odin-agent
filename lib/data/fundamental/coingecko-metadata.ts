@@ -1,7 +1,15 @@
 import { withTimeout, withRetry } from "@/lib/utils"
 
+/**
+ * @constant BASE
+ * @description Base URL for CoinGecko API.
+ */
 const BASE = process.env.COINGECKO_BASE_URL || "https://api.coingecko.com/api/v3"
 
+/**
+ * @interface Metadata
+ * @description Represents the fundamental metadata retrieved from CoinGecko.
+ */
 interface Metadata {
   marketCap: number | null
   volume24h: number | null
@@ -12,6 +20,13 @@ interface Metadata {
   description: string | null
 }
 
+/**
+ * @function apiGet
+ * @description Helper function to perform GET requests with retry and timeout.
+ * @param {string} url - The URL to fetch.
+ * @returns {Promise<T | null>} The parsed JSON response or null on failure.
+ * @template T
+ */
 async function apiGet<T>(url: string): Promise<T | null> {
   return withRetry(
     async () => {
@@ -23,6 +38,12 @@ async function apiGet<T>(url: string): Promise<T | null> {
   ).catch(() => null)
 }
 
+/**
+ * @function fetchMetadata
+ * @description Fetches market and description metadata for a specific coin from CoinGecko.
+ * @param {string} id - The CoinGecko ID of the asset.
+ * @returns {Promise<Metadata>} An object containing market cap, supply, ATH, and description data.
+ */
 export async function fetchMetadata(id: string): Promise<Metadata> {
   const url = `${BASE}/coins/${id}?localization=false&tickers=false&community_data=true&developer_data=true`
   const data = await apiGet<{

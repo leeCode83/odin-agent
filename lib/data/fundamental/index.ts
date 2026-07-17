@@ -1,6 +1,10 @@
 import { fetchMetadata } from "./coingecko-metadata"
 import { fetchPublicDropData } from "./publicdrop"
 
+/**
+ * @interface FundamentalOutput
+ * @description Standardized output for fundamental asset data from various providers.
+ */
 export interface FundamentalOutput {
   marketCap: number | null
   totalVolume24h: number | null
@@ -11,6 +15,13 @@ export interface FundamentalOutput {
   description: string | null
 }
 
+/**
+ * @function fetchFundamentalData
+ * @description Orchestrates the fetching of fundamental data, falling back to PublicDrop if CoinGecko fails.
+ * @param {string | null} cgId - The CoinGecko ID for the asset, if available.
+ * @param {string} asset - The ticker symbol or standard name of the asset.
+ * @returns {Promise<FundamentalOutput | null>} The standardized fundamental data, or null if all sources fail.
+ */
 export async function fetchFundamentalData(cgId: string | null, asset: string): Promise<FundamentalOutput | null> {
   const cg = cgId ? await fetchMetadata(cgId).catch(() => null) : null
   if (cg) {

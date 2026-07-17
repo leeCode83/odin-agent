@@ -1,6 +1,10 @@
 import type { OnchainData } from "@/lib/data/types"
 import { fetchBinanceOnchain } from "./binance"
 
+/**
+ * @interface OnchainOutput
+ * @description Standardized output for on-chain and derivative data.
+ */
 export interface OnchainOutput {
   fundingRate: number
   openInterest: number
@@ -11,6 +15,13 @@ export interface OnchainOutput {
   oiCapReached: boolean
 }
 
+/**
+ * @function fetchOnchainData
+ * @description Orchestrates the fetching of on-chain/derivative data, prioritizing Hyperliquid and falling back to Binance Futures.
+ * @param {string} asset - The ticker symbol or asset name.
+ * @param {OnchainData | null} hlOnchain - Existing Hyperliquid onchain data, if available.
+ * @returns {Promise<OnchainOutput | null>} Standardized on-chain data, or null if all sources fail.
+ */
 export async function fetchOnchainData(
   asset: string,
   hlOnchain: OnchainData | null

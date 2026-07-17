@@ -2,6 +2,13 @@ import type { GraphPattern } from "@/lib/agent/types"
 import { GraphCollectionNames } from "@/lib/db/arango-types"
 import { getDb } from "@/lib/db/arango-client"
 
+/**
+ * @function queryGraphPatterns
+ * @description Queries the ArangoDB graph for trading patterns and decision frequencies.
+ * @param {string} asset - The asset to query for.
+ * @param {string} category - The category of the asset.
+ * @returns {Promise<GraphPattern[]>} Array of historical patterns and outcomes.
+ */
 export async function queryGraphPatterns(
   asset: string,
   category: string

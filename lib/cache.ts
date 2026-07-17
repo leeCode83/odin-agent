@@ -1,8 +1,18 @@
+/**
+ * @interface CacheEntry
+ * @description Represents a cached item with an expiration timestamp.
+ * @template T
+ */
 interface CacheEntry<T> {
   value: T
   expiresAt: number
 }
 
+/**
+ * @class Cached
+ * @description A simple generic in-memory key-value cache with TTL expiration.
+ * @template T
+ */
 export class Cached<T> {
   private store = new Map<string, CacheEntry<T>>()
 

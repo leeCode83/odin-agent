@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { DDReportSchema } from "@/lib/agent/types"
 
+/**
+ * @function POST
+ * @description API endpoint for running the Planning pipeline based on a DD report.
+ * @param {NextRequest} req - The incoming Next.js request containing ddReport, userId, and walletAddress.
+ * @returns {Promise<NextResponse>} JSON response containing the execution plan or an error.
+ */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
   try {

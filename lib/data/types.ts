@@ -1,3 +1,7 @@
+/**
+ * @interface CandleData
+ * @description Represents a single OHLCV candlestick.
+ */
 export interface CandleData {
   timestamp: number;
   open: number;
@@ -7,6 +11,10 @@ export interface CandleData {
   volume: number;
 }
 
+/**
+ * @interface OnchainData
+ * @description Standardized representation of on-chain and derivative market data.
+ */
 export interface OnchainData {
   fundingRate: number;
   openInterest: number;
@@ -17,12 +25,20 @@ export interface OnchainData {
   oiCapReached: boolean;
 }
 
+/**
+ * @interface SentimentData
+ * @description Standardized representation of market sentiment data.
+ */
 export interface SentimentData {
   fearGreedIndex: number | null;
   fearGreedClassification: string | null;
   trendingRank: number | null;
 }
 
+/**
+ * @interface FundamentalData
+ * @description Standardized representation of fundamental asset properties.
+ */
 export interface FundamentalData {
   marketCap: number | null;
   totalVolume24h: number | null;
@@ -33,6 +49,10 @@ export interface FundamentalData {
   description: string | null;
 }
 
+/**
+ * @interface RawFactorData
+ * @description Aggregates all raw factor data streams into a single structured object.
+ */
 export interface RawFactorData {
   technical: {
     candles1h: CandleData[];

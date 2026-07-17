@@ -37,12 +37,20 @@ Return a JSON object with:
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant PERSPECTIVE_SYSTEM_PROMPTS
+ * @description Mapping of perspective types (conservative, balance, aggressive) to their system prompts.
+ */
 export const PERSPECTIVE_SYSTEM_PROMPTS: Record<Perspective, string> = {
   conservative: CONSERVATIVE_PROMPT,
   balance: BALANCE_PROMPT,
   aggressive: AGGRESSIVE_PROMPT,
 }
 
+/**
+ * @constant AGGREGATOR_SYSTEM_PROMPT
+ * @description System prompt for the aggregator LLM that synthesizes multiple perspectives.
+ */
 export const AGGREGATOR_SYSTEM_PROMPT = `You are a senior portfolio manager reconciling three analyst perspectives (conservative/balance/aggressive). Synthesize them into unified trade thesis. Weigh each by strength of reasoning.
 
 Return a JSON object with:
@@ -54,6 +62,13 @@ Return a JSON object with:
 
 Return ONLY valid JSON.`
 
+/**
+ * @function PERSPECTIVE_USER_PROMPT
+ * @description Generates the user prompt for a perspective LLM based on the DD report and graph patterns.
+ * @param {DDReport} ddReport - The due diligence report.
+ * @param {GraphPattern[]} graphPatterns - Historical graph patterns.
+ * @returns {string} The formatted user prompt.
+ */
 export function PERSPECTIVE_USER_PROMPT(ddReport: DDReport, graphPatterns: GraphPattern[]): string {
   const sections = ddReport.sections
   const tech = sections.technical
@@ -119,6 +134,12 @@ export function PERSPECTIVE_USER_PROMPT(ddReport: DDReport, graphPatterns: Graph
   return parts.join("\n")
 }
 
+/**
+ * @function AGGREGATOR_USER_PROMPT
+ * @description Generates the user prompt for the aggregator LLM based on the generated perspectives.
+ * @param {PerspectiveResult[]} results - The perspective results.
+ * @returns {string} The formatted user prompt.
+ */
 export function AGGREGATOR_USER_PROMPT(results: PerspectiveResult[]): string {
   const parts: string[] = []
 

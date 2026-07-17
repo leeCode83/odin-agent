@@ -1,5 +1,13 @@
+/**
+ * @type Factor
+ * @description The four pillars of analysis: technical, onchain, sentiment, and fundamental.
+ */
 type Factor = "technical" | "onchain" | "sentiment" | "fundamental"
 
+/**
+ * @interface CategoryConfig
+ * @description Configuration defining which analysis factors are active for a specific asset category.
+ */
 export interface CategoryConfig {
   name: string
   activeFactors: Factor[]
@@ -48,22 +56,46 @@ const COINLORE_ID: Record<string, string> = {
   UNI: "4567", AAVE: "3374", LINK: "5033", DOGE: "2", PEPE: "5200", WIF: "5230",
 }
 
+/**
+ * @function getCategory
+ * @description Retrieves the full category configuration (active factors) for a given asset.
+ * @param {string} asset - The asset ticker (e.g., "BTC", "DOGE").
+ * @returns {CategoryConfig | null} The category configuration or null if not found.
+ */
 export function getCategory(asset: string): CategoryConfig | null {
   const ticker = asset.toUpperCase()
   const categoryName = ASSET_CATEGORIES[ticker] ?? "major"
   return CATEGORY_MAP[categoryName] ?? null
 }
 
+/**
+ * @function getCategoryName
+ * @description Gets the category name string for a given asset. Defaults to "major".
+ * @param {string} asset - The asset ticker.
+ * @returns {string} The name of the category (e.g., "major", "meme", "layer1").
+ */
 export function getCategoryName(asset: string): string {
   const ticker = asset.toUpperCase()
   return ASSET_CATEGORIES[ticker] ?? "major"
 }
 
+/**
+ * @function getCoinGeckoId
+ * @description Looks up the CoinGecko API ID for a given asset ticker.
+ * @param {string} asset - The asset ticker.
+ * @returns {string | null} The CoinGecko ID or null if not mapped.
+ */
 export function getCoinGeckoId(asset: string): string | null {
   const ticker = asset.toUpperCase()
   return COINGECKO_ID[ticker] ?? null
 }
 
+/**
+ * @function getCoinLoreId
+ * @description Looks up the CoinLore API ID for a given asset ticker.
+ * @param {string} asset - The asset ticker.
+ * @returns {string | null} The CoinLore ID or null if not mapped.
+ */
 export function getCoinLoreId(asset: string): string | null {
   const ticker = asset.toUpperCase()
   return COINLORE_ID[ticker] ?? null

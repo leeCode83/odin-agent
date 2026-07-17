@@ -1,5 +1,9 @@
 import { z } from "zod"
 
+/**
+ * @constant SectionResultSchema
+ * @description Zod schema for a single section's analysis result.
+ */
 export const SectionResultSchema = z.object({
   score: z.number().int().min(0).max(100).nullable(),
   summary: z.string().nullable(),
@@ -10,6 +14,10 @@ export const SECTION_KEYS = ["technical", "onchain", "sentiment", "fundamental"]
 
 const SectionKey = z.enum(SECTION_KEYS)
 
+/**
+ * @constant DDReportSchema
+ * @description Zod schema for the full Due Diligence report.
+ */
 export const DDReportSchema = z.object({
   asset: z.string(),
   category: z.string(),
@@ -67,6 +75,10 @@ export const RiskThresholdsSchema = z.object({
 })
 export type RiskThresholds = z.infer<typeof RiskThresholdsSchema>
 
+/**
+ * @constant TradePlanSchema
+ * @description Zod schema for the generated trade plan.
+ */
 export const TradePlanSchema = z.object({
   asset: z.string(),
   side: SideSchema,

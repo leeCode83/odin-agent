@@ -23,6 +23,13 @@ function getClient(): OpenAI | null {
   return client
 }
 
+/**
+ * @function analyzeSection
+ * @description Analyzes a specific due diligence factor using the DeepSeek LLM.
+ * @param {string} factor - The due diligence factor (e.g., technical, onchain).
+ * @param {unknown} rawData - The raw data to be analyzed.
+ * @returns {Promise<{ score: number | null; summary: string | null; signals: string[] }>} Analysis results containing score, summary, and signals.
+ */
 export async function analyzeSection(factor: string, rawData: unknown): Promise<{ score: number | null; summary: string | null; signals: string[] }> {
   const c = getClient()
   if (!c) return { score: null, summary: null, signals: [] }
@@ -66,6 +73,14 @@ export async function analyzeSection(factor: string, rawData: unknown): Promise<
   }
 }
 
+/**
+ * @function synthesizeSections
+ * @description Synthesizes multiple section analyses into a unified due diligence report using the DeepSeek LLM.
+ * @param {string} asset - The asset ticker.
+ * @param {string} category - The category of the asset.
+ * @param {Record<string, { score: number | null; summary: string | null; signals: string[] }>} sections - The analyzed sections.
+ * @returns {Promise<{ thesis: string; confidence: number; flags: string[]; errors: string[] }>} The synthesized thesis, confidence score, risk flags, and any errors.
+ */
 export async function synthesizeSections(
   asset: string,
   category: string,

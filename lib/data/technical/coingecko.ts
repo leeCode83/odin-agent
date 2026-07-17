@@ -11,10 +11,25 @@ import { withTimeout, withRetry } from "@/lib/utils"
 import type { CandleData } from "@/lib/data/types"
 import { getCoinGeckoId } from "@/lib/asset-categories"
 
+/**
+ * @constant BASE
+ * @description Base URL for CoinGecko API.
+ */
 const BASE = process.env.COINGECKO_BASE_URL || "https://api.coingecko.com/api/v3"
 
+/**
+ * @type OHLCData
+ * @description Array representing [timestamp, open, high, low, close].
+ */
 type OHLCData = [number, number, number, number, number]
 
+/**
+ * @function fetchOHLC
+ * @description Fetches OHLC data from CoinGecko for a specified number of days.
+ * @param {string} id - The CoinGecko ID of the asset.
+ * @param {1 | 7 | 30} days - The timeframe to fetch data for.
+ * @returns {Promise<OHLCData[] | null>} Array of OHLC data or null on failure.
+ */
 async function fetchOHLC(id: string, days: 1 | 7 | 30): Promise<OHLCData[] | null> {
   return withRetry(
     async () => {
@@ -30,6 +45,12 @@ async function fetchOHLC(id: string, days: 1 | 7 | 30): Promise<OHLCData[] | nul
   ).catch(() => null)
 }
 
+/**
+ * @function toCandleData
+ * @description Converts CoinGecko OHLC tuple format into standard CandleData.
+ * @param {OHLCData} d - The OHLC data tuple.
+ * @returns {CandleData} The formatted CandleData object.
+ */
 function toCandleData(d: OHLCData): CandleData {
   return {
     timestamp: d[0],
@@ -41,6 +62,12 @@ function toCandleData(d: OHLCData): CandleData {
   }
 }
 
+/**
+ * @function fetchCoinGeckoOHLC
+ * @description Fetches 1h and 1d proxy candle data from CoinGecko.
+ * @param {string} asset - The ticker symbol.
+ * @returns {Promise<{ candles1h: CandleData[]; candles15m: CandleData[]; candles1d: CandleData[]; currentPrice: number; priceChange24h: number } | null>} The formatted technical data or null on failure.
+ */
 export async function fetchCoinGeckoOHLC(asset: string): Promise<{
   candles1h: CandleData[]
   candles15m: CandleData[]

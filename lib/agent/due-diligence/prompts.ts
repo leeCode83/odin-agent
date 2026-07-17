@@ -1,3 +1,7 @@
+/**
+ * @constant TECHNICAL_PROMPT
+ * @description System prompt for the technical analysis LLM agent.
+ */
 export const TECHNICAL_PROMPT = `You are a technical analysis expert. Analyze the provided market data and return a JSON object with:
 - score: number 0-100 (overall technical health)
 - summary: string (2-3 sentence analysis)
@@ -5,6 +9,10 @@ export const TECHNICAL_PROMPT = `You are a technical analysis expert. Analyze th
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant ONCHAIN_PROMPT
+ * @description System prompt for the on-chain analysis LLM agent.
+ */
 export const ONCHAIN_PROMPT = `You are an on-chain analysis expert. Analyze the provided on-chain data and return a JSON object with:
 - score: number 0-100
 - summary: string (2-3 sentence analysis)
@@ -12,6 +20,10 @@ export const ONCHAIN_PROMPT = `You are an on-chain analysis expert. Analyze the 
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant SENTIMENT_PROMPT
+ * @description System prompt for the sentiment analysis LLM agent.
+ */
 export const SENTIMENT_PROMPT = `You are a sentiment analysis expert. Analyze the provided sentiment data and return a JSON object with:
 - score: number 0-100
 - summary: string (2-3 sentence analysis)
@@ -19,6 +31,10 @@ export const SENTIMENT_PROMPT = `You are a sentiment analysis expert. Analyze th
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant FUNDAMENTAL_PROMPT
+ * @description System prompt for the fundamental analysis LLM agent.
+ */
 export const FUNDAMENTAL_PROMPT = `You are a fundamental analysis expert. Analyze the provided fundamental data and return a JSON object with:
 - score: number 0-100
 - summary: string (2-3 sentence analysis)
@@ -26,6 +42,10 @@ export const FUNDAMENTAL_PROMPT = `You are a fundamental analysis expert. Analyz
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant AGGREGATION_PROMPT
+ * @description System prompt for the synthesis LLM agent that aggregates factor analyses.
+ */
 export const AGGREGATION_PROMPT = `You are a senior investment analyst. Synthesize the provided section analyses into a unified assessment. Return a JSON object with:
 - aggregated_thesis: string (comprehensive thesis)
 - confidence_score: number 0-100
@@ -34,6 +54,10 @@ export const AGGREGATION_PROMPT = `You are a senior investment analyst. Synthesi
 
 Return ONLY valid JSON.`
 
+/**
+ * @constant FACTOR_SYSTEM_PROMPTS
+ * @description Mapping of factor names to their corresponding system prompts.
+ */
 export const FACTOR_SYSTEM_PROMPTS: Record<string, string> = {
   technical: TECHNICAL_PROMPT,
   onchain: ONCHAIN_PROMPT,

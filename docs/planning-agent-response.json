@@ -1,0 +1,37 @@
+{
+    "tradePlan": {
+        "asset": "BTC",
+        "side": "long",
+        "entry_price": 62992,
+        "position_size_usdc": 0,
+        "position_size_contracts": 0,
+        "stop_loss": 62151.79,
+        "take_profit": 64672.41,
+        "leverage": 5,
+        "confidence_score": 53,
+        "confidence_breakdown": {
+            "factor_alignment": 70,
+            "historical_match": 50,
+            "signal_strength": 40
+        },
+        "thesis": "Bitcoin is approaching key support near $62,500 after a high-volume selloff, with extreme fear sentiment (Fear & Greed 27) and strong fundamentals (institutional adoption, scarcity) suggesting a potential bounce. However, short-term bearish momentum and mixed technical signals warrant caution. The unified trade favors a cautious long entry with a tight stop below support, as risk-reward asymmetry supports a bullish bias, but confirmation (e.g., reversal pattern, volume shift) is recommended before full commitment.",
+        "reasoning": "The conservative perspective highlights bearish technical breakdown and requires confirmation, aligning with the need for caution. However, both the balance and aggressive perspectives emphasize the contrarian bullish signal of extreme fear, strong fundamentals, and approaching support, offering a favorable risk-reward for a bounce. The balance perspective provides a moderate confidence with a 2x leverage and tight stop, while the aggressive perspective leverages higher conviction (60 confidence) with 5x leverage but acknowledges downside risk. Synthesizing, the most coherent direction is long, but with conservative risk management—tighter stop and lower leverage—to mitigate the mixed signals. The low confidence (30) from conservative reduces overall conviction, resulting in a moderate confidence score of 50.",
+        "autonomy_decision": "approve",
+        "risk_flags": [
+            "Short-term bearish trend breakdown",
+            "High fear sentiment (27 on Fear & Greed)",
+            "Potential for further decline below support",
+            "Volume spike may indicate panic but could also be capitulation"
+        ],
+        "graph_patterns_used": [],
+        "timestamp": "2026-07-17T09:07:32.790Z"
+    },
+    "timing": {
+        "equityMs": 3019,
+        "candleMs": 3019,
+        "graphMs": 3019,
+        "llmMs": 9543,
+        "riskMs": 9718,
+        "totalMs": 22280
+    }
+}

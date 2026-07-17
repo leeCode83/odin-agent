@@ -40,6 +40,10 @@ interface RawFactorFundamental {
   description: string | null
 }
 
+/**
+ * @interface RawFactorData
+ * @description Aggregated raw data across all four factors (technical, onchain, sentiment, fundamental).
+ */
 export interface RawFactorData {
   technical: RawFactorTechnical | null
   onchain: RawFactorOnchain | null
@@ -47,6 +51,13 @@ export interface RawFactorData {
   fundamental: RawFactorFundamental | null
 }
 
+/**
+ * @function fetchAllRawData
+ * @description Fetches all raw data for the active factors of a given asset's category.
+ * @param {string} asset - The ticker symbol or name of the asset.
+ * @param {CategoryConfig} category - The category configuration for the asset, determining which factors to fetch.
+ * @returns {Promise<RawFactorData>} The aggregated raw data. Unfetched factors will be null.
+ */
 export async function fetchAllRawData(asset: string, category: CategoryConfig): Promise<RawFactorData> {
   const active = new Set(category.activeFactors)
   const cgId = getCoinGeckoId(asset)
