@@ -9,14 +9,9 @@
 
 import { withTimeout, withRetry } from "@/lib/utils"
 import type { CandleData } from "@/lib/data/types"
+import { getCoinGeckoId } from "@/lib/asset-categories"
 
 const BASE = process.env.COINGECKO_BASE_URL || "https://api.coingecko.com/api/v3"
-
-const COINGECKO_ID: Record<string, string> = {
-  BTC: "bitcoin", ETH: "ethereum", SOL: "solana", SUI: "sui",
-  AVAX: "avalanche-2", UNI: "uniswap", AAVE: "aave", LINK: "chainlink",
-  DOGE: "dogecoin", PEPE: "pepe", WIF: "dogwifcoin",
-}
 
 type OHLCData = [number, number, number, number, number]
 
@@ -54,7 +49,7 @@ export async function fetchCoinGeckoOHLC(asset: string): Promise<{
   priceChange24h: number
 } | null> {
   const ticker = asset.toUpperCase()
-  const id = COINGECKO_ID[ticker]
+  const id = getCoinGeckoId(ticker)
   if (!id) return null
 
   // days=1 gives ~30min candles (closest to 1h), days=7 gives ~4h candles (daily proxy)
