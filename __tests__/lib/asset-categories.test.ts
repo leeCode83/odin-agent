@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { getCategory, getCategoryName, getCoinGeckoId } from "@/lib/asset-categories"
+import { getCategory, getCategoryName, getCoinGeckoId, getCoinLoreId } from "@/lib/asset-categories"
 
 describe("getCategory", () => {
   it("returns major category for BTC", () => {
@@ -64,5 +64,17 @@ describe("getCoinGeckoId", () => {
   })
   it("returns null for unknown", () => {
     expect(getCoinGeckoId("ZZZ")).toBeNull()
+  })
+})
+
+describe("getCoinLoreId", () => {
+  it("returns '90' for BTC", () => {
+    expect(getCoinLoreId("BTC")).toBe("90")
+  })
+  it("returns '2' for DOGE", () => {
+    expect(getCoinLoreId("DOGE")).toBe("2")
+  })
+  it("returns null for unknown", () => {
+    expect(getCoinLoreId("ZZZ")).toBeNull()
   })
 })

@@ -13,14 +13,32 @@ vi.mock("@/lib/data/hyperliquid", () => ({
   }),
 }))
 
-vi.mock("@/lib/data/coingecko", () => ({
-  fetchPrice: vi.fn().mockResolvedValue({ usd: 70500, change24h: 2.5 }),
-  fetchMetadata: vi.fn().mockResolvedValue({ marketCap: 1.2e12, totalVolume24h: 5e10, circulatingSupply: 1.9e7, totalSupply: 2.1e7, athPrice: 69000, athChangePercent: -5.8, description: "Bitcoin" }),
-  fetchTrending: vi.fn().mockResolvedValue([{ id: "bitcoin", symbol: "BTC", name: "Bitcoin", market_cap_rank: 1 }]),
+vi.mock("@/lib/data/sentiment", () => ({
+  fetchSentimentData: vi.fn().mockResolvedValue({
+    fearGreedIndex: 45,
+    fearGreedClassification: "Fear",
+    trendingRank: 1,
+  }),
 }))
 
-vi.mock("@/lib/data/sentiment", () => ({
-  fetchFearGreedIndex: vi.fn().mockResolvedValue({ value: 45, classification: "Fear" }),
+vi.mock("@/lib/data/fundamental", () => ({
+  fetchFundamentalData: vi.fn().mockResolvedValue({
+    marketCap: 1.2e12,
+    totalVolume24h: 5e10,
+    circulatingSupply: 1.9e7,
+    totalSupply: 2.1e7,
+    athPrice: 69000,
+    athChangePercent: -5.8,
+    description: "Bitcoin",
+  }),
+}))
+
+vi.mock("@/lib/data/technical", () => ({
+  fetchTechnicalData: vi.fn().mockImplementation(async (_asset: string, hlTechnical: unknown) => hlTechnical),
+}))
+
+vi.mock("@/lib/data/onchain", () => ({
+  fetchOnchainData: vi.fn().mockImplementation(async (_asset: string, hlOnchain: unknown) => hlOnchain),
 }))
 
 const majorCategory = { name: "major", activeFactors: ["technical", "onchain", "sentiment", "fundamental"] }
@@ -45,6 +63,12 @@ describe("fetchAllRawData", () => {
   it("handles partial failure (HL down, CG up)", async () => {
     const hl = await import("@/lib/data/hyperliquid")
     vi.mocked(hl.fetchAllHLData).mockRejectedValueOnce(new Error("HL down"))
+
+    const technical = await import("@/lib/data/technical")
+    vi.mocked(technical.fetchTechnicalData).mockResolvedValueOnce(null)
+    const onchain = await import("@/lib/data/onchain")
+    vi.mocked(onchain.fetchOnchainData).mockResolvedValueOnce(null)
+
     const data = await fetchAllRawData("BTC", majorCategory as unknown as CategoryConfig)
     expect(data).toBeDefined()
   })

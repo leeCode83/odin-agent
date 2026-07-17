@@ -1,5 +1,5 @@
 import OpenAI from "openai"
-import { FACTOR_SYSTEM_PROMPTS, AGGREGATION_PROMPT } from "@/lib/agent/prompts"
+import { FACTOR_SYSTEM_PROMPTS, AGGREGATION_PROMPT } from "@/lib/agent/due-diligence/prompts"
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"

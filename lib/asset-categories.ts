@@ -43,6 +43,11 @@ const COINGECKO_ID: Record<string, string> = {
   WIF: "dogwifcoin",
 }
 
+const COINLORE_ID: Record<string, string> = {
+  BTC: "90", ETH: "80", SOL: "485", SUI: "2908", AVAX: "2836",
+  UNI: "4567", AAVE: "3374", LINK: "5033", DOGE: "2", PEPE: "5200", WIF: "5230",
+}
+
 export function getCategory(asset: string): CategoryConfig | null {
   const ticker = asset.toUpperCase()
   const categoryName = ASSET_CATEGORIES[ticker] ?? "major"
@@ -57,4 +62,9 @@ export function getCategoryName(asset: string): string {
 export function getCoinGeckoId(asset: string): string | null {
   const ticker = asset.toUpperCase()
   return COINGECKO_ID[ticker] ?? null
+}
+
+export function getCoinLoreId(asset: string): string | null {
+  const ticker = asset.toUpperCase()
+  return COINLORE_ID[ticker] ?? null
 }

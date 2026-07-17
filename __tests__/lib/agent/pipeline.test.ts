@@ -10,7 +10,7 @@ vi.mock("@/lib/data/providers", () => ({
   fetchAllRawData: vi.fn(),
 }))
 
-vi.mock("@/lib/agent/llm", () => ({
+vi.mock("@/lib/agent/due-diligence/llm", () => ({
   analyzeSection: vi.fn(),
   synthesizeSections: vi.fn(),
 }))
@@ -18,7 +18,7 @@ vi.mock("@/lib/agent/llm", () => ({
 import { getCategory, getCategoryName } from "@/lib/asset-categories"
 import { fetchAllRawData } from "@/lib/data/providers"
 import type { RawFactorData } from "@/lib/data/providers"
-import { analyzeSection, synthesizeSections } from "@/lib/agent/llm"
+import { analyzeSection, synthesizeSections } from "@/lib/agent/due-diligence/llm"
 
 const MOCK_SECTION = { score: 70, summary: "bullish", signals: ["signal"] }
 const MOCK_SYNTHESIS = { thesis: "BTC looks good", confidence: 75, flags: [], errors: [] }

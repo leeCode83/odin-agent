@@ -1,14 +1,15 @@
 import { fetchAllHLData } from "@/lib/data/hyperliquid"
-import { fetchMetadata, fetchTrending } from "@/lib/data/coingecko"
-import { fetchFearGreedIndex } from "@/lib/data/sentiment"
+import { fetchTechnicalData } from "@/lib/data/technical"
+import { fetchOnchainData } from "@/lib/data/onchain"
+import { fetchSentimentData } from "@/lib/data/sentiment"
+import { fetchFundamentalData } from "@/lib/data/fundamental"
 import { getCoinGeckoId } from "@/lib/asset-categories"
 import type { CategoryConfig } from "@/lib/asset-categories"
-import type { CandleData } from "@/lib/data/types"
 
 interface RawFactorTechnical {
-  candles1h: CandleData[]
-  candles15m: CandleData[]
-  candles1d: CandleData[]
+  candles1h: import("@/lib/data/types").CandleData[]
+  candles15m: import("@/lib/data/types").CandleData[]
+  candles1d: import("@/lib/data/types").CandleData[]
   currentPrice: number
   priceChange24h: number
 }
@@ -50,40 +51,27 @@ export async function fetchAllRawData(asset: string, category: CategoryConfig): 
   const active = new Set(category.activeFactors)
   const cgId = getCoinGeckoId(asset)
 
-  const hlPromise = active.has("technical") || active.has("onchain")
-    ? fetchAllHLData(asset).catch(() => null)
-    : Promise.resolve(null)
+  const hlData = active.has("technical") || active.has("onchain")
+    ? await fetchAllHLData(asset).catch(() => null)
+    : null
 
-  const metadataPromise = cgId && active.has("fundamental")
-    ? fetchMetadata(cgId)
-    : Promise.resolve(null)
-
-  const trendingPromise = active.has("sentiment")
-    ? fetchTrending()
-    : Promise.resolve(null)
-
-  const fgPromise = active.has("sentiment")
-    ? fetchFearGreedIndex()
-    : Promise.resolve(null)
-
-  const [hlData, metadataData, trendingData, fgData] = await Promise.all([
-    hlPromise, metadataPromise, trendingPromise, fgPromise,
+  const [technical, onchain, sentiment, fundamental] = await Promise.all([
+    active.has("technical")
+      ? fetchTechnicalData(asset, hlData ? {
+          candles1h: hlData.candles1h, candles15m: hlData.candles15m, candles1d: hlData.candles1d,
+          currentPrice: hlData.currentPrice, priceChange24h: hlData.priceChange24h,
+        } : null)
+      : Promise.resolve(null),
+    active.has("onchain")
+      ? fetchOnchainData(asset, hlData?.onchain ?? null)
+      : Promise.resolve(null),
+    active.has("sentiment")
+      ? fetchSentimentData()
+      : Promise.resolve(null),
+    cgId && active.has("fundamental")
+      ? fetchFundamentalData(cgId, asset)
+      : Promise.resolve(null),
   ])
 
-  return {
-    technical: hlData
-      ? { candles1h: hlData.candles1h, candles15m: hlData.candles15m, candles1d: hlData.candles1d, currentPrice: hlData.currentPrice, priceChange24h: hlData.priceChange24h }
-      : null,
-    onchain: hlData ? hlData.onchain : null,
-    sentiment: fgData ? { fearGreedIndex: fgData.value, fearGreedClassification: fgData.classification, trendingRank: trendingData ? 1 : null } : null,
-    fundamental: metadataData ? {
-      marketCap: metadataData.marketCap,
-      totalVolume24h: metadataData.volume24h,
-      circulatingSupply: metadataData.circulatingSupply,
-      totalSupply: metadataData.totalSupply,
-      athPrice: metadataData.ath,
-      athChangePercent: metadataData.athChange,
-      description: metadataData.description,
-    } : null,
-  }
+  return { technical, onchain, sentiment, fundamental }
 }

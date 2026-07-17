@@ -1,1 +1,1 @@
-export { runDDPipeline } from "@/lib/due-diligence/pipeline"
+export { runDDPipeline } from "@/lib/agent/due-diligence/pipeline"

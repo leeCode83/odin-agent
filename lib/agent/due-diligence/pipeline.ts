@@ -1,6 +1,6 @@
 import { getCategory, getCategoryName } from "@/lib/asset-categories"
 import { fetchAllRawData } from "@/lib/data/providers"
-import { analyzeSection, synthesizeSections } from "@/lib/agent/llm"
+import { analyzeSection, synthesizeSections } from "@/lib/agent/due-diligence/llm"
 import type { DDPipelineInput, DDPipelineOutput, DDReport, Factor, SectionResult } from "@/lib/agent/types"
 
 function emptySection(): SectionResult {

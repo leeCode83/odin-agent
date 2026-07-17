@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { fetchFearGreedIndex } from "@/lib/data/sentiment"
+import { fetchFearGreedIndex } from "@/lib/data/sentiment/altme"
 
 describe("fetchFearGreedIndex", () => {
   it("returns fear greed data", async () => {

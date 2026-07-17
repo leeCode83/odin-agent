@@ -1,26 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
-import { fetchPrice, fetchTrending, fetchMetadata } from "@/lib/data/coingecko"
-
-describe("fetchPrice", () => {
-  it("returns price data for a valid coin", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: vi.fn().mockResolvedValue({ bitcoin: { usd: 65000, usd_24h_change: 2.5 } }),
-    }))
-    const result = await fetchPrice("bitcoin")
-    expect(result).toHaveProperty("usd")
-    expect(result).toHaveProperty("change24h")
-    expect(result!.usd).toBe(65000)
-    vi.unstubAllGlobals()
-  })
-
-  it("returns null on API error", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429 }))
-    const result = await fetchPrice("bitcoin")
-    expect(result).toBeNull()
-    vi.unstubAllGlobals()
-  })
-})
+import { fetchTrending } from "@/lib/data/sentiment/coingecko"
+import { fetchMetadata } from "@/lib/data/fundamental/coingecko-metadata"
 
 describe("fetchTrending", () => {
   it("returns trending assets", async () => {

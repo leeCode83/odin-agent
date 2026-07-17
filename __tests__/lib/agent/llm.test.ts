@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { analyzeSection, synthesizeSections } from "@/lib/agent/llm"
+import { analyzeSection, synthesizeSections } from "@/lib/agent/due-diligence/llm"
 
 vi.mock("openai", () => {
   const mockCreate = vi.fn()
