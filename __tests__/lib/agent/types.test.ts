@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest"
-import { SectionResultSchema, DDReportSchema, SECTION_KEYS } from "@/lib/agent/types"
+import {
+  SectionResultSchema, DDReportSchema, SECTION_KEYS,
+  SideSchema, AutonomyDecisionSchema, ConfidenceBreakdownSchema,
+  GraphPatternSchema, RiskThresholdsSchema, TradePlanSchema,
+} from "@/lib/agent/types"
 
 describe("SECTION_KEYS", () => {
   it("contains all 4 factors", () => {
@@ -93,5 +97,87 @@ describe("DDReportSchema", () => {
       ...validReport,
       confidence_score: 200,
     })).toThrow()
+  })
+})
+
+describe("SideSchema", () => {
+  it("accepts long", () => {
+    expect(SideSchema.parse("long")).toBe("long")
+  })
+  it("accepts short", () => {
+    expect(SideSchema.parse("short")).toBe("short")
+  })
+  it("rejects invalid side", () => {
+    expect(() => SideSchema.parse("buy")).toThrow()
+  })
+})
+
+describe("AutonomyDecisionSchema", () => {
+  it("accepts auto", () => {
+    expect(AutonomyDecisionSchema.parse("auto")).toBe("auto")
+  })
+  it("accepts approve", () => {
+    expect(AutonomyDecisionSchema.parse("approve")).toBe("approve")
+  })
+})
+
+describe("ConfidenceBreakdownSchema", () => {
+  const valid = { factor_alignment: 80, historical_match: 50, signal_strength: 70 }
+  it("validates complete breakdown", () => {
+    expect(ConfidenceBreakdownSchema.parse(valid)).toEqual(valid)
+  })
+  it("rejects score outside 0-100", () => {
+    expect(() => ConfidenceBreakdownSchema.parse({ ...valid, factor_alignment: 150 })).toThrow()
+  })
+})
+
+describe("GraphPatternSchema", () => {
+  it("validates graph pattern", () => {
+    const result = GraphPatternSchema.parse({ pattern: "BTC rsi oversold", outcome: "profit", frequency: 3 })
+    expect(result.frequency).toBe(3)
+  })
+})
+
+describe("RiskThresholdsSchema", () => {
+  const valid = { confidenceThreshold: 70, maxPositionUsdc: 100, maxLeverage: 10, riskPerTradePercent: 1 }
+  it("validates complete thresholds", () => {
+    expect(RiskThresholdsSchema.parse(valid)).toEqual(valid)
+  })
+  it("rejects confidenceThreshold outside 0-100", () => {
+    expect(() => RiskThresholdsSchema.parse({ ...valid, confidenceThreshold: 200 })).toThrow()
+  })
+})
+
+describe("TradePlanSchema", () => {
+  const validPlan = {
+    asset: "BTC",
+    side: "long",
+    entry_price: 65000.50,
+    position_size_usdc: 100,
+    position_size_contracts: 0.0015,
+    stop_loss: 62000.00,
+    take_profit: 71000.00,
+    leverage: 5,
+    confidence_score: 78,
+    confidence_breakdown: { factor_alignment: 80, historical_match: 50, signal_strength: 70 },
+    thesis: "BTC bullish due to strong onchain activity",
+    reasoning: "Technical + onchain alignment suggests upward momentum",
+    autonomy_decision: "auto",
+    risk_flags: [],
+    graph_patterns_used: [{ pattern: "BTC rsi oversold", outcome: "profit", frequency: 3 }],
+    timestamp: "2026-07-16T10:00:00Z",
+  }
+  it("validates a complete trade plan", () => {
+    const result = TradePlanSchema.parse(validPlan)
+    expect(result.asset).toBe("BTC")
+    expect(result.side).toBe("long")
+    expect(result.confidence_score).toBe(78)
+    expect(result.graph_patterns_used).toHaveLength(1)
+  })
+  it("rejects plan with negative price", () => {
+    expect(() => TradePlanSchema.parse({ ...validPlan, entry_price: -1 })).toThrow()
+  })
+  it("rejects plan with invalid autonomy decision", () => {
+    expect(() => TradePlanSchema.parse({ ...validPlan, autonomy_decision: "maybe" })).toThrow()
   })
 })

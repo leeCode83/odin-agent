@@ -38,3 +38,51 @@ export interface DDPipelineOutput {
     totalMs: number
   }
 }
+
+export const SideSchema = z.enum(["long", "short"])
+export type Side = z.infer<typeof SideSchema>
+
+export const AutonomyDecisionSchema = z.enum(["auto", "approve"])
+export type AutonomyDecision = z.infer<typeof AutonomyDecisionSchema>
+
+export const ConfidenceBreakdownSchema = z.object({
+  factor_alignment: z.number().int().min(0).max(100),
+  historical_match: z.number().int().min(0).max(100),
+  signal_strength: z.number().int().min(0).max(100),
+})
+export type ConfidenceBreakdown = z.infer<typeof ConfidenceBreakdownSchema>
+
+export const GraphPatternSchema = z.object({
+  pattern: z.string(),
+  outcome: z.string(),
+  frequency: z.number().int().min(0),
+})
+export type GraphPattern = z.infer<typeof GraphPatternSchema>
+
+export const RiskThresholdsSchema = z.object({
+  confidenceThreshold: z.number().int().min(0).max(100),
+  maxPositionUsdc: z.number().min(0),
+  maxLeverage: z.number().min(1),
+  riskPerTradePercent: z.number().min(0).max(100),
+})
+export type RiskThresholds = z.infer<typeof RiskThresholdsSchema>
+
+export const TradePlanSchema = z.object({
+  asset: z.string(),
+  side: SideSchema,
+  entry_price: z.number().positive(),
+  position_size_usdc: z.number().min(0),
+  position_size_contracts: z.number().min(0),
+  stop_loss: z.number().positive(),
+  take_profit: z.number().positive(),
+  leverage: z.number().positive(),
+  confidence_score: z.number().int().min(0).max(100),
+  confidence_breakdown: ConfidenceBreakdownSchema,
+  thesis: z.string(),
+  reasoning: z.string(),
+  autonomy_decision: AutonomyDecisionSchema,
+  risk_flags: z.array(z.string()),
+  graph_patterns_used: z.array(GraphPatternSchema),
+  timestamp: z.string().datetime(),
+})
+export type TradePlan = z.infer<typeof TradePlanSchema>

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData } from "@/lib/data/hyperliquid"
+import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData, fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 
-const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap } = vi.hoisted(() => ({
+const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap, mockAllMids, mockUserClearingState } = vi.hoisted(() => ({
   mockCandleSnapshot: vi.fn().mockResolvedValue([
     { t: 1710000000000, T: 1710003600000, s: "BTC", i: "1h", o: "70000", c: "70500", h: "71000", l: "69000", v: "1000", n: 500 },
   ]),
@@ -30,6 +30,8 @@ const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsA
     { coin: "BTC", fundingRate: "0.0001", premium: "0.00005", time: 1710000000000 },
   ]),
   mockPerpsAtOpenInterestCap: vi.fn().mockResolvedValue([]),
+  mockAllMids: vi.fn().mockResolvedValue({ "BTC": "70500", "ETH": "3500" }),
+  mockUserClearingState: vi.fn().mockResolvedValue({ crossMarginSummary: { accountValue: "10000" } }),
 }))
 
 vi.mock("@nktkas/hyperliquid", () => ({
@@ -40,6 +42,8 @@ vi.mock("@nktkas/hyperliquid", () => ({
       metaAndAssetCtxs: mockMetaAndAssetCtxs,
       fundingHistory: mockFundingHistory,
       perpsAtOpenInterestCap: mockPerpsAtOpenInterestCap,
+      allMids: mockAllMids,
+      userClearingState: mockUserClearingState,
     }
   }),
 }))
@@ -107,4 +111,53 @@ describe("fetchAllHLData", () => {
     mockCandleSnapshot.mockRejectedValue(new Error("API down"))
     await expect(fetchAllHLData("BTC")).rejects.toThrow()
   }, 10_000)
+})
+
+describe("fetchMarkPrice", () => {
+  it("returns mid price > 0 for known asset", async () => {
+    const price = await fetchMarkPrice("BTC")
+    expect(typeof price).toBe("number")
+    expect(price).toBeGreaterThan(0)
+  })
+
+  it("throws for unknown asset", async () => {
+    mockAllMids.mockResolvedValueOnce({ "BTC": "70500" })
+    await expect(fetchMarkPrice("DOGE")).rejects.toThrow()
+  })
+})
+
+describe("fetchUserEquity", () => {
+  it("returns account value >= 0", async () => {
+    const equity = await fetchUserEquity("0x123")
+    expect(typeof equity).toBe("number")
+    expect(equity).toBeGreaterThanOrEqual(0)
+  })
+
+  it("returns 0 for non-existent user", async () => {
+    mockUserClearingState.mockResolvedValueOnce(null)
+    const equity = await fetchUserEquity("")
+    expect(equity).toBe(0)
+  })
+})
+
+describe("fetchCandlesForATR", () => {
+  beforeEach(() => {
+    mockCandleSnapshot.mockResolvedValue([
+      { t: 1710000000000, T: 1710003600000, s: "BTC", i: "1h", o: "70000", c: "70500", h: "71000", l: "69000", v: "1000", n: 500 },
+    ])
+  })
+
+  it("returns candle data array with defaults", async () => {
+    const candles = await fetchCandlesForATR("BTC")
+    expect(Array.isArray(candles)).toBe(true)
+    if (candles.length > 0) {
+      expect(candles[0]).toHaveProperty("timestamp")
+      expect(typeof candles[0].close).toBe("number")
+    }
+  })
+
+  it("returns candles with custom interval", async () => {
+    const candles = await fetchCandlesForATR("BTC", "15m", 10)
+    expect(Array.isArray(candles)).toBe(true)
+  })
 })

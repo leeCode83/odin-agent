@@ -1,180 +1,274 @@
-# DD Agent Pipeline — Task List
+# Planning Agent — Task List
 
 **Plan:** `tasks/plan.md`
-**Spec:** `docs/dd-pipeline-spec.md`
+**Spec:** `docs/planning-agent-spec.md` (Approved)
 
 ---
 
-## Phase 0: Foundation (Main Agent — sequential)
+## Phase 0: Foundation (Main Agent)
 
-- [ ] Install dependencies: `npm install @nktkas/hyperliquid openai zod vitest @types/node`
-- [ ] Create `lib/agent/`, `lib/data/` directories
-- [ ] Create `.env.local` with `DEEPSEEK_API_KEY=`
-- [ ] Add `"test": "vitest run"` and `"typecheck": "tsc --noEmit"` to package.json scripts
-- [ ] Create `vitest.config.ts` with `environment: 'node'`
+- [ ] **T0:** Install dependency: `npm install arangojs`
+- [ ] **T0b:** Create directories: `lib/agent/planning/`, `lib/db/`, `__tests__/lib/db/`, `__tests__/lib/agent/planning/`, `__tests__/app/api/agent/planning/`
+
+**Verification:** `npm list arangojs` shows installed. Directories exist.
+**Dependencies:** None
 
 ---
 
-## Phase 1-3: Parallel Work Streams (6 Subagents)
+## Phase 1: Types Foundation (3 parallel subagents)
 
-Each subagent does RED → GREEN → POLISH within their module.
+_(Each writes test first → implementation. All 3 touch independent files.)_
 
-### Subagent A — Asset Categories + COINGECKO_ID Map
+### T1 — Shared Inter-Agent Types
 
 **Files:**
-- `lib/asset-categories.ts` — `getCategory(asset)`, `getCategoryName(asset)`, `getCoinGeckoId(asset)`, `COINGECKO_ID` map
+- `lib/agent/types.ts` — APPEND (preserve existing DD types): `Side`, `AutonomyDecision`, `ConfidenceBreakdown`, `GraphPattern`, `RiskThresholds`, `TradePlan` + all Zod schemas (`SideSchema`, `AutonomyDecisionSchema`, `ConfidenceBreakdownSchema`, `GraphPatternSchema`, `RiskThresholdsSchema`, `TradePlanSchema`)
 
 **Acceptance:**
-- `getCategory("BTC")` returns `{ name: "major", activeFactors: ["technical","onchain","sentiment","fundamental"] }`
-- `getCategory("PEPE")` returns `{ name: "meme", activeFactors: ["technical","onchain","sentiment"] }` (no fundamental)
-- `getCategory("UNKNOWN")` falls back to `major`
-- `getCoinGeckoId("BTC")` returns `"bitcoin"`
+- `TradePlanSchema.parse(validTradePlan)` succeeds
+- `TradePlanSchema.parse({...invalid})` throws
+- Existing DD types/schemas untouched (DDReportSchema still works)
+- All new types exported
 
-**RED (test file):** `__tests__/lib/asset-categories.test.ts`
-**GREEN:** Implement `lib/asset-categories.ts`
-**POLISH:** Add edge cases, ensure `tsc --noEmit` passes
+**Files to create:**
+- `__tests__/lib/agent/types.test.ts` — ADD tests for new schemas (don't break existing)
 
-**Dependencies:** None
-**Verification:** `npx vitest run __tests__/lib/asset-categories.test.ts`
-
----
-
-### Subagent B — Core Types + Zod Schemas
-
-**Files:**
-- `lib/agent/types.ts` — `Factor`, `SectionResult`, `DDReport`, `DDPipelineInput`, `DDPipelineOutput`, `SectionResultSchema`, `DDReportSchema`
-- `lib/data/types.ts` — `CandleData`, `OnchainData`, `SentimentData`, `FundamentalData`, `RawFactorData`
-
-**Acceptance:**
-- `DDReportSchema.parse(validReportObj)` succeeds
-- `DDReportSchema.parse(invalidReportObj)` throws
-- TypeScript types compile (no implicit any)
-- `SECTION_KEYS` enum exports all 4 factors
-
-**RED (test file):** `__tests__/lib/agent/types.test.ts`
-**GREEN:** Implement both files
-**POLISH:** Add `z.infer` exports, ensure Zod v4 compatibility (`z.record` with 2 args)
-
-**Dependencies:** None
 **Verification:** `npx vitest run __tests__/lib/agent/types.test.ts`
+**Dependencies:** None (appends to existing file)
 
 ---
 
-### Subagent C — Hyperliquid Data Fetcher
+### T2 — ArangoDB Document Types
 
 **Files:**
-- `lib/data/hyperliquid.ts` — `createHLClient()`, `fetchCandles(asset)`, `fetchOnchainData(asset)`, `fetchAllHLData(asset)`
+- `lib/db/arango-types.ts` — `DecisionNode`, `SignalNode`, `OutcomeNode`, `AssetNode`, `RiskThresholdsDoc`, `GraphMemoryEdge` + Zod schemas
 
 **Acceptance:**
-- `fetchCandles("BTC")` returns `CandleData[]` with 1h, 15m, 1d intervals
-- `fetchOnchainData("BTC")` returns `OnchainData` with funding, OI, mark price
-- Failure returns structured error, never throws unhandled
-- Uses `InfoClient` from `@nktkas/hyperliquid` via `HttpTransport`
+- `DecisionNode` type has: `_key`, `asset`, `category`, `decision`, `side`, `confidence`, `tradePlan`, `autonomyDecision`, `timestamp`
+- `RiskThresholdsDoc` type has: `_key`, `userId`, `confidenceThreshold`, `maxPositionUsdc`, `maxLeverage`, `riskPerTradePercent`
+- All doc types export Zod schemas for validation
 
-**RED (test file):** `__tests__/lib/data/hyperliquid.test.ts` — mock `InfoClient`
-**GREEN:** Implement `lib/data/hyperliquid.ts`
-**POLISH:** 5s timeout per call, error wrapping, testnet URL config
+**Files to create:**
+- `lib/db/arango-types.ts`
+- `__tests__/lib/db/arango-types.test.ts`
 
-**Dependencies:** B (types)
+**Verification:** `npx vitest run __tests__/lib/db/arango-types.test.ts`
+**Dependencies:** T1 (imports `Side`, `AutonomyDecision` from `@/lib/agent/types`)
+
+---
+
+### T3 — Planning-Internal Types
+
+**Files:**
+- `lib/agent/planning/types.ts` — `Perspective`, `PerspectiveResult`, `AggregatedReasoning`, `PlanningPipelineInput`, `PlanningPipelineOutput` + Zod schemas
+
+**Acceptance:**
+- `PlanningPipelineInput` has: `ddReport: DDReport`, `userId: string`, `walletAddress: string`
+- `PlanningPipelineOutput` has: `tradePlan: TradePlan`, `timing: { totalMs }`
+- `PerspectiveResult` has: `perspective`, `thesis`, `confidence`, `reasoningContent` (raw CoT)
+- `Perspective` = `"conservative" | "balance" | "aggressive"`
+
+**Files to create:**
+- `lib/agent/planning/types.ts`
+- `__tests__/lib/agent/planning/types.test.ts`
+
+**Verification:** `npx vitest run __tests__/lib/agent/planning/types.test.ts`
+**Dependencies:** T1 (imports `DDReport`, `TradePlan` from `@/lib/agent/types`)
+
+---
+
+## Phase 2: Implementation (6 parallel subagents)
+
+_(Each writes test first → implementation. All modules independent at file level. Types from Phase 1 already exist.)_
+
+### T4 — ArangoDB Client + Risk Thresholds + Graph Memory
+
+**Files:**
+- `lib/db/arango-client.ts` — `createArangoClient()`, `getDb()`, `getGraph()` singleton via arangojs. Reads `ARANGO_URL`, `ARANGO_DB`, `ARANGO_USER`, `ARANGO_PASSWORD` from env.
+- `lib/db/risk-thresholds.ts` — `getRiskThresholds(userId: string): Promise<RiskThresholds>` — query `risk_thresholds` collection by userId, fallback to env defaults if not found / ArangoDB down.
+- `lib/db/graph-memory.ts` — `queryGraphPatterns(asset: string, category: string): Promise<GraphPattern[]>` — AQL query traversing decision→asset→category→outcome edges, returns `{ pattern, outcome, frequency }`.
+
+**Acceptance:**
+- `createArangoClient()` returns `Database` instance from arangojs
+- `getRiskThresholds("user-1")` returns env defaults when no ArangoDB record
+- `getRiskThresholds("user-1")` returns stored values when record exists
+- `queryGraphPatterns("BTC", "major")` returns `[]` when no matching decisions (cold start)
+- ArangoDB unavailable → all functions return defaults (never throw)
+
+**Files to create:**
+- `lib/db/arango-client.ts`
+- `lib/db/risk-thresholds.ts`
+- `lib/db/graph-memory.ts`
+- `__tests__/lib/db/arango-client.test.ts` — mock arangojs
+- `__tests__/lib/db/risk-thresholds.test.ts` — mock arangojs + env
+- `__tests__/lib/db/graph-memory.test.ts` — mock arangojs cursor
+
+**Verification:** `npx vitest run __tests__/lib/db/`
+**Dependencies:** T1 (imports `RiskThresholds`, `GraphPattern`), T2 (imports doc types)
+
+---
+
+### T5 — Hyperliquid SDK Extensions
+
+**Files:**
+- `lib/data/hyperliquid.ts` — ADD 3 functions:
+  - `fetchMarkPrice(asset: string): Promise<number>` — via `client.info.allMids()` or `l2Book()`
+  - `fetchUserEquity(walletAddress: string): Promise<number>` — via `client.info.userClearingState(walletAddress)` → crossMarginSummary → accountValue
+  - `fetchCandlesForATR(asset: string, interval?: string, window?: number): Promise<CandleData[]>` — MODIFY existing `fetchCandles` to accept params OR add new function
+
+**Acceptance:**
+- `fetchMarkPrice("BTC")` returns number > 0
+- `fetchUserEquity("0x...")` returns number >= 0
+- `fetchCandlesForATR("BTC", "1h", 14)` returns CandleData[] for ATR period
+- HL SDK mockable via `vi.mock("@nktkas/hyperliquid")`
+- Existing HL functions untouched (fetchCandles, fetchOnchainData, fetchAllHLData)
+
+**Files to create (tests):**
+- `__tests__/lib/data/hyperliquid.test.ts` — ADD tests for new functions (don't break existing)
+  - Make sure to read the full file first and ONLY add new test cases
+
 **Verification:** `npx vitest run __tests__/lib/data/hyperliquid.test.ts`
+**Dependencies:** None (uses existing createHLClient + CandleData type)
 
 ---
 
-### Subagent D — CoinGecko + Cache + Sentiment
+### T6 — Planning Agent Prompts
 
 **Files:**
-- `lib/data/coingecko.ts` — `fetchPrice(asset)`, `fetchTrending()`, `fetchMetadata(asset)`
-- `lib/cache.ts` — `Cached<T>` class with TTL, `get(key)`, `set(key, value, ttlMs)`, `has(key)`
-- `lib/data/sentiment.ts` — `fetchFearGreedIndex()`
+- `lib/agent/planning/prompts.ts` — 4 prompt exports:
+  - `PERSPECTIVE_SYSTEM_PROMPTS: Record<Perspective, string>` — conservative/balance/aggressive
+  - `AGGREGATOR_SYSTEM_PROMPT: string` — synthesize 3 perspectives
+  - `PERSPECTIVE_USER_PROMPT(ddReport, graphPatterns): string` — dynamic user prompt template
+  - `AGGREGATOR_USER_PROMPT(results): string` — dynamic aggregator input template
 
 **Acceptance:**
-- `fetchPrice("BTC")` returns `{ usd: number, change24h: number | null }`
-- `fetchTrending()` returns ranked asset tickers
-- Cache with 60s TTL for CG, 300s TTL for fear/greed
-- Cache hit returns without network call
-- All fetch failures return null (non-fatal)
+- Each perspective prompt has distinct framing (conservative: risk-averse, balance: neutral, aggressive: opportunity-seeking)
+- Prompts instruct LLM to output JSON matching spec structure (thesis, confidence, signals, side, leverage, reasoning)
+- Aggregator prompt reconciles divergent perspectives
+- All prompts exported as `const` strings (follow DD Agent pattern)
 
-**RED (test files):** `__tests__/lib/data/coingecko.test.ts`, `__tests__/lib/cache.test.ts`
-**GREEN:** Implement all 3 files
-**POLISH:** Cache expiry test, CG rate limit handling
+**Files to create:**
+- `lib/agent/planning/prompts.ts`
+- `__tests__/lib/agent/planning/prompts.test.ts` — test prompt structure, keyword checks per perspective
 
-**Dependencies:** B (types), A (COINGECKO_ID)
-**Verification:** `npx vitest run __tests__/lib/data/coingecko.test.ts __tests__/lib/cache.test.ts`
+**Verification:** `npx vitest run __tests__/lib/agent/planning/prompts.test.ts`
+**Dependencies:** T3 (imports `Perspective` type)
 
 ---
 
-### Subagent E — LLM Integration (Prompts + Client)
+### T7 — Risk Engine (Deterministic Math)
 
 **Files:**
-- `lib/agent/prompts.ts` — `SYSTEM_PROMPTS[factor]`, `AGGREGATION_PROMPT`
-- `lib/agent/llm.ts` — `createLLMClient()`, `analyzeSection(factor, rawData)`, `synthesizeSections(asset, category, sections)`
+- `lib/agent/planning/risk-engine.ts` — pure functions (no side effects):
+  - `computeATR(candles: CandleData[], period: number): number` — Average True Range
+  - `computeEntryPrice(asset: string): Promise<number>` — fetches mark price (delegates to fetchMarkPrice)
+  - `computeSLTP(entry: number, atr: number, side: Side, slMultiplier?: number, tpMultiplier?: number): { stopLoss: number, takeProfit: number }` — ATR-based SL/TP
+  - `computePositionSize(equity: number, entry: number, stopLoss: number, riskPercent: number): { positionSizeUsdc: number, positionSizeContracts: number }` — fixed-fractional
+  - `capLeverage(llmSuggested: number, maxAllowed: number): number` — `min()`
 
 **Acceptance:**
-- `analyzeSection("technical", rawData)` returns `SectionResult` with valid structure
-- `synthesizeSections(...)` returns `{ thesis, confidence, flags, errors }`
-- Missing API key → section returns null (graceful degradation), not crash
-- JSON parse failure retries once, then returns default null section
-- `response_format: "json_object"` enforced in calls
+- `computeATR` with known candle data returns correct value
+- Long SL = entry - ATR * slMult, Long TP = entry + ATR * tpMult (3:1 R:R default)
+- Short SL/TP flipped
+- `computePositionSize(10000, 100, 95, 1)` returns riskAmount = 100, contracts = 20
+- `capLeverage(15, 10)` returns 10
 
-**RED (test file):** `__tests__/lib/agent/llm.test.ts` — mock OpenAI client
-**GREEN:** Implement both files
-**POLISH:** 10s timeout per LLM call, retry logic, `process.env.DEEPSEEK_API_KEY` validation
+**Files to create:**
+- `lib/agent/planning/risk-engine.ts`
+- `__tests__/lib/agent/planning/risk-engine.test.ts` — pure math, no mocks needed
 
-**Dependencies:** B (types)
-**Verification:** `npx vitest run __tests__/lib/agent/llm.test.ts`
+**Verification:** `npx vitest run __tests__/lib/agent/planning/risk-engine.test.ts`
+**Dependencies:** T1 (imports `Side`, `RiskThresholds`)
 
 ---
 
-### Subagent F — Data Providers Orchestrator
+### T8 — Autonomy Gate
 
 **Files:**
-- `lib/data/providers.ts` — `fetchAllRawData(asset, category)` mapping factor → correct fetcher
+- `lib/agent/planning/gate.ts` — pure function:
+  - `autonomyGate(confidence: number, positionSizeUsdc: number, thresholds: RiskThresholds): AutonomyDecision` — returns `"auto"` if `confidence >= thresholds.confidenceThreshold AND positionSizeUsdc <= thresholds.maxPositionUsdc`, else `"approve"`
 
 **Acceptance:**
-- `fetchAllRawData("BTC", majorCategory)` calls HL + CG, returns complete `RawFactorData`
-- Only fetches data for `category.activeFactors` (skip fundamental for meme)
-- Partial failure produces partial data (HL up but CG down → onchain filled, fundamental null)
-- All 4 factor data types present in return, with nulls for skipped/unavailable
+- confidence=80, size=50, threshold=70, max=100 → "auto"
+- confidence=60, size=50, threshold=70, max=100 → "approve"
+- confidence=80, size=150, threshold=70, max=100 → "approve"
+- Both fail → "approve"
 
-**RED (test file):** `__tests__/lib/data/providers.test.ts` — mock sub-fetchers
-**GREEN:** Implement `lib/data/providers.ts`
-**POLISH:** Timing tracking, error aggregation
+**Files to create:**
+- `lib/agent/planning/gate.ts`
+- `__tests__/lib/agent/planning/gate.test.ts` — table-driven test
 
-**Dependencies:** C, D (data fetchers)
-**Verification:** `npx vitest run __tests__/lib/data/providers.test.ts`
+**Verification:** `npx vitest run __tests__/lib/agent/planning/gate.test.ts`
+**Dependencies:** T1 (imports `AutonomyDecision`, `RiskThresholds`)
 
 ---
 
-## After All Subagents Complete
-
-### Checkpoint: Integration (Main Agent)
-
-- [ ] Run `npx vitest run` — all tests pass
-- [ ] Run `npx tsc --noEmit` — no type errors
-- [ ] Run `npm run lint` — no lint errors
-
-### Phase 4: Pipeline + API Route + Demo UI
+### T9 — LLM Integration (DeepSeek Thinking Mode)
 
 **Files:**
-- `lib/agent/pipeline.ts` — `runDDPipeline(input)` orchestrator
-- `app/api/agent/dd/route.ts` — `POST /api/agent/dd`
-- `app/page.tsx` — demo test button
+- `lib/agent/planning/llm.ts` — LLM call functions:
+  - `createClient(): OpenAI` — singleton (follow DD pattern, but different model/reasoning config)
+  - `generatePerspective(perspective: Perspective, ddReport: DDReport, graphPatterns: GraphPattern[]): Promise<PerspectiveResult>` — single thinking-mode call with perspective-specific prompt, parses JSON output, extracts `reasoning_content`
+  - `aggregatePerspectives(results: PerspectiveResult[], ddReport: DDReport): Promise<AggregatedReasoning>` — aggregator thinking-mode call, synthesizes 3 perspectives into final thesis + confidence breakdown
 
 **Acceptance:**
-- `runDDPipeline({ asset: "BTC", userId: "test" })` returns valid `DDPipelineOutput`
-- POST `/api/agent/dd` with `{ asset, userId }` returns 200 + DDReport
-- POST `/api/agent/dd` with missing fields returns 400
-- Demo page has button that calls API and shows report JSON
+- Calls use `model: "deepseek-v4-flash"`, `thinking: {"type":"enabled"}`, `reasoning_effort: "high"`
+- `generatePerspective` returns structured JSON parsed via Zod (`PerspectiveResultSchema`)
+- JSON parse failure: retry once, then return null + error
+- `reasoning_content` extracted and stored in `PerspectiveResult.reasoningContent`
+- Each call has `withTimeout(30000)` + `withRetry(maxRetries=1)`
 
-**Verification:**
-- `npx vitest run`
-- Manual: run `npm run dev`, open page, click button, check console for valid DDReport
-- `npm run build`
+**Files to create:**
+- `lib/agent/planning/llm.ts`
+- `__tests__/lib/agent/planning/llm.test.ts` — mock OpenAI client
 
-### Final Checks
+**Verification:** `npx vitest run __tests__/lib/agent/planning/llm.test.ts`
+**Dependencies:** T3 (PerspectiveResult type), T6 (prompts), T1 (DDReport, GraphPattern)
 
-- [ ] Full test suite passes: `npx vitest run`
-- [ ] TypeScript compiles: `npx tsc --noEmit`
-- [ ] Lint passes: `npm run lint`
-- [ ] Build passes: `npm run build`
-- [ ] Pipeline produces DDReport for BTC (major) and DOGE (meme, skips fundamental)
+---
+
+## Phase 3: Pipeline Integration (Main Agent — sequential)
+
+- [ ] **T10:** `lib/agent/planning/pipeline.ts` — `runPlanningPipeline(input: PlanningPipelineInput): Promise<PlanningPipelineOutput>`
+  - Orchestrator: validate input → fetch equity (HL) → fetch candles (HL) → query graph (ArangoDB) → 3 parallel perspective LLM calls → 1 aggregator LLM call → risk engine (entry + SL/TP + size) → gate → return TradePlan + timing
+  - Validate DDReport with DDReportSchema (existing)
+  - 90s hard timeout with AbortController
+  - Per-step try/catch with degradation (ArangoDB down → empty patterns, LLM fail → null perspective)
+  - All 3 LLM perspectives fail → throw 500
+
+- [ ] **T11:** `lib/agent/pipeline.ts` — ADD `export { runPlanningPipeline } from "./planning/pipeline"`
+
+- [ ] **T12:** `app/api/agent/planning/route.ts` — `POST /api/agent/planning`
+  - Input: `{ ddReport: DDReport, userId: string, walletAddress: string }`
+  - Validate with Zod, return 400 on bad input
+  - Call `runPlanningPipeline`, return 200 TradePlan
+  - Catch errors, return 500 with error message
+
+**Files to create:**
+- `lib/agent/planning/pipeline.ts`
+- `app/api/agent/planning/route.ts`
+- `__tests__/lib/agent/planning/pipeline.test.ts` — mock all sub-modules
+- `__tests__/app/api/agent/planning/route.test.ts` — mock pipeline
+
+**Acceptance:**
+- Full pipeline test with mocked deps returns valid TradePlan
+- Route returns 400 for invalid input
+- Route returns 200 + TradePlan for valid input
+- Pipeline tracks timing per step (equityMs, candleMs, graphMs, llmMs, totalMs)
+
+**Verification:** `npx vitest run __tests__/lib/agent/planning/pipeline.test.ts __tests__/app/api/agent/planning/route.test.ts`
+**Dependencies:** ALL Phase 2 modules (T4-T9)
+
+---
+
+## Phase 4: Verify (Main Agent)
+
+- [ ] Run full test suite: `npm test`
+- [ ] Run lint: `npm run lint`
+- [ ] Run typecheck: `npm run typecheck`
+
+**Final acceptance:**
+- All tests pass (no skipped, no `.todo`)
+- Zero TypeScript errors
+- Zero lint errors
+- DD Agent tests still pass (no regression)
