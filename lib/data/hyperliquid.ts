@@ -155,10 +155,6 @@ export async function fetchMarkPrice(asset: string): Promise<number> {
  * @param {string} walletAddress - User wallet address.
  * @returns {Promise<number>} Account value as number >= 0 (0 if user not found).
  */
-interface ClearingState {
-  crossMarginSummary: { accountValue: string }
-}
-
 export async function fetchUserEquity(walletAddress: string): Promise<number> {
   const client = createHLClient()
   const state = await withRetry(() => withTimeout(

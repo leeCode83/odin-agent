@@ -1,2 +1,6 @@
 export { runDDPipeline } from "@/lib/agent/due-diligence/pipeline"
 export { runPlanningPipeline } from "@/lib/agent/planning/pipeline"
+export { runExecutionPipeline } from "@/lib/agent/execution/pipeline"
+export { runTradePipeline } from "@/lib/agent/trade/pipeline"
+export { approveTradePlan } from "@/lib/agent/trade/approve"
+export { rejectTradePlan } from "@/lib/agent/trade/reject"

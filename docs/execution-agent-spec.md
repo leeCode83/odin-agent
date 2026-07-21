@@ -1,6 +1,6 @@
 # Spec: Execution Agent
 
-> **Status:** Pending Approval
+> **Status:** Approved
 > **Ref:** `docs/odin-spec.md` §4.3, `docs/planning-agent-spec.md` §5 (TradePlan schema)
 > **Input from:** Planning Agent (`TradePlan`)
 
@@ -16,6 +16,8 @@ Build the Execution Agent — the third and final agent in Odin's 3-agent pipeli
 - Agent wallet: auto-generated private key, approved once via `POST /api/agent/execution/init`, key stored in `.env`
 - OCO TP/SL: one triggers, other auto-cancels (Hyperliquid `grouping: "normalTpsl"`)
 - Emergency cancel: `POST /api/agent/execution/cancel` — cancel ALL open orders for the agent wallet
+- **Record trade execution to ArangoDB graph memory** — decision node, signal nodes (if ddReport provided), edges
+- **Record trade outcome on close** — upsert outcome node + edge via `POST /api/agent/execution/outcome`
 - No position management (hedging allowed — place order regardless of existing positions)
 
 ---
@@ -23,16 +25,17 @@ Build the Execution Agent — the third and final agent in Odin's 3-agent pipeli
 ## 2. Architecture Overview
 
 ```
-┌──────────────┐     TradePlan      ┌───────────────────┐
-│   Planning   │ ──────────────────►│    Execution       │
-│   Agent      │                    │    Agent           │
-└──────────────┘                    │                    │
-                                    │  1. Validate       │
-                                    │  2. Build orders   │
-                                    │  3. Sign & place   │
-                                    │  4. Monitor fill   │
-                                    │  5. Return result  │
-                                    └──────┬─────────────┘
+┌──────────────┐     TradePlan      ┌─────────────────────────┐
+│   Planning   │ ──────────────────►│    Execution            │
+│   Agent      │     (opt. DD)      │    Agent                │
+└──────────────┘                    │                         │
+                                    │  1. Validate            │
+                                    │  2. Build orders        │
+                                    │  3. Sign & place        │
+                                    │  4. Monitor fill        │
+                                    │  5. Record to graph     │
+                                    │  6. Return result       │
+                                    └──────┬──────────────────┘
                                            │
                               ┌────────────┴────────────┐
                               │  Hyperliquid Testnet    │
@@ -40,6 +43,15 @@ Build the Execution Agent — the third and final agent in Odin's 3-agent pipeli
                               │  agent wallet signs     │
                               │  vaultAddress = master  │
                               └─────────────────────────┘
+
+                              ┌─────────────────────────────────┐
+                              │  ArangoDB Graph Memory          │
+                              │  • DecisionNode (trade plan)    │
+                              │  • SignalNode[] (from DD)       │
+                              │  • OutcomeNode (on close)       │
+                              │  • Edges: TRIGGERED_BY,         │
+                              │    ANALYZED, RESULTED_IN        │
+                              └─────────────────────────────────┘
 ```
 
 ### 2.1 Agent Wallet Model
@@ -59,6 +71,7 @@ TRADE (every pipeline run):
     → build entry order + OCO TP/SL
     → place with vaultAddress = master.address
     → monitor fill via WebSocket
+    → record decision + signals to ArangoDB (optional: ddReport for signals)
 ```
 
 ---
@@ -90,7 +103,15 @@ Trigger (API route)
       │                         • fallback: poll info API if WS unavailable
       │
       ▼
-  return ExecutionResult { orderId, oid, status, fillAmount, … }
+  recordGraphMemory(tradePlan, signals?) ──► ArangoDB insert
+      │                         • DecisionNode from trade plan
+      │                         • SignalNode[] from ddReport (if provided)
+      │                         • AssetNode if not exists
+      │                         • Edges: TRIGGERED_BY, ANALYZED
+      │                         • Fire-and-forget — failure does not fail pipeline
+      │
+      ▼
+  return ExecutionResult { orderId, oid, status, fillAmount, …, decisionKey }
 ```
 
 Key constraints:
@@ -100,6 +121,8 @@ Key constraints:
 - Vault address = master wallet address (orders placed on behalf of master using agent wallet signature)
 - No LLM calls in Execution Agent — purely deterministic code
 - Max latency: <5s for order placement, <15s for fill monitoring
+- Graph memory recording is fire-and-forget — pipeline succeeds regardless of DB write failure
+- ddReport is OPTIONAL — when absent, only decision node is recorded (no signals/edges)
 
 ---
 
@@ -191,10 +214,11 @@ Place entry order + OCO TP/SL from TradePlan.
     "graph_patterns_used": [],
     "timestamp": "2026-07-20T10:00:00Z"
   },
-  "walletAddress": "0xabc..."
+  "walletAddress": "0xabc...",
+  "userId": "user-1",
+  "ddReport": { /* optional — full DDReport for signal graph recording */ }
 }
 ```
-
 **Response (200):**
 ```json
 {
@@ -210,12 +234,14 @@ Place entry order + OCO TP/SL from TradePlan.
     "timestamp": "2026-07-20T10:00:05Z",
     "fillStatus": "pending",
     "fillAmount": null,
-    "fillPrice": null
+    "fillPrice": null,
+    "decisionKey": "decisions/abc123"
   },
   "timing": {
     "buildMs": 1,
     "placeMs": 200,
-    "totalMs": 201
+    "graphMs": 50,
+    "totalMs": 251
   }
 }
 ```
@@ -223,8 +249,9 @@ Place entry order + OCO TP/SL from TradePlan.
 **Error cases:**
 | Scenario | Status | Response |
 |---|---|---|
-| Missing TradePlan or walletAddress | 400 | `{ error: "tradePlan and walletAddress required" }` |
+| Missing tradePlan, walletAddress, or userId | 400 | `{ error: "tradePlan, walletAddress, and userId required" }` |
 | Invalid TradePlan (Zod) | 400 | `{ error: "Invalid tradePlan", detail: [...] }` |
+| TradePlan requires approval | 400 | `{ error: "TradePlan requires manual approval — cannot auto-execute" }` |
 | No agent wallet configured | 503 | `{ error: "Agent wallet not initialized. Call /api/agent/execution/init first" }` |
 | Order placement failed (HL error) | 502 | `{ error: "HL exchange error", detail: "..." }` |
 | Leverage update failed | 502 | `{ error: "HL exchange error (leverage)", detail: "..." }` |
@@ -296,7 +323,50 @@ Poll fill status for a specific order. Fallback when WebSocket is unavailable.
 }
 ```
 
+### 5.5 `POST /api/agent/execution/outcome`
+
+Record trade outcome after close (TP hit / SL hit / manual cancel). Upserts `OutcomeNode` + `RESULTED_IN` edge in graph.
+
+**Request:**
+```json
+{
+  "decisionKey": "decisions/abc123",
+  "result": "profit",
+  "pnlUsdc": 12.5,
+  "pnlPercent": 2.1,
+  "exitPrice": 65400,
+  "exitReason": "take_profit_hit"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| decisionKey | string | yes | Key of the decision node returned by execution |
+| result | enum | yes | `profit` / `loss` / `breakeven` / `cancelled` |
+| pnlUsdc | number | no | Realized P&L in USDC |
+| pnlPercent | number | no | Realized P&L as percentage |
+| exitPrice | number | no | Price at which position was closed |
+| exitReason | string | no | `take_profit_hit` / `stop_loss_hit` / `manual_cancel` |
+
+**Response (200):**
+```json
+{
+  "recorded": true,
+  "decisionKey": "decisions/abc123",
+  "outcomeKey": "outcomes/def456"
+}
+```
+
+**Error cases:**
+| Scenario | Status | Response |
+|---|---|---|
+| Missing decisionKey or result | 400 | `{ error: "decisionKey and result required" }` |
+| Invalid result value | 400 | `{ error: "Invalid result. Must be profit/loss/breakeven/cancelled" }` |
+| DB write failed | 500 | `{ error: "Failed to record outcome", detail: "..." }` |
+
 ---
+
+
 
 ## 6. File & Module Structure
 
@@ -308,17 +378,23 @@ lib/agent/execution/
   client.ts             # getExchangeClient(agentPrivateKey) → ExchangeClient
                         #   initAgentWallet(masterPk, agentName) → { agentAddress, agentPk }
                         #   getAgentSigner(agentPk) → account
-                        # pony tail: all HL ExchangeClient creation in one place
-  pipeline.ts           # runExecutionPipeline(tradePlan, walletAddress)
-                        #   validates tradePlan, builds orders, places, monitors fill
+                        #   all HL ExchangeClient creation in one place
+  pipeline.ts           # runExecutionPipeline(input)
+                        #   validates tradePlan, builds orders, places, monitors fill,
+                        #   records to graph memory
   ws-monitor.ts         # subscribeFill(exchangeClient, orderIds, timeout) → fill result
                         #   WebSocket SubscriptionClient for orderUpdates
                         #   fallback: poll order status via infoClient if WS fails
+                        # Graph memory write functions live in lib/db/graph-memory.ts
+                        #   (same file as existing queryGraphPatterns read):
+                        #   recordDecision(doc), recordSignals(signals, userId),
+                        #   recordGraphMemory(params), recordOutcome(decisionKey, outcome)
 
 app/api/agent/execution/
   route.ts              # POST /api/agent/execution
   init/route.ts         # POST /api/agent/execution/init
   cancel/route.ts       # POST /api/agent/execution/cancel
+  outcome/route.ts      # POST /api/agent/execution/outcome
   status/route.ts       # GET  /api/agent/execution/status?oid=...
 ```
 
@@ -368,11 +444,14 @@ export interface ExecutionResult {
   fillAmount: string | null;
   fillPrice: string | null;
   timestamp: string;
+  decisionKey?: string;     // set after graph recording
 }
 
 export interface ExecutionPipelineInput {
   tradePlan: TradePlan;
   walletAddress: string;      // master wallet address (for vaultAddress)
+  userId: string;
+  ddReport?: DDReport;       // optional — signals recorded to graph when provided
 }
 
 export interface ExecutionPipelineOutput {
@@ -380,6 +459,7 @@ export interface ExecutionPipelineOutput {
   timing: {
     buildMs: number;
     placeMs: number;
+    graphMs: number;
     totalMs: number;
   };
 }
@@ -388,6 +468,15 @@ export interface AgentInitResult {
   agentAddress: string;
   agentPrivateKey: string;
   approved: boolean;
+}
+
+export interface OutcomeInput {
+  decisionKey: string;
+  result: "profit" | "loss" | "breakeven" | "cancelled";
+  pnlUsdc?: number;
+  pnlPercent?: number;
+  exitPrice?: number;
+  exitReason?: string;
 }
 ```
 
@@ -404,6 +493,7 @@ import { TradePlanSchema } from "@/lib/agent/types";
 import { getAgentSigner, getExchangeClient } from "./client";
 import { buildOrders } from "./orders";
 import { subscribeFill } from "./ws-monitor";
+import { recordGraphMemory } from "@/lib/db/graph-memory";
 import type { ExecutionPipelineInput, ExecutionPipelineOutput, ExecutionResult } from "./types";
 
 export class ExecutionError extends Error {
@@ -417,7 +507,7 @@ export async function runExecutionPipeline(
   input: ExecutionPipelineInput
 ): Promise<ExecutionPipelineOutput> {
   const t0 = Date.now();
-  const { tradePlan, walletAddress } = input;
+  const { tradePlan, walletAddress, userId, ddReport } = input;
 
   const validated = TradePlanSchema.parse(tradePlan);
   if (validated.autonomy_decision === "approve") {
@@ -472,9 +562,35 @@ export async function runExecutionPipeline(
     timestamp: new Date().toISOString(),
   };
 
+  // 5. Record to graph memory (fire-and-forget)
+  const graphStart = Date.now();
+  try {
+    const signals = ddReport
+      ? Object.entries(ddReport.sections).flatMap(([factor, section]) =>
+          section.signals.map((signal) => ({
+            factor,
+            signalType: signal,
+            description: section.summary ?? "",
+            strength: section.score ?? 50,
+          }))
+        )
+      : [];
+
+    const decisionKey = await recordGraphMemory({
+      userId,
+      asset: validated.asset,
+      tradePlan: validated,
+      signals,
+    });
+    execution.decisionKey = decisionKey;
+  } catch (err) {
+    console.error("Graph memory recording failed (non-fatal):", err);
+  }
+  const graphMs = Date.now() - graphStart;
+
   return {
     execution,
-    timing: { buildMs, placeMs, totalMs: Date.now() - t0 },
+    timing: { buildMs, placeMs, graphMs, totalMs: Date.now() - t0 },
   };
 }
 ```
@@ -639,6 +755,105 @@ export function subscribeFill(
 
 ---
 
+## 8.5 Graph Memory Recording (`lib/db/graph-memory.ts` — write additions)
+
+Add to the existing read-only file. Four new exported functions:
+
+### `recordDecision(doc: Omit<DecisionNode, '_key'>): Promise<string>`
+
+Insert a `DecisionNode` into the `decisions` collection. Returns the `_key`.
+
+### `recordSignals(signals: SignalInput[], userId: string): Promise<string[]>`
+
+Upsert `SignalNode` docs into `signals` collection (dedup by `factor + signalType`). Returns array of `_key` values.
+
+### `recordGraphMemory(params: { userId, asset, tradePlan, signals }): Promise<string>`
+
+Orchestrator — inserts decision node + signal nodes + asset node (if new) + edges (TRIGGERED_BY, ANALYZED). Returns `_key` of the decision node.
+
+```ts
+export async function recordGraphMemory(params: {
+  userId: string;
+  asset: string;
+  tradePlan: TradePlan;
+  signals: Array<{ factor: string; signalType: string; description: string; strength: number }>;
+}): Promise<string> {
+  const db = getDb();
+  if (!db) throw new Error("ArangoDB not available");
+
+  // 1. Upsert asset node
+  await db.collection("assets").save({ _key: params.asset, name: params.asset, category: "trade" }, { overwriteMode: "ignore" });
+
+  // 2. Insert decision node
+  const decisionKey = await recordDecision({
+    userId: params.userId,
+    asset: params.asset,
+    category: "trade",
+    decision: params.tradePlan.side === "long" ? "buy" : "sell",
+    side: params.tradePlan.side,
+    confidence: params.tradePlan.confidence_score,
+    tradePlan: params.tradePlan,
+    autonomyDecision: params.tradePlan.autonomy_decision,
+    timestamp: new Date().toISOString(),
+  });
+
+  // 3. Insert signal nodes + edges
+  if (params.signals.length > 0) {
+    const signalKeys = await recordSignals(params.signals, params.userId);
+    const edgeCol = db.collection("decision_triggered_by");
+    for (const sigKey of signalKeys) {
+      await edgeCol.save({
+        _from: `decisions/${decisionKey}`,
+        _to: `signals/${sigKey}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // 4. Edge: decision → analyzed → asset
+  await db.collection("decision_analyzed").save({
+    _from: `decisions/${decisionKey}`,
+    _to: `assets/${params.asset}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  return decisionKey;
+}
+```
+
+### `recordOutcome(decisionKey: string, outcome: OutcomeInput): Promise<string>`
+
+Insert `OutcomeNode` into `outcomes` collection + create `decision_resulted_in` edge. Returns the outcome `_key`.
+
+```ts
+export async function recordOutcome(
+  decisionKey: string,
+  outcome: OutcomeInput
+): Promise<string> {
+  const db = getDb();
+  if (!db) throw new Error("ArangoDB not available");
+
+  const outcomeDoc = await db.collection("outcomes").save({
+    result: outcome.result,
+    pnlUsdc: outcome.pnlUsdc,
+    pnlPercent: outcome.pnlPercent,
+    exitPrice: outcome.exitPrice,
+    exitReason: outcome.exitReason,
+    timestamp: new Date().toISOString(),
+  });
+
+  await db.collection("decision_resulted_in").save({
+    _from: `decisions/${decisionKey}`,
+    _to: `outcomes/${outcomeDoc._key}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  return outcomeDoc._key;
+}
+```
+
+---
+
 ## 9. Error Handling & Resilience
 
 | Source Failure | Handling |
@@ -651,6 +866,7 @@ export function subscribeFill(
 | WebSocket unavailable | Fallback: poll order status via `GET /status?oid=` every 2s for 15s |
 | Partial fill (entry not fully filled) | Report partial — Odin does not cancel unfilled remainder (IoC handles this) |
 | TP/SL fill while monitoring | WebSocket delivers fill event; status endpoint returns filled |
+| Graph memory DB unavailable | Fire-and-forget — logged but does not fail pipeline; `decisionKey` omitted from response |
 
 ### 9.1 Idempotency
 
@@ -775,6 +991,9 @@ Test framework: **vitest** (existing). Test locations: `__tests__/lib/agent/exec
   - Use `grouping: "normalTpsl"` for OCO TP/SL
   - Use `vaultAddress` pointing to master wallet
   - Use `withRetry` / `withTimeout` for all HL SDK calls
+  - Record decision node to graph memory on every execution (fire-and-forget)
+  - Record signal nodes/edges ONLY when ddReport is provided
+  - Record outcome node on trade close via outcome endpoint
 
 - **Ask first:**
   - Changing from testnet to mainnet
@@ -814,6 +1033,12 @@ Test framework: **vitest** (existing). Test locations: `__tests__/lib/agent/exec
 9. **Entry order type: Limit IoC.** Simulated market order — fills immediately at limit price, cancels unfilled remainder. No native market orders on Hyperliquid.
 
 10. **Single asset per execution call.** MVP scope. Future: batch execution for multi-asset plans.
+
+11. **Graph recording: Final step, fire-and-forget.** Recorded after orders placed + fill monitored. DB failure does not roll back the trade. (Interview with user)
+
+12. **ddReport optional for execution.** TradePlan alone doesn't carry signals needed for graph recording. Execution accepts optional `ddReport` to extract signals. When absent, only decision node is recorded. (Interview with user)
+
+13. **Outcome endpoint: POST /api/agent/execution/outcome.** Separate endpoint called when trade closes (TP/SL hit or cancel). Receives `decisionKey` + result. Upserts `OutcomeNode` + `RESULTED_IN` edge. (Interview with user)
 
 ---
 

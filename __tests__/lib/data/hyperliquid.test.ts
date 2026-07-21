@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData, fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 
-const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap, mockAllMids, mockUserClearingState } = vi.hoisted(() => ({
+const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap, mockAllMids, mockClearinghouseState } = vi.hoisted(() => ({
   mockCandleSnapshot: vi.fn().mockResolvedValue([
     { t: 1710000000000, T: 1710003600000, s: "BTC", i: "1h", o: "70000", c: "70500", h: "71000", l: "69000", v: "1000", n: 500 },
   ]),
@@ -31,7 +31,7 @@ const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsA
   ]),
   mockPerpsAtOpenInterestCap: vi.fn().mockResolvedValue([]),
   mockAllMids: vi.fn().mockResolvedValue({ "BTC": "70500", "ETH": "3500" }),
-  mockUserClearingState: vi.fn().mockResolvedValue({ crossMarginSummary: { accountValue: "10000" } }),
+  mockClearinghouseState: vi.fn().mockResolvedValue({ crossMarginSummary: { accountValue: "10000" } }),
 }))
 
 vi.mock("@nktkas/hyperliquid", () => ({
@@ -43,7 +43,7 @@ vi.mock("@nktkas/hyperliquid", () => ({
       fundingHistory: mockFundingHistory,
       perpsAtOpenInterestCap: mockPerpsAtOpenInterestCap,
       allMids: mockAllMids,
-      userClearingState: mockUserClearingState,
+      clearinghouseState: mockClearinghouseState,
     }
   }),
 }))
@@ -134,7 +134,7 @@ describe("fetchUserEquity", () => {
   })
 
   it("returns 0 for non-existent user", async () => {
-    mockUserClearingState.mockResolvedValueOnce(null)
+    mockClearinghouseState.mockResolvedValueOnce(null)
     const equity = await fetchUserEquity("")
     expect(equity).toBe(0)
   })
