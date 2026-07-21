@@ -14,7 +14,7 @@ export class ExecutionError extends Error {
 }
 
 const fillTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
-const hlTimeoutMs = 15_000
+const hlTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
 
 export async function runExecutionPipeline(
   input: ExecutionPipelineInput

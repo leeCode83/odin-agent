@@ -2,7 +2,7 @@ import { DDReportSchema, TradePlanSchema } from "@/lib/agent/types"
 import type { PerspectiveResult, PlanningPipelineInput, PlanningPipelineOutput } from "./types"
 import { fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 import { queryGraphPatterns } from "@/lib/db/graph-memory"
-import { getRiskThresholds } from "@/lib/db/risk-thresholds"
+import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
 import { generatePerspective, aggregatePerspectives } from "./llm"
 import { computeATR, computeSLTP, computePositionSize, capLeverage } from "./risk-engine"
 import { autonomyGate } from "./gate"
@@ -34,15 +34,17 @@ export async function runPlanningPipeline(
   // 1. Parallel fetch: mark price, equity, candles, thresholds, graph patterns
   const fetchStart = Date.now()
   const allSignals = Object.values(ddReport.sections).flatMap((s) => s.signals)
+  const atrInterval = (process.env.ATR_CANDLE_INTERVAL || "1h") as "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "8h" | "12h" | "1d" | "3d" | "1w" | "1M"
+  const atrWindow = Number(process.env.ATR_CANDLE_COUNT) || 20
   const [markPrice, equity, candles, storedThresholds, graphPatterns] = await Promise.all([
     fetchMarkPrice(ddReport.asset).catch((e) => { errors.push(`mark_price: ${e.message}`); throw e; }),
     fetchUserEquity(input.walletAddress).catch((e) => { errors.push(`equity: ${e.message}`); throw e; }),
-    fetchCandlesForATR(ddReport.asset).catch((e) => { errors.push(`candles: ${e.message}`); throw e; }),
+    fetchCandlesForATR(ddReport.asset, atrInterval, atrWindow).catch((e) => { errors.push(`candles: ${e.message}`); throw e; }),
     getRiskThresholds(input.userId).catch((e) => { errors.push(`thresholds: ${e.message}`); return null; }),
     queryGraphPatterns(ddReport.asset, ddReport.category, allSignals).catch((e) => { errors.push(`graph: ${e.message}`); return []; }),
   ])
   const fetchMs = Date.now() - fetchStart
-  const thresholds = storedThresholds ?? { confidence_threshold: 70, max_position_usdc: 100, max_leverage: 10, risk_per_trade_percent: 1 }
+  const thresholds = storedThresholds ?? envDefaults()
 
   // 2. Three perspective LLM runs in parallel (thinking mode)
   const llmStart = Date.now()
@@ -66,8 +68,11 @@ export async function runPlanningPipeline(
 
   // 4. Deterministic risk engine
   const riskStart = Date.now()
-  const atr = computeATR(candles)
-  const { stopLoss, takeProfit } = computeSLTP(markPrice, atr, aggregated.side)
+  const atrPeriod = Number(process.env.ATR_PERIOD) || 14
+  const slMult = Number(process.env.ATR_SL_MULTIPLIER) || 1.5
+  const tpMult = Number(process.env.ATR_TP_MULTIPLIER) || 3.0
+  const atr = computeATR(candles, atrPeriod)
+  const { stopLoss, takeProfit } = computeSLTP(markPrice, atr, aggregated.side, { slMultiplier: slMult, tpMultiplier: tpMult })
   const leverage = capLeverage(aggregated.leverage_suggested, thresholds.max_leverage)
   const { positionSizeUsdc, positionSizeContracts } = computePositionSize(equity, markPrice, stopLoss, thresholds.risk_per_trade_percent)
   const riskEngineMs = Date.now() - riskStart

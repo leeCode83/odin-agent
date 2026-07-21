@@ -3,6 +3,8 @@ import { FACTOR_SYSTEM_PROMPTS, AGGREGATION_PROMPT } from "@/lib/agent/due-dilig
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high"
 
 let client: OpenAI | null = null
 

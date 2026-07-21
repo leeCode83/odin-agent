@@ -2,7 +2,7 @@
  * @constant BASE
  * @description Base URL for CoinLore API.
  */
-const BASE = "https://api.coinlore.net/api"
+const BASE = process.env.COINLORE_BASE_URL || "https://api.coinlore.net/api"
 
 /**
  * @constant COINLORE_TICKER

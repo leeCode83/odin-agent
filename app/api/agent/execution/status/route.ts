@@ -21,7 +21,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await pollOrderStatus(oid, 2_000, 8)
+    const interval = Number(process.env.EXECUTION_POLL_INTERVAL_MS) || 2_000
+    const maxAttempts = Number(process.env.EXECUTION_POLL_MAX_ATTEMPTS) || 8
+    const result = await pollOrderStatus(oid, interval, maxAttempts)
     return NextResponse.json({
       oid,
       status: result.status === "filled" ? "filled" : result.status === "none" ? "pending" : result.status,

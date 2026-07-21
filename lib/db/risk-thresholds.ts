@@ -7,7 +7,7 @@ import { getDb } from "@/lib/db/arango-client"
  * @description Provides default risk thresholds based on environment variables.
  * @returns {RiskThresholds} Default risk settings.
  */
-function envDefaults(): RiskThresholds {
+export function envDefaults(): RiskThresholds {
   return {
     confidence_threshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 70,
     max_position_usdc: Number(process.env.RISK_MAX_POSITION_USDC) || 100,

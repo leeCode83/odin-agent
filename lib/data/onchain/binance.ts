@@ -9,7 +9,7 @@
 
 import { withTimeout, withRetry } from "@/lib/utils"
 
-const FAPI_BASE = "https://fapi.binance.com/fapi/v1"
+const FAPI_BASE = process.env.BINANCE_FAPI_BASE_URL || "https://fapi.binance.com/fapi/v1"
 
 interface BinancePremiumIndex {
   symbol: string

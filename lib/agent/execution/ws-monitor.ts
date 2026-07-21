@@ -9,7 +9,7 @@ export interface FillResult {
 
 export function subscribeFill(
   orderIds: number[],
-  timeoutMs: number = 15_000
+  timeoutMs: number = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
 ): Promise<FillResult[]> {
   const isTestnet = process.env.HYPERLIQUID_TESTNET !== "false"
   const wsUrl = isTestnet
@@ -91,8 +91,8 @@ export function subscribeFill(
 
 export async function pollOrderStatus(
   oid: number,
-  intervalMs: number = 2_000,
-  maxAttempts: number = 8
+  intervalMs: number = Number(process.env.EXECUTION_POLL_INTERVAL_MS) || 2_000,
+  maxAttempts: number = Number(process.env.EXECUTION_POLL_MAX_ATTEMPTS) || 8
 ): Promise<FillResult> {
   const isTestnet = process.env.HYPERLIQUID_TESTNET !== "false"
   const transport = new HttpTransport({ isTestnet })

@@ -20,6 +20,7 @@ function thinkingParams(): ThinkingParams & Record<string, any> {
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
 const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high"
+const SELF_CONSISTENCY_TIMEOUT_MS = Number(process.env.SELF_CONSISTENCY_TIMEOUT_MS) || 30000
 
 let client: OpenAI | null = null
 
@@ -67,7 +68,7 @@ export async function generatePerspective(
           { role: "user", content: PERSPECTIVE_USER_PROMPT(ddReport, graphPatterns) },
         ],
       } as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
-      30000
+      SELF_CONSISTENCY_TIMEOUT_MS
     )
 
     const content = response.choices?.[0]?.message?.content || ""
@@ -117,7 +118,7 @@ export async function aggregatePerspectives(
           { role: "user", content: AGGREGATOR_USER_PROMPT(results) },
         ],
       } as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
-      30000
+      SELF_CONSISTENCY_TIMEOUT_MS
     )
 
     const content = response.choices?.[0]?.message?.content || ""
