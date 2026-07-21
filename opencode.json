@@ -1,0 +1,26 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+        "arangodb": {
+            "type": "local",
+            "command": [
+                "docker",
+                "run",
+                "-i",
+                "--rm",
+                "-e",
+                "ARANGO_HOSTS=http://host.docker.internal:8529",
+                "-e",
+                "ARANGO_ROOT_USERNAME=root",
+                "-e",
+                "ARANGO_ROOT_PASSWORD=password123",
+                "-e",
+                "ARANGO_DEFAULT_DB_NAME=odin",
+                "-e",
+                "ARANGO_VERIFY_SSL=false",
+                "arangodb/mcp-arangodb:latest"
+            ],
+            "enabled": true
+        }
+    }
+}

@@ -35,8 +35,9 @@ describe("GET /api/agent/balance", () => {
       withdrawable: 450,
       accountValue: 1009,
       totalMarginUsed: 559,
-      openPositions: 1,
+      openPositions: 0,
       crossMaintenanceMarginUsed: 120,
+      positions: [],
     })
 
     const res = await GET(createRequest("0x1234567890abcdef1234567890abcdef12345678"))
@@ -47,7 +48,7 @@ describe("GET /api/agent/balance", () => {
     expect(data.withdrawable).toBe(450)
     expect(data.accountValue).toBe(1009)
     expect(data.totalMarginUsed).toBe(559)
-    expect(data.openPositions).toBe(1)
+    expect(data.openPositions).toBe(0)
     expect(data.crossMaintenanceMarginUsed).toBe(120)
   })
 

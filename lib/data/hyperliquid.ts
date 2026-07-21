@@ -149,6 +149,20 @@ export async function fetchMarkPrice(asset: string): Promise<number> {
   return price
 }
 
+export interface Position {
+  coin: string
+  side: "long" | "short"
+  sizeAsset: number
+  sizeUsdc: number
+  entryPrice: number
+  unrealizedPnl: number
+  leverage: number
+  marginUsed: number
+  liquidationPrice: number | null
+  returnOnEquity: number
+  fundingSinceOpen: number
+}
+
 export interface UserBalance {
   walletAddress: string
   withdrawable: number
@@ -156,15 +170,16 @@ export interface UserBalance {
   totalMarginUsed: number
   openPositions: number
   crossMaintenanceMarginUsed: number
+  positions: Position[]
 }
 
 /**
  * @function fetchUserBalance
  * @description Fetches detailed user balance from Hyperliquid clearing state.
- * Returns withdrawable cash, total account value, margin used, open position count,
+ * Returns withdrawable cash, total account value, margin used, open position detail,
  * and cross maintenance margin.
  * @param {string} walletAddress - User wallet address (0x-prefixed).
- * @returns {Promise<UserBalance>} Balance details object.
+ * @returns {Promise<UserBalance>} Balance details including positions array.
  */
 export async function fetchUserBalance(walletAddress: string): Promise<UserBalance> {
   const client = createHLClient()
@@ -181,19 +196,40 @@ export async function fetchUserBalance(walletAddress: string): Promise<UserBalan
       totalMarginUsed: 0,
       openPositions: 0,
       crossMaintenanceMarginUsed: 0,
+      positions: [],
     }
   }
 
   const crossMarginSummary = state.crossMarginSummary as Record<string, string> | undefined
   const assetPositions = state.assetPositions as Array<Record<string, unknown>> | undefined
 
+  // Reason: HL position szi sign determines side (positive=long, negative=short)
+  const positions: Position[] = (assetPositions ?? []).map((ap) => {
+    const p = ap.position as Record<string, unknown>
+    const szi = parseFloat(p.szi as string ?? "0")
+    return {
+      coin: p.coin as string ?? "",
+      side: szi >= 0 ? "long" : "short",
+      sizeAsset: Math.abs(szi),
+      sizeUsdc: parseFloat(p.positionValue as string ?? "0"),
+      entryPrice: parseFloat(p.entryPx as string ?? "0"),
+      unrealizedPnl: parseFloat(p.unrealizedPnl as string ?? "0"),
+      leverage: parseFloat(((p.leverage as Record<string, unknown>)?.value as string) ?? "0"),
+      marginUsed: parseFloat(p.marginUsed as string ?? "0"),
+      liquidationPrice: p.liquidationPx != null ? parseFloat(p.liquidationPx as string) : null,
+      returnOnEquity: parseFloat(p.returnOnEquity as string ?? "0"),
+      fundingSinceOpen: parseFloat(((p.cumFunding as Record<string, unknown>)?.sinceOpen as string) ?? "0"),
+    }
+  })
+
   return {
     walletAddress,
     withdrawable: parseFloat(state.withdrawable),
     accountValue: parseFloat(crossMarginSummary?.accountValue ?? "0"),
     totalMarginUsed: parseFloat(crossMarginSummary?.totalMarginUsed ?? "0"),
-    openPositions: assetPositions?.length ?? 0,
+    openPositions: positions.length,
     crossMaintenanceMarginUsed: parseFloat((state.crossMaintenanceMarginUsed as string) ?? "0"),
+    positions,
   }
 }
 

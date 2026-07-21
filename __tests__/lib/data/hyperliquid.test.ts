@@ -35,7 +35,21 @@ const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsA
     crossMarginSummary: { accountValue: "1009", totalMarginUsed: "559", totalNtlPos: "450", totalRawUsd: "0" },
     crossMaintenanceMarginUsed: "120",
     withdrawable: "450",
-    assetPositions: [{ type: "oneWay", position: { coin: "BTC", szi: "0.1" } }],
+    assetPositions: [{
+      type: "oneWay",
+      position: {
+        coin: "BTC",
+        szi: "0.1",
+        positionValue: "7050",
+        entryPx: "70000",
+        unrealizedPnl: "50",
+        returnOnEquity: "0.1",
+        liquidationPx: "60000",
+        marginUsed: "350",
+        leverage: { type: "cross", value: 20, rawUsd: "350" },
+        cumFunding: { allTime: "1.5", sinceOpen: "0.5", sinceChange: "0.1" },
+      },
+    }],
     marginSummary: { accountValue: "1009", totalNtlPos: "0", totalRawUsd: "1009", totalMarginUsed: "0" },
     time: 1710000000000,
   }),
@@ -156,6 +170,8 @@ describe("fetchUserBalance", () => {
     expect(balance).toHaveProperty("totalMarginUsed", 559)
     expect(balance).toHaveProperty("openPositions", 1)
     expect(balance).toHaveProperty("crossMaintenanceMarginUsed", 120)
+    expect(balance.positions).toHaveLength(1)
+    expect(balance.positions[0].coin).toBe("BTC")
   })
 
   it("returns all fields as numbers", async () => {
@@ -165,6 +181,7 @@ describe("fetchUserBalance", () => {
     expect(typeof balance.totalMarginUsed).toBe("number")
     expect(typeof balance.openPositions).toBe("number")
     expect(typeof balance.crossMaintenanceMarginUsed).toBe("number")
+    expect(Array.isArray(balance.positions)).toBe(true)
     expect(Number.isNaN(balance.withdrawable)).toBe(false)
     expect(Number.isNaN(balance.accountValue)).toBe(false)
   })
@@ -177,6 +194,7 @@ describe("fetchUserBalance", () => {
     expect(balance.totalMarginUsed).toBe(0)
     expect(balance.openPositions).toBe(0)
     expect(balance.crossMaintenanceMarginUsed).toBe(0)
+    expect(balance.positions).toEqual([])
   })
 
   it("returns zero openPositions when assetPositions is empty", async () => {
@@ -190,6 +208,78 @@ describe("fetchUserBalance", () => {
     })
     const balance = await fetchUserBalance("0x456")
     expect(balance.openPositions).toBe(0)
+    expect(balance.positions).toEqual([])
+  })
+
+  it("maps position fields correctly", async () => {
+    const balance = await fetchUserBalance("0x123")
+    const pos = balance.positions[0]
+    expect(pos.coin).toBe("BTC")
+    expect(pos.side).toBe("long")
+    expect(pos.sizeAsset).toBe(0.1)
+    expect(pos.sizeUsdc).toBe(7050)
+    expect(pos.entryPrice).toBe(70000)
+    expect(pos.unrealizedPnl).toBe(50)
+    expect(pos.leverage).toBe(20)
+    expect(pos.marginUsed).toBe(350)
+    expect(pos.liquidationPrice).toBe(60000)
+    expect(pos.returnOnEquity).toBe(0.1)
+    expect(pos.fundingSinceOpen).toBe(0.5)
+  })
+
+  it("derives short side from negative szi", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "500", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "500" },
+      crossMaintenanceMarginUsed: "0",
+      withdrawable: "500",
+      assetPositions: [{
+        type: "oneWay",
+        position: {
+          coin: "ETH",
+          szi: "-0.05",
+          positionValue: "175",
+          entryPx: "3500",
+          unrealizedPnl: "-5",
+          returnOnEquity: "-0.02",
+          liquidationPx: "3200",
+          marginUsed: "20",
+          leverage: { type: "cross", value: 5, rawUsd: "20" },
+          cumFunding: { allTime: "0.1", sinceOpen: "0.02", sinceChange: "0" },
+        },
+      }],
+      marginSummary: { accountValue: "500", totalNtlPos: "0", totalRawUsd: "500", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0x789")
+    expect(balance.positions[0].side).toBe("short")
+    expect(balance.positions[0].sizeAsset).toBe(0.05)
+  })
+
+  it("handles null liquidationPx", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "500", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "500" },
+      crossMaintenanceMarginUsed: "0",
+      withdrawable: "500",
+      assetPositions: [{
+        type: "oneWay",
+        position: {
+          coin: "BTC",
+          szi: "0.1",
+          positionValue: "7050",
+          entryPx: "70000",
+          unrealizedPnl: "50",
+          returnOnEquity: "0.1",
+          liquidationPx: null,
+          marginUsed: "350",
+          leverage: { type: "cross", value: 20, rawUsd: "350" },
+          cumFunding: { allTime: "1.5", sinceOpen: "0.5", sinceChange: "0.1" },
+        },
+      }],
+      marginSummary: { accountValue: "500", totalNtlPos: "0", totalRawUsd: "500", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0xabc")
+    expect(balance.positions[0].liquidationPrice).toBeNull()
   })
 })
 
