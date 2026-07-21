@@ -149,22 +149,65 @@ export async function fetchMarkPrice(asset: string): Promise<number> {
   return price
 }
 
+export interface UserBalance {
+  walletAddress: string
+  withdrawable: number
+  accountValue: number
+  totalMarginUsed: number
+  openPositions: number
+  crossMaintenanceMarginUsed: number
+}
+
 /**
- * @function fetchUserEquity
- * @description Fetches user equity from clearing state with 15s timeout and 2 retries.
- * @param {string} walletAddress - User wallet address.
- * @returns {Promise<number>} Account value as number >= 0 (0 if user not found).
+ * @function fetchUserBalance
+ * @description Fetches detailed user balance from Hyperliquid clearing state.
+ * Returns withdrawable cash, total account value, margin used, open position count,
+ * and cross maintenance margin.
+ * @param {string} walletAddress - User wallet address (0x-prefixed).
+ * @returns {Promise<UserBalance>} Balance details object.
  */
-export async function fetchUserEquity(walletAddress: string): Promise<number> {
+export async function fetchUserBalance(walletAddress: string): Promise<UserBalance> {
   const client = createHLClient()
   const state = await withRetry(() => withTimeout(
     client.clearinghouseState({ user: walletAddress as `0x${string}` }),
     15_000
-  ), { retries: 2 })
-  if (!state || !state.crossMarginSummary || !state.crossMarginSummary.accountValue) {
-    return 0
+  ), { retries: 2 }) as Record<string, unknown> | null
+
+  if (!state || typeof state.withdrawable !== "string") {
+    return {
+      walletAddress,
+      withdrawable: 0,
+      accountValue: 0,
+      totalMarginUsed: 0,
+      openPositions: 0,
+      crossMaintenanceMarginUsed: 0,
+    }
   }
-  return parseFloat(state.crossMarginSummary.accountValue)
+
+  const crossMarginSummary = state.crossMarginSummary as Record<string, string> | undefined
+  const assetPositions = state.assetPositions as Array<Record<string, unknown>> | undefined
+
+  return {
+    walletAddress,
+    withdrawable: parseFloat(state.withdrawable),
+    accountValue: parseFloat(crossMarginSummary?.accountValue ?? "0"),
+    totalMarginUsed: parseFloat(crossMarginSummary?.totalMarginUsed ?? "0"),
+    openPositions: assetPositions?.length ?? 0,
+    crossMaintenanceMarginUsed: parseFloat((state.crossMaintenanceMarginUsed as string) ?? "0"),
+  }
+}
+
+/**
+ * @function fetchUserEquity
+ * @description Fetches user's withdrawable balance from clearing state.
+ * Returns free cash available for trading (withdrawable), not total accountValue.
+ * Wraps fetchUserBalance for backward compatibility.
+ * @param {string} walletAddress - User wallet address.
+ * @returns {Promise<number>} Withdrawable balance as number >= 0.
+ */
+export async function fetchUserEquity(walletAddress: string): Promise<number> {
+  const balance = await fetchUserBalance(walletAddress)
+  return balance.withdrawable
 }
 
 // Interval to milliseconds lookup for ATR candle window computation

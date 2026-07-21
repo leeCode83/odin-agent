@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData, fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
+import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData, fetchMarkPrice, fetchUserEquity, fetchUserBalance, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 
 const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap, mockAllMids, mockClearinghouseState } = vi.hoisted(() => ({
   mockCandleSnapshot: vi.fn().mockResolvedValue([
@@ -31,7 +31,14 @@ const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsA
   ]),
   mockPerpsAtOpenInterestCap: vi.fn().mockResolvedValue([]),
   mockAllMids: vi.fn().mockResolvedValue({ "BTC": "70500", "ETH": "3500" }),
-  mockClearinghouseState: vi.fn().mockResolvedValue({ crossMarginSummary: { accountValue: "10000" } }),
+  mockClearinghouseState: vi.fn().mockResolvedValue({
+    crossMarginSummary: { accountValue: "1009", totalMarginUsed: "559", totalNtlPos: "450", totalRawUsd: "0" },
+    crossMaintenanceMarginUsed: "120",
+    withdrawable: "450",
+    assetPositions: [{ type: "oneWay", position: { coin: "BTC", szi: "0.1" } }],
+    marginSummary: { accountValue: "1009", totalNtlPos: "0", totalRawUsd: "1009", totalMarginUsed: "0" },
+    time: 1710000000000,
+  }),
 }))
 
 vi.mock("@nktkas/hyperliquid", () => ({
@@ -127,16 +134,62 @@ describe("fetchMarkPrice", () => {
 })
 
 describe("fetchUserEquity", () => {
-  it("returns account value >= 0", async () => {
+  it("returns withdrawable balance from clearing state", async () => {
     const equity = await fetchUserEquity("0x123")
     expect(typeof equity).toBe("number")
-    expect(equity).toBeGreaterThanOrEqual(0)
+    expect(equity).toBe(450)
   })
 
   it("returns 0 for non-existent user", async () => {
     mockClearinghouseState.mockResolvedValueOnce(null)
     const equity = await fetchUserEquity("")
     expect(equity).toBe(0)
+  })
+})
+
+describe("fetchUserBalance", () => {
+  it("returns full balance detail object", async () => {
+    const balance = await fetchUserBalance("0x123")
+    expect(balance).toHaveProperty("walletAddress", "0x123")
+    expect(balance).toHaveProperty("withdrawable", 450)
+    expect(balance).toHaveProperty("accountValue", 1009)
+    expect(balance).toHaveProperty("totalMarginUsed", 559)
+    expect(balance).toHaveProperty("openPositions", 1)
+    expect(balance).toHaveProperty("crossMaintenanceMarginUsed", 120)
+  })
+
+  it("returns all fields as numbers", async () => {
+    const balance = await fetchUserBalance("0x123")
+    expect(typeof balance.withdrawable).toBe("number")
+    expect(typeof balance.accountValue).toBe("number")
+    expect(typeof balance.totalMarginUsed).toBe("number")
+    expect(typeof balance.openPositions).toBe("number")
+    expect(typeof balance.crossMaintenanceMarginUsed).toBe("number")
+    expect(Number.isNaN(balance.withdrawable)).toBe(false)
+    expect(Number.isNaN(balance.accountValue)).toBe(false)
+  })
+
+  it("returns zeros for non-existent user", async () => {
+    mockClearinghouseState.mockResolvedValueOnce(null)
+    const balance = await fetchUserBalance("")
+    expect(balance.withdrawable).toBe(0)
+    expect(balance.accountValue).toBe(0)
+    expect(balance.totalMarginUsed).toBe(0)
+    expect(balance.openPositions).toBe(0)
+    expect(balance.crossMaintenanceMarginUsed).toBe(0)
+  })
+
+  it("returns zero openPositions when assetPositions is empty", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "500", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+      crossMaintenanceMarginUsed: "0",
+      withdrawable: "500",
+      assetPositions: [],
+      marginSummary: { accountValue: "500", totalNtlPos: "0", totalRawUsd: "500", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0x456")
+    expect(balance.openPositions).toBe(0)
   })
 })
 
