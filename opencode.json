@@ -21,6 +21,20 @@
                 "arangodb/mcp-arangodb:latest"
             ],
             "enabled": true
+        },
+        "hyperliquid": {
+            "type": "local",
+            "command": [
+                "uvx",
+                "--from",
+                "mcp-hyperliquid",
+                "hyperliquid-mcp"
+            ],
+            "environment": {
+                "HYPERLIQUID_PRIVATE_KEY": "0x2faedcd0c3977a7e18dcfa3372df8fa92dac7e43599642902d08ab7b5fd22e39",
+                "HYPERLIQUID_TESTNET": "true"
+            },
+            "enabled": true
         }
     }
 }

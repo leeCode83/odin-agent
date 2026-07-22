@@ -1,3 +1,4 @@
+import { createHash } from "crypto"
 import type { GraphPattern, TradePlan } from "@/lib/agent/types"
 import { GraphCollectionNames } from "@/lib/db/arango-types"
 import type { DecisionNode, SignalNode, OutcomeNode } from "@/lib/db/arango-types"
@@ -80,7 +81,8 @@ export async function recordSignals(
   const now = new Date().toISOString()
 
   for (const s of signals) {
-    const signalKey = `${userId}_${s.factor}_${s.signalType}`
+    const rawKey = `${userId}_${s.factor}_${s.signalType}`
+    const signalKey = createHash("md5").update(rawKey).digest("hex")
     const doc: SignalNode = {
       _key: signalKey,
       factor: s.factor,

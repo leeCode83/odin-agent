@@ -154,10 +154,9 @@ describe("fetchUserEquity", () => {
     expect(equity).toBe(450)
   })
 
-  it("returns 0 for non-existent user", async () => {
+  it("throws for null state (non-existent or pruned account)", async () => {
     mockClearinghouseState.mockResolvedValueOnce(null)
-    const equity = await fetchUserEquity("")
-    expect(equity).toBe(0)
+    await expect(fetchUserEquity("")).rejects.toThrow(/No clearinghouse state/)
   })
 })
 
@@ -186,15 +185,50 @@ describe("fetchUserBalance", () => {
     expect(Number.isNaN(balance.accountValue)).toBe(false)
   })
 
-  it("returns zeros for non-existent user", async () => {
+  it("throws for null state (non-existent or pruned account)", async () => {
     mockClearinghouseState.mockResolvedValueOnce(null)
-    const balance = await fetchUserBalance("")
+    await expect(fetchUserBalance("")).rejects.toThrow(/No clearinghouse state/)
+  })
+
+  it("handles withdrawable as number (not string)", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "1009", totalMarginUsed: "559", totalNtlPos: "450", totalRawUsd: "0" },
+      crossMaintenanceMarginUsed: "120",
+      withdrawable: 1000,
+      assetPositions: [],
+      marginSummary: { accountValue: "1009", totalNtlPos: "0", totalRawUsd: "1009", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0xnum")
+    expect(balance.withdrawable).toBe(1000)
+    expect(balance.accountValue).toBe(1009)
+  })
+
+  it("handles withdrawable as null", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "500", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+      crossMaintenanceMarginUsed: "0",
+      withdrawable: null,
+      assetPositions: [],
+      marginSummary: { accountValue: "500", totalNtlPos: "0", totalRawUsd: "500", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0xnull")
     expect(balance.withdrawable).toBe(0)
-    expect(balance.accountValue).toBe(0)
-    expect(balance.totalMarginUsed).toBe(0)
-    expect(balance.openPositions).toBe(0)
-    expect(balance.crossMaintenanceMarginUsed).toBe(0)
-    expect(balance.positions).toEqual([])
+    expect(balance.accountValue).toBe(500)
+  })
+
+  it("handles withdrawable as undefined (field missing)", async () => {
+    mockClearinghouseState.mockResolvedValueOnce({
+      crossMarginSummary: { accountValue: "500", totalMarginUsed: "0", totalNtlPos: "0", totalRawUsd: "0" },
+      crossMaintenanceMarginUsed: "0",
+      assetPositions: [],
+      marginSummary: { accountValue: "500", totalNtlPos: "0", totalRawUsd: "500", totalMarginUsed: "0" },
+      time: 1710000000000,
+    })
+    const balance = await fetchUserBalance("0xundef")
+    expect(balance.withdrawable).toBe(0)
+    expect(balance.accountValue).toBe(500)
   })
 
   it("returns zero openPositions when assetPositions is empty", async () => {

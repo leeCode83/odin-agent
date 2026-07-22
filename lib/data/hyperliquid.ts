@@ -188,16 +188,13 @@ export async function fetchUserBalance(walletAddress: string): Promise<UserBalan
     15_000
   ), { retries: 2 }) as Record<string, unknown> | null
 
-  if (!state || typeof state.withdrawable !== "string") {
-    return {
-      walletAddress,
-      withdrawable: 0,
-      accountValue: 0,
-      totalMarginUsed: 0,
-      openPositions: 0,
-      crossMaintenanceMarginUsed: 0,
-      positions: [],
-    }
+  if (!state) {
+    console.warn(`[hyperliquid] clearinghouseState returned null for ${walletAddress}`)
+    throw new Error(
+      `No clearinghouse state for ${walletAddress}. ` +
+      `On testnet, accounts without open positions may have pruned state. ` +
+      `Try sending a small test transaction to reinitialize.`
+    )
   }
 
   const crossMarginSummary = state.crossMarginSummary as Record<string, string> | undefined
@@ -224,7 +221,7 @@ export async function fetchUserBalance(walletAddress: string): Promise<UserBalan
 
   return {
     walletAddress,
-    withdrawable: parseFloat(state.withdrawable),
+    withdrawable: parseFloat((state.withdrawable as string) ?? "0"),
     accountValue: parseFloat(crossMarginSummary?.accountValue ?? "0"),
     totalMarginUsed: parseFloat(crossMarginSummary?.totalMarginUsed ?? "0"),
     openPositions: positions.length,
