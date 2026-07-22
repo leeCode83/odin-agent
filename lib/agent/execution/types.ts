@@ -71,3 +71,25 @@ export interface OutcomeInput {
   exitPrice?: number
   exitReason?: string
 }
+
+/**
+ * @interface ClosePositionResult
+ * @description Result of closing a single filled position.
+ */
+export interface ClosePositionResult {
+  coin: string
+  side: "long" | "short"
+  size: string
+  closed: boolean
+  oid?: number
+  error?: string
+}
+
+/**
+ * @interface CloseAllResult
+ * @description Result of closing all or filtered positions.
+ */
+export interface CloseAllResult {
+  closed: number
+  positions: ClosePositionResult[]
+}
