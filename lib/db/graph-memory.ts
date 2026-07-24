@@ -1,7 +1,7 @@
 import { createHash } from "crypto"
 import type { GraphPattern, TradePlan } from "@/lib/agent/types"
 import { GraphCollectionNames } from "@/lib/db/arango-types"
-import type { DecisionNode, SignalNode, OutcomeNode } from "@/lib/db/arango-types"
+import type { DecisionNode, SignalNode, OutcomeNode, DDReportNode } from "@/lib/db/arango-types"
 import { getDb } from "@/lib/db/arango-client"
 
 /**
@@ -203,4 +203,42 @@ export async function recordOutcome(
   })
 
   return result._key
+}
+
+/**
+ * @function recordDDReport
+ * @description Persists a DD report to the dd_reports collection. Non-fatal on failure.
+ * @param {Record<string, unknown>} report - The full DDReport object.
+ * @param {string} userId - The user ID.
+ * @param {string} walletAddress - The wallet address.
+ * @returns {Promise<string>} The _key of the inserted document, or empty string on failure.
+ */
+export async function recordDDReport(
+  report: Record<string, unknown>,
+  userId: string,
+  walletAddress: string
+): Promise<string> {
+  const db = getDb()
+  if (!db) {
+    console.warn("[graph-memory] ArangoDB unavailable, skipping DD report persistence")
+    return ""
+  }
+
+  try {
+    const doc: DDReportNode = {
+      runId: crypto.randomUUID(),
+      userId,
+      walletAddress,
+      asset: (report.asset as string) || "",
+      category: (report.category as string) || "",
+      report,
+      timestamp: new Date().toISOString(),
+      processingTimeMs: (report.processingTimeMs as number) || 0,
+    }
+    const result = await db.collection(GraphCollectionNames.DD_REPORTS).save(doc as Record<string, unknown>)
+    return result._key
+  } catch (err) {
+    console.warn("[graph-memory] Failed to persist DD report:", err)
+    return ""
+  }
 }

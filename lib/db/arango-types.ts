@@ -81,6 +81,22 @@ export interface GraphMemoryEdge {
 }
 
 /**
+ * @interface DDReportNode
+ * @description Represents a persisted DD report document in ArangoDB.
+ */
+export interface DDReportNode {
+  _key?: string
+  runId: string
+  userId: string
+  walletAddress: string
+  asset: string
+  category: string
+  report: Record<string, unknown>
+  timestamp: string
+  processingTimeMs: number
+}
+
+/**
  * @constant GraphCollectionNames
  * @description Collection names used in the ArangoDB graph.
  */
@@ -89,8 +105,10 @@ export const GraphCollectionNames = {
   SIGNALS: "signals",
   OUTCOMES: "outcomes",
   ASSETS: "assets",
+  DD_REPORTS: "dd_reports",
   EDGE_ANALYZED: "decision_analyzed",
   EDGE_TRIGGERED_BY: "decision_triggered_by",
   EDGE_RESULTED_IN: "decision_resulted_in",
   EDGE_ASSET_BELONGS_TO: "asset_belongs_to",
+  EDGE_HAS_FACTORREPORT: "decision_has_factorreport",
 } as const

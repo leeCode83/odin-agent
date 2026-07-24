@@ -9,7 +9,7 @@ vi.mock("@/lib/asset-categories", () => ({
   getCategoryName: vi.fn(),
 }))
 
-import { runDDPipeline } from "@/lib/agent/pipeline"
+import { runDDPipeline } from "@/lib/agent/due-diligence/pipeline"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import { getCategory, getCategoryName } from "@/lib/asset-categories"
 import type { DDReport } from "@/lib/agent/types"
@@ -26,7 +26,7 @@ const mockDDReport: DDReport = {
     sentiment: { score: 70, summary: "Neutral sentiment", signals: [] },
     fundamental: { score: 85, summary: "Solid fundamentals", signals: [] },
   },
-  aggregated_thesis: "BTC shows strong fundamentals",
+  aggregated_thesis: "BTC shows strong fundamentals and technical setup",
   confidence_score: 80,
   risk_flags: [],
   factorReports: [],
@@ -35,10 +35,10 @@ const mockDDReport: DDReport = {
   crossValidation: { pairs: [], overallAlignment: 0, contradictions: [] },
   risks: [],
   catalysts: [],
-  summary: "BTC is strong",
+  summary: "BTC is a strong investment",
   iterations: 1,
   status: "complete",
-  processingTimeMs: 1200,
+  processingTimeMs: 1500,
 }
 
 describe("runDDPipeline", () => {
@@ -48,33 +48,36 @@ describe("runDDPipeline", () => {
     vi.mocked(getCategoryName).mockReturnValue("major")
   })
 
-  it("returns valid pipeline output for known asset", async () => {
+  it("calls runDDAgent and returns DDReport with timing", async () => {
     vi.mocked(runDDAgent).mockResolvedValueOnce(mockDDReport)
 
-    const output = await runDDPipeline({ asset: "BTC", userId: "user1" })
+    const result = await runDDPipeline({ asset: "BTC", userId: "user-1" })
 
-    expect(output).toHaveProperty("report")
-    expect(output).toHaveProperty("timing")
-    expect(output.report.asset).toBe("BTC")
-    expect(output.report.category).toBe("major")
-    expect(output.report.aggregated_thesis).toBe("BTC shows strong fundamentals")
-    expect(output.report.confidence_score).toBe(80)
+    expect(runDDAgent).toHaveBeenCalledWith({
+      asset: "BTC",
+      category: mockCategory,
+      userId: "user-1",
+    })
+    expect(result.report).toEqual(mockDDReport)
+    expect(result.timing.fetchMs).toBe(0)
+    expect(result.timing.llmMs).toBe(0)
+    expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
+    expect(result.timing.agentMs).toBe(1500)
   })
 
-  it("throws for unknown asset", async () => {
-    vi.mocked(getCategory).mockReturnValue(null)
+  it("throws on unknown asset", async () => {
+    vi.mocked(getCategory).mockReturnValueOnce(null)
 
-    await expect(runDDPipeline({ asset: "UNKNOWN", userId: "user1" })).rejects.toThrow("Unknown asset")
+    await expect(runDDPipeline({ asset: "UNKNOWN", userId: "user-1" })).rejects.toThrow(
+      /Unknown asset: UNKNOWN/
+    )
   })
 
-  it("includes timing information", async () => {
-    vi.mocked(runDDAgent).mockResolvedValueOnce(mockDDReport)
+  it("handles runDDAgent error gracefully", async () => {
+    vi.mocked(runDDAgent).mockRejectedValueOnce(new Error("Agent crashed"))
 
-    const output = await runDDPipeline({ asset: "BTC", userId: "user1" })
-
-    expect(output.timing.fetchMs).toBe(0)
-    expect(output.timing.llmMs).toBe(0)
-    expect(output.timing.totalMs).toBeGreaterThanOrEqual(0)
-    expect(output.timing.agentMs).toBe(1200)
+    await expect(runDDPipeline({ asset: "BTC", userId: "user-1" })).rejects.toThrow(
+      /DD Pipeline failed for BTC.*Agent crashed/
+    )
   })
 })

@@ -1,4 +1,10 @@
 import { z } from "zod"
+import {
+  FactorReportSchema,
+  CrossValidationSchema,
+  RiskEntrySchema,
+  CatalystEntrySchema,
+} from "@/lib/agent/due-diligence/types"
 
 /**
  * @constant SectionResultSchema
@@ -16,17 +22,27 @@ const SectionKey = z.enum(SECTION_KEYS)
 
 /**
  * @constant DDReportSchema
- * @description Zod schema for the full Due Diligence report.
+ * @description Zod schema for the full Due Diligence report, extended with factor reports, cross-validation, risks, and catalysts.
  */
 export const DDReportSchema = z.object({
   asset: z.string(),
   category: z.string(),
   timestamp: z.string().datetime(),
   sections: z.record(SectionKey, SectionResultSchema),
-  aggregated_thesis: z.string(),
-  confidence_score: z.number().int().min(0).max(100),
+  aggregated_thesis: z.string().optional(),
+  confidence_score: z.number().int().min(0).max(100).optional(),
   risk_flags: z.array(z.string()),
   errors: z.array(z.string()).optional(),
+  factorReports: z.array(FactorReportSchema).optional(),
+  overallScore: z.number().min(0).max(100).optional(),
+  overallConfidence: z.number().min(0).max(100).optional(),
+  crossValidation: CrossValidationSchema.optional(),
+  risks: z.array(RiskEntrySchema).optional(),
+  catalysts: z.array(CatalystEntrySchema).optional(),
+  summary: z.string().optional(),
+  iterations: z.number().int().min(0).optional(),
+  status: z.enum(["complete", "partial", "failed"]).optional(),
+  processingTimeMs: z.number().min(0).optional(),
 })
 
 export type SectionResult = z.infer<typeof SectionResultSchema>
@@ -44,6 +60,7 @@ export interface DDPipelineOutput {
     fetchMs: number
     llmMs: number
     totalMs: number
+    agentMs: number
   }
 }
 

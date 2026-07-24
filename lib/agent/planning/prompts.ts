@@ -81,8 +81,8 @@ export function PERSPECTIVE_USER_PROMPT(ddReport: DDReport, graphPatterns: Graph
   const parts: string[] = []
 
   parts.push(`Asset: ${ddReport.asset} (${ddReport.category})`)
-  parts.push(`Overall confidence score: ${ddReport.confidence_score}/100`)
-  parts.push(`Aggregated thesis: ${ddReport.aggregated_thesis}`)
+  parts.push(`Overall confidence score: ${ddReport.overallConfidence ?? ddReport.confidence_score}/100`)
+  parts.push(`Aggregated thesis: ${ddReport.summary ?? ddReport.aggregated_thesis}`)
   parts.push("")
 
   if (tech) {

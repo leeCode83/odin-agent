@@ -131,3 +131,53 @@ export async function fetchBinanceOnchain(asset: string): Promise<{
     oiCapReached: false,
   }
 }
+
+// ─── Tool wrappers for DD Agent subagents ────────────────────────────
+
+/**
+ * @function getBinanceFundingTool
+ * @description Tool wrapper around fetchBinancePremiumIndex.
+ * Returns funding rate, mark price, and oracle price for an asset.
+ * @param {string} asset - Asset ticker (e.g. "BTC").
+ * @returns {Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }>}
+ */
+export async function getBinanceFundingTool(
+  asset: string
+): Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }> {
+  const t0 = Date.now()
+  const result = await fetchBinancePremiumIndex(asset)
+  if (!result) return { success: false, error: "Failed to fetch Binance premium index", metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+  return { success: true, data: result, metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+}
+
+/**
+ * @function getBinanceOITool
+ * @description Tool wrapper around fetchBinanceOpenInterest.
+ * Returns open interest for an asset.
+ * @param {string} asset - Asset ticker (e.g. "BTC").
+ * @returns {Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }>}
+ */
+export async function getBinanceOITool(
+  asset: string
+): Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }> {
+  const t0 = Date.now()
+  const result = await fetchBinanceOpenInterest(asset)
+  if (result === null) return { success: false, error: "Failed to fetch Binance OI", metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+  return { success: true, data: { openInterest: result }, metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+}
+
+/**
+ * @function getBinanceVolumeTool
+ * @description Tool wrapper around fetchBinanceVolume24h.
+ * Returns 24h volume for an asset.
+ * @param {string} asset - Asset ticker (e.g. "BTC").
+ * @returns {Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }>}
+ */
+export async function getBinanceVolumeTool(
+  asset: string
+): Promise<{ success: boolean; data?: unknown; error?: string; metadata: { source: string; latencyMs: number } }> {
+  const t0 = Date.now()
+  const result = await fetchBinanceVolume24h(asset)
+  if (result === null) return { success: false, error: "Failed to fetch Binance volume", metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+  return { success: true, data: { volume24h: result }, metadata: { source: "binance", latencyMs: Date.now() - t0 } }
+}

@@ -123,19 +123,19 @@ export function DDSection() {
                     </span>
                   </div>
 
-                  <p className="text-xs text-zinc-400 leading-relaxed">{ddReport.aggregated_thesis}</p>
+                  <p className="text-xs text-zinc-400 leading-relaxed">{ddReport.summary ?? ddReport.aggregated_thesis}</p>
 
-                  {ddReport.confidence_score > 0 && (
+                  {(ddReport.overallConfidence ?? ddReport.confidence_score) > 0 && (
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Confidence</span>
                       <Badge variant="secondary" className={`text-xs ${
-                        ddReport.confidence_score >= 70
+                        (ddReport.overallConfidence ?? ddReport.confidence_score) >= 70
                           ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
-                          : ddReport.confidence_score >= 40
+                          : (ddReport.overallConfidence ?? ddReport.confidence_score) >= 40
                             ? "bg-amber-500/15 text-amber-400 border-amber-500/20"
                             : "bg-red-500/15 text-red-400 border-red-500/20"
                       }`}>
-                        {ddReport.confidence_score}%
+                        {ddReport.overallConfidence ?? ddReport.confidence_score}%
                       </Badge>
                     </div>
                   )}
