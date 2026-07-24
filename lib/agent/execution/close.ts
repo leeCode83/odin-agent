@@ -42,7 +42,7 @@ interface PositionInfo {
 async function fetchPositions(queryAddr: string): Promise<PositionInfo[]> {
   const info = createInfoClient()
   const state = await withRetry(() =>
-    withTimeout(info.clearinghouseState({ user: queryAddr as `0x${string}` }), HL_TIMEOUT_MS),
+    withTimeout(() => info.clearinghouseState({ user: queryAddr as `0x${string}` }), HL_TIMEOUT_MS),
     { retries: 2 }
   ) as { assetPositions?: Array<{ position: { coin: string; szi: string } }> } | null
 

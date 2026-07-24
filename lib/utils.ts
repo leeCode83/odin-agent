@@ -1,55 +1,31 @@
-/**
- * @file utils.ts
- * @description Shared async utility functions: timeout wrapping, retry with backoff.
- * @module utils
- * @layer util
- */
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
 
-export class TimeoutError extends Error {
-  constructor(ms: number) {
-    super(`Operation timed out after ${ms}ms`)
-    this.name = "TimeoutError"
-  }
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
 }
 
 /**
- * @function withTimeout
- * @description Races a promise against a timeout. If the promise does not settle within
- * the given milliseconds, rejects with TimeoutError. The underlying promise is not
- * aborted — only the race result is discarded.
- * @param {Promise<T>} promise - The operation to time-box.
- * @param {number} ms - Timeout in milliseconds.
- * @returns {Promise<T>} The result of the promise if it settles in time.
- * @throws {TimeoutError} When the timeout fires before the promise settles.
+ * Run an async function or promise with a timeout.
+ * ponytail: accepts both Promise and () => Promise for backwards compat.
  */
-export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export async function withTimeout<T>(input: Promise<T> | (() => Promise<T>), ms: number): Promise<T> {
+  const promise = typeof input === "function" ? input() : input
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new TimeoutError(ms)), ms)
-    }),
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
   ])
 }
 
 /**
- * @function withRetry
- * @description Calls an async factory function and retries on failure with
- * exponential backoff (1s, 2s, 4s). Defaults to 2 retries (3 total attempts).
- * @param {() => Promise<T>} fn - Factory that returns a promise for each attempt.
- * Fresh attempt = fresh call to this factory.
- * @param {object} [options]
- * @param {number} [options.retries=2] - Number of retry attempts after initial failure.
- * @param {number} [options.baseDelayMs=1000] - Base delay for exponential backoff in ms.
- * @returns {Promise<T>} The result of the first successful attempt.
- * @throws {unknown} The last error thrown by fn if all attempts fail.
+ * Retry an async function with exponential backoff.
+ * ponytail: simple loop, no jitter — good enough for API retries.
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  options?: { retries?: number; baseDelayMs?: number }
+  opts: { retries?: number; delayMs?: number; backoff?: number } = {},
 ): Promise<T> {
-  const retries = options?.retries ?? 2
-  const baseDelayMs = options?.baseDelayMs ?? 1_000
-
+  const { retries = 3, delayMs = 1000, backoff = 2 } = opts
   let lastError: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -57,8 +33,7 @@ export async function withRetry<T>(
     } catch (err) {
       lastError = err
       if (attempt < retries) {
-        const delay = baseDelayMs * Math.pow(2, attempt)
-        await new Promise((r) => setTimeout(r, delay))
+        await new Promise((r) => setTimeout(r, delayMs * backoff ** attempt))
       }
     }
   }

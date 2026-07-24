@@ -1,75 +1,88 @@
 "use client"
 
-import { useState } from "react"
+import { useRef } from "react"
+import gsap from "gsap"
+import { useGSAP } from "@gsap/react"
+import { DashboardProvider } from "@/context/dashboard-context"
+import { NavBar } from "@/components/dashboard/nav-bar"
+import { WalletInit } from "@/components/dashboard/wallet-init"
+import { BalanceCard } from "@/components/dashboard/balance-card"
+import { DDSection } from "@/components/dashboard/dd-section"
+import { PlanSection } from "@/components/dashboard/plan-section"
+import { ExecSection } from "@/components/dashboard/exec-section"
+import { StatusSection } from "@/components/dashboard/status-section"
 
-export default function Home() {
-  const [asset, setAsset] = useState("BTC")
-  const [result, setResult] = useState<unknown>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+function DashboardInner() {
+  const containerRef = useRef<HTMLDivElement>(null)
 
-  async function runDD() {
-    setLoading(true)
-    setResult(null)
-    setError(null)
-    try {
-      const res = await fetch("/api/agent/dd", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ asset, userId: "demo" }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setError(json.error || "Request failed")
-      } else {
-        setResult(json)
-      }
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
+  useGSAP(() => {
+    gsap.fromTo(containerRef.current, {
+      opacity: 0,
+      y: 40,
+    }, {
+      opacity: 1,
+      y: 0,
+      duration: 0.8,
+      ease: "cubic-bezier(0.32, 0.72, 0, 1)",
+      stagger: 0.08,
+    })
+  }, { scope: containerRef })
 
   return (
-    <div className="flex flex-col items-center gap-6 p-8 font-sans">
-      <h1 className="text-2xl font-bold">Odin — DD Agent</h1>
+    <>
+      <NavBar />
 
-      <div className="flex items-center gap-3">
-        <label htmlFor="asset" className="font-medium">Asset:</label>
-        <input
-          id="asset"
-          value={asset}
-          onChange={(e) => setAsset(e.target.value.toUpperCase())}
-          className="border rounded px-3 py-1.5 w-24 text-center uppercase"
-          placeholder="BTC"
-        />
-        <button
-          onClick={runDD}
-          disabled={loading}
-          className="bg-blue-600 text-white rounded px-4 py-1.5 font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "Running..." : "Run DD"}
-        </button>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded p-4 w-full max-w-2xl">
-          <p className="text-red-700 font-medium">Error</p>
-          <pre className="text-red-600 text-sm mt-1 whitespace-pre-wrap">{error}</pre>
-        </div>
-      )}
-
-      {result ? (
-        <div className="bg-zinc-50 border rounded p-4 w-full max-w-2xl">
-          <p className="text-zinc-500 text-xs mb-2">
-            fetch: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.fetchMs}ms &middot;
-            llm: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.llmMs}ms &middot;
-            total: {(result as { timing: { fetchMs: number; llmMs: number; totalMs: number } }).timing?.totalMs}ms
+      <main
+        ref={containerRef}
+        className="relative pt-28 pb-20 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto w-full"
+      >
+        {/* Hero */}
+        <div className="text-center mb-16 space-y-4">
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-r from-violet-400 via-white to-emerald-400 bg-clip-text text-transparent">
+            Odin Agent
+          </h1>
+          <p className="text-zinc-500 text-sm max-w-md mx-auto">
+            AI-powered trading intelligence on Hyperliquid. Analyze. Plan. Execute.
           </p>
-          <pre className="text-sm overflow-x-auto">{JSON.stringify(result, null, 2)}</pre>
         </div>
-      ) : null}
-    </div>
+
+        {/* Bento Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Row 1: Wallet + Balance (spans 2 cols on lg) */}
+          <div className="lg:col-span-1">
+            <WalletInit />
+          </div>
+          <div className="lg:col-span-2">
+            <BalanceCard />
+          </div>
+
+          {/* Row 2: DD Section (full width) */}
+          <div className="lg:col-span-3">
+            <DDSection />
+          </div>
+
+          {/* Row 3: Plan (2 cols) + Exec (1 col) */}
+          <div className="lg:col-span-2">
+            <PlanSection />
+          </div>
+          <div className="lg:col-span-1">
+            <ExecSection />
+          </div>
+
+          {/* Row 4: Status (full width) */}
+          <div className="lg:col-span-3">
+            <StatusSection />
+          </div>
+        </div>
+      </main>
+    </>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <DashboardProvider>
+      <DashboardInner />
+    </DashboardProvider>
   )
 }
