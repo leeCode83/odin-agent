@@ -52,6 +52,7 @@ export type Factor = z.infer<typeof SectionKey>
 export interface DDPipelineInput {
   asset: string
   userId: string
+  walletAddress?: string
 }
 
 export interface DDPipelineOutput {

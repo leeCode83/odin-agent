@@ -39,6 +39,9 @@ export async function think(
   const c = getClient()
   if (!c) return { action: "return", score: 0, confidence: 0, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
 
+  const fallback = { action: "return" as const, score: 0, confidence: 0, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
+
+  let content: string
   try {
     const response = await c.chat.completions.create(
       {
@@ -50,10 +53,25 @@ export async function think(
       },
       { timeout: 30_000, maxRetries: 1 }
     )
-    const content = response.choices?.[0]?.message?.content || "{}"
-    return SubAgentThoughtSchema.parse(JSON.parse(content))
+    content = response.choices?.[0]?.message?.content || "{}"
+  } catch (err) {
+    console.error("[DD:think] API error:", err instanceof Error ? err.message : String(err))
+    return fallback
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
   } catch {
-    return { action: "return", score: 0, confidence: 0, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
+    console.error("[DD:think] JSON parse failed. Raw (first 500 chars):", content?.slice(0, 500))
+    return fallback
+  }
+
+  try {
+    return SubAgentThoughtSchema.parse(parsed)
+  } catch (err) {
+    console.error("[DD:think] Schema validation failed:", err)
+    return fallback
   }
 }
 
@@ -90,7 +108,8 @@ export async function plan(params: {
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
     return Array.isArray(parsed) ? parsed : []
-  } catch {
+  } catch (err) {
+    console.error("[DD:plan] LLM call failed:", err instanceof Error ? err.message : String(err))
     return []
   }
 }
@@ -132,7 +151,8 @@ export async function rePlan(params: {
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
     return Array.isArray(parsed) ? parsed : []
-  } catch {
+  } catch (err) {
+    console.error("[DD:rePlan] LLM call failed:", err instanceof Error ? err.message : String(err))
     return []
   }
 }
@@ -190,7 +210,8 @@ export async function aggregate(params: {
     )
     const content = response.choices?.[0]?.message?.content || "{}"
     return JSON.parse(content)
-  } catch {
+  } catch (err) {
+    console.error("[DD:aggregate] LLM call failed:", err instanceof Error ? err.message : String(err))
     return {
       thesis: "Aggregation failed",
       crossValidation: { pairs: [], overallAlignment: 0, contradictions: [] },

@@ -8,14 +8,44 @@
  */
 
 import { z } from "zod"
-import type { FactorReport } from "@/lib/agent/due-diligence/types"
+import type { FactorReport, SignalEntry } from "@/lib/agent/due-diligence/types"
 import type { ToolRegistry } from "@/lib/agent/tools/types"
+
+/**
+ * @constant SignalEntrySchema
+ * @description Accepts a SignalEntry object or a plain signal string (e.g. "RSI oversold").
+ *   String is normalized to { name, strength: 50, direction: "neutral" } in runSubagent.
+ */
+const SignalEntrySchema = z.union([
+  z.string(),
+  z.object({
+    name: z.string(),
+    strength: z.number().int().min(0).max(100),
+    direction: z.enum(["bullish", "bearish", "neutral"]),
+  }),
+])
+
+/**
+ * @function normalizeSignal
+ * @description Converts a raw parsed signal (string or object) to a SignalEntry.
+ */
+function normalizeSignal(signal: string | { name?: string; strength?: number; direction?: "bullish" | "bearish" | "neutral" }): SignalEntry {
+  if (typeof signal === "string") {
+    return { name: signal, strength: 50, direction: "neutral" }
+  }
+  return {
+    name: signal.name ?? "unknown",
+    strength: signal.strength ?? 50,
+    direction: signal.direction ?? "neutral",
+  }
+}
 
 /**
  * @constant SubAgentThoughtSchema
  * @description Zod discriminated union for the LLM's THINK output.
  *   - `tool_call`: the LLM wants to invoke a tool.
  *   - `return`: the LLM has reached a conclusion and returns.
+ *   signals accepts both string[] and SignalEntry[] for resilience against LLM format drift.
  */
 export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
   z.object({
@@ -28,13 +58,7 @@ export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
     action: z.literal("return"),
     score: z.number().int().min(0).max(100).nullable(),
     confidence: z.number().int().min(0).max(100).nullable(),
-    signals: z.array(
-      z.object({
-        name: z.string(),
-        strength: z.number().int().min(0).max(100),
-        direction: z.enum(["bullish", "bearish", "neutral"]),
-      })
-    ),
+    signals: z.array(SignalEntrySchema),
     reasoning: z.string(),
     conclusion: z.string(),
   }),
@@ -115,11 +139,27 @@ export async function runSubagent(params: {
         factor,
         score: thought.score,
         confidence: thought.confidence,
-        signals: thought.signals,
+        signals: thought.signals.map(normalizeSignal),
         dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
         reasoning: thought.reasoning,
         iterations: i + 1,
         conclusion: thought.conclusion,
+        errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
+      }
+    }
+
+    // On last loop, force-return instead of executing a tool whose result won't be analyzed
+    if (maxLoops - i - 1 <= 0) {
+      const factor = params.factor as FactorReport["factor"]
+      return {
+        factor,
+        score: null,
+        confidence: null,
+        signals: [],
+        dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
+        reasoning: `LLM requested tool "${thought.toolName}" on last iteration — forced return.`,
+        iterations: i + 1,
+        conclusion: "Subagent did not return a conclusion — force returned on last loop.",
         errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
       }
     }

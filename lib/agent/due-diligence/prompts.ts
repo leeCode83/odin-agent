@@ -48,7 +48,14 @@ You MUST respond in JSON format. Choose one:
 
 Use tools to gather data. Return when you have enough information for a thorough analysis.
 
-IMPORTANT: You should use at least 2 different tools before returning. Only return if you have sufficient data.`
+IMPORTANT: You should use at least 2 different tools before returning. Only return if you have sufficient data.
+
+When returning, the "signals" field MUST be an array of objects with:
+- name (string): signal name, e.g. "RSI oversold"
+- strength (number 0-100): signal strength
+- direction ("bullish" | "bearish" | "neutral"): signal direction
+
+If you cannot provide full signal objects, fall back to plain strings like ["signal1", "signal2"] — they will be auto-converted.`
 }
 
 /**

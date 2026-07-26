@@ -34,6 +34,7 @@ export async function runDDPipeline(input: DDPipelineInput): Promise<DDPipelineO
       asset: input.asset,
       category,
       userId: input.userId ?? "anonymous",
+      walletAddress: input.walletAddress,
     })
 
     return {

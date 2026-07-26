@@ -46,7 +46,7 @@ describe("think()", () => {
       expect(result.score).toBe(75)
       expect(result.confidence).toBe(80)
       expect(result.signals).toHaveLength(1)
-      expect(result.signals[0].name).toBe("RSI")
+      expect(result.signals[0]).toHaveProperty("name", "RSI")
     }
   })
 
