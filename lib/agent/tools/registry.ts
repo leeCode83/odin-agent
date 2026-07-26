@@ -6,6 +6,11 @@
  */
 
 import type { ToolDefinition, ToolRegistry } from "./types"
+import type { CandleMap } from "./technical/candles"
+import { buildTechnicalRegistry } from "./technical"
+import { buildOnchainRegistry } from "./onchain"
+import { buildSentimentRegistry } from "./sentiment"
+import { buildFundamentalRegistry } from "./fundamental"
 
 const KNOWN_FACTORS = ["technical", "onchain", "sentiment", "fundamental"] as const
 
@@ -15,14 +20,28 @@ let crossFactorStore: ToolRegistry = {}
 /**
  * @function getToolRegistry
  * @description Returns the tool registry for a given factor. Throws if factor is unknown.
+ *   Technical factor requires an optional CandleMap context — without it, returns empty registry.
+ *   All other factors build their registries synchronously.
  * @param {string} factor - The factor name.
- * @returns {ToolRegistry} The factor's tool registry (initially empty).
+ * @param {{ candleMap?: CandleMap }} [ctx] - Optional context (CandleMap for technical tools).
+ * @returns {ToolRegistry} The factor's populated tool registry.
  */
-export function getToolRegistry(factor: string): ToolRegistry {
+export function getToolRegistry(factor: string, ctx?: { candleMap?: CandleMap }): ToolRegistry {
   if (!KNOWN_FACTORS.includes(factor as typeof KNOWN_FACTORS[number])) {
     throw new Error(`Unknown factor: ${factor}`)
   }
-  return {}
+  switch (factor) {
+    case "technical":
+      return ctx?.candleMap ? buildTechnicalRegistry(ctx.candleMap) : {}
+    case "onchain":
+      return buildOnchainRegistry()
+    case "sentiment":
+      return buildSentimentRegistry()
+    case "fundamental":
+      return buildFundamentalRegistry()
+    default:
+      return {}
+  }
 }
 
 /**

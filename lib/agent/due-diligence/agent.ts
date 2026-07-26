@@ -11,6 +11,7 @@ import { evaluateResults } from "@/lib/agent/due-diligence/evaluate"
 import { think, plan, rePlan, aggregate } from "@/lib/agent/due-diligence/llm"
 import { REACT_SYSTEM_PROMPT } from "@/lib/agent/due-diligence/prompts"
 import { getToolRegistry } from "@/lib/agent/tools/registry"
+import { fetchCandleMap } from "@/lib/agent/tools/technical/candles"
 import { recordDDReport } from "@/lib/db/graph-memory"
 import type { FactorReport, SubagentPlan, CrossValidation } from "@/lib/agent/due-diligence/types"
 import type { DDReport } from "@/lib/agent/types"
@@ -167,12 +168,15 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
     }))
   }
 
+  // --- Pre-fetch candle map for technical subagent ---
+  const candleMap = await fetchCandleMap(params.asset).catch(() => undefined)
+
   // --- EXECUTE-REFLECT LOOP ---
   for (let iteration = 0; iteration < maxLoops; iteration++) {
     // EXECUTE — deploy subagents in parallel
     const subagentResults = await Promise.all(
       planSteps.map(async (subagentPlan) => {
-        const tools = getToolRegistry(subagentPlan.factor)
+        const tools = getToolRegistry(subagentPlan.factor, { candleMap })
         return runSubagent({
           factor: subagentPlan.factor,
           tools,

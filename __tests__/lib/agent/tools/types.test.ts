@@ -65,12 +65,24 @@ describe("getToolRegistry", () => {
     expect(() => getToolRegistry("nonexistent")).toThrow()
   })
 
-  it("returns empty record for known factors initially", () => {
-    const factors = ["technical", "onchain", "sentiment", "fundamental"]
+  it("returns populated registries for non-technical factors", () => {
+    const factors = ["onchain", "sentiment", "fundamental"]
     for (const factor of factors) {
       const registry = getToolRegistry(factor)
-      expect(registry).toEqual({})
+      expect(Object.keys(registry).length).toBeGreaterThan(0)
     }
+  })
+
+  it("returns empty registry for technical factor without candleMap context", () => {
+    const registry = getToolRegistry("technical")
+    expect(registry).toEqual({})
+  })
+
+  it("returns populated registry for technical factor with candleMap context", () => {
+    const candleMap = { "1h": [], "15m": [], "1d": [] }
+    const registry = getToolRegistry("technical", { candleMap })
+    expect(Object.keys(registry).length).toBeGreaterThan(0)
+    expect(registry["get_rsi"]).toBeDefined()
   })
 })
 
