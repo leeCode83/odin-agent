@@ -44,7 +44,7 @@ async function executeFetch(url: string): Promise<ToolResult> {
  * @description Fetches AI-powered market sentiment analysis from cryptocurrency.cv.
  * @returns {ToolResult} Sentiment analysis data.
  */
-export const getAiSentiment: ToolDefinition<z.ZodObject<{}>> = {
+export const getAiSentiment: ToolDefinition<z.ZodObject<Record<string, never>>> = {
   name: "get_ai_sentiment",
   description: "Fetches AI-powered market sentiment analysis.",
   parameters: z.object({}),
@@ -56,7 +56,7 @@ export const getAiSentiment: ToolDefinition<z.ZodObject<{}>> = {
  * @description Fetches emerging narratives and thematic trends.
  * @returns {ToolResult} Narratives data.
  */
-export const getNarratives: ToolDefinition<z.ZodObject<{}>> = {
+export const getNarratives: ToolDefinition<z.ZodObject<Record<string, never>>> = {
   name: "get_narratives",
   description: "Fetches emerging narratives and thematic trends.",
   parameters: z.object({}),
@@ -68,7 +68,7 @@ export const getNarratives: ToolDefinition<z.ZodObject<{}>> = {
  * @description Fetches trending coins and topics.
  * @returns {ToolResult} Trending topics data.
  */
-export const getTrendingTopics: ToolDefinition<z.ZodObject<{}>> = {
+export const getTrendingTopics: ToolDefinition<z.ZodObject<Record<string, never>>> = {
   name: "get_trending_topics",
   description: "Fetches trending coins and topics.",
   parameters: z.object({}),

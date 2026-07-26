@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
 import { publicDropTools } from "@/lib/agent/tools/fundamental/publicdrop"
 
 const mockFetch = vi.fn()

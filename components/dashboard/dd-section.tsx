@@ -3,12 +3,11 @@
 import { useRef, useState } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import { Search, Loader2, AlertCircle, FileSearch, TrendingUp, TrendingDown, Minus } from "lucide-react"
+import { Search, Loader2, FileSearch, TrendingUp, TrendingDown, Minus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useDD } from "@/hooks/use-dd"
@@ -21,6 +20,7 @@ export function DDSection() {
   const [asset, setAsset] = useState("")
   const { ddReport, setDDReport, walletAddress } = useDashboard()
   const { loading, runDD } = useDD()
+  const confidenceScore = ddReport?.overallConfidence ?? ddReport?.confidence_score
 
   useGSAP(() => {
     if (!cardRef.current) return
@@ -125,17 +125,17 @@ export function DDSection() {
 
                   <p className="text-xs text-zinc-400 leading-relaxed">{ddReport.summary ?? ddReport.aggregated_thesis}</p>
 
-                  {(ddReport.overallConfidence ?? ddReport.confidence_score) > 0 && (
+                  {confidenceScore != null && confidenceScore > 0 && (
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Confidence</span>
                       <Badge variant="secondary" className={`text-xs ${
-                        (ddReport.overallConfidence ?? ddReport.confidence_score) >= 70
+                        confidenceScore >= 70
                           ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
-                          : (ddReport.overallConfidence ?? ddReport.confidence_score) >= 40
+                          : confidenceScore >= 40
                             ? "bg-amber-500/15 text-amber-400 border-amber-500/20"
                             : "bg-red-500/15 text-red-400 border-red-500/20"
                       }`}>
-                        {ddReport.overallConfidence ?? ddReport.confidence_score}%
+                        {confidenceScore}%
                       </Badge>
                     </div>
                   )}

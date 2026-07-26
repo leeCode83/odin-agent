@@ -14,7 +14,7 @@ import type { ToolDefinition } from "../types"
  * @description Fetches the current Fear & Greed index from Alternative.me.
  * @returns {ToolResult} The numerical value and classification of the index.
  */
-export const getFearGreed: ToolDefinition<z.ZodObject<{}>> = {
+export const getFearGreed: ToolDefinition<z.ZodObject<Record<string, never>>> = {
   name: "get_fear_greed",
   description: "Fetches the current Fear & Greed index from Alternative.me.",
   parameters: z.object({}),

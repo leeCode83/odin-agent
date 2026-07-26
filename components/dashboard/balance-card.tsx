@@ -3,7 +3,7 @@
 import { useRef } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import { Wallet, TrendingUp, TrendingDown, DollarSign, Loader2, RefreshCw } from "lucide-react"
+import { Wallet, TrendingUp, DollarSign, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"

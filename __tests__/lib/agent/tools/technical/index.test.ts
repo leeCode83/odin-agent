@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect } from "vitest"
 import type { ToolRegistry } from "@/lib/agent/tools/types"
 import type { CandleMap } from "@/lib/agent/tools/technical/candles"
 import type { CandleData } from "@/lib/data/types"
@@ -63,7 +63,7 @@ describe("buildTechnicalRegistry", () => {
 
     const registry = buildTechnicalRegistry(candleMap)
 
-    for (const [name, tool] of Object.entries(registry)) {
+    for (const tool of Object.values(registry)) {
       const params = tool.parameters.parse({})
       const result = await tool.execute(params)
       expect(result.success).toBe(true)

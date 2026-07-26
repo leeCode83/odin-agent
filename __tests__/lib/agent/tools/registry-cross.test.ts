@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import type { ToolDefinition, ToolRegistry } from "@/lib/agent/tools/types"
+import { z } from "zod"
+import type { ToolRegistry } from "@/lib/agent/tools/types"
 import {
   getCrossFactorRegistry,
   registerCrossFactorTools,
@@ -25,13 +26,13 @@ describe("registerCrossFactorTools", () => {
       get_price: {
         name: "get_price",
         description: "Get price",
-        parameters: {} as any,
+        parameters: z.object({}),
         execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
       },
       get_volume: {
         name: "get_volume",
         description: "Get volume",
-        parameters: {} as any,
+        parameters: z.object({}),
         execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
       },
     }
@@ -49,7 +50,7 @@ describe("registerCrossFactorTools", () => {
       tech_indicator: {
         name: "tech_indicator",
         description: "RSI",
-        parameters: {} as any,
+        parameters: z.object({}),
         execute: async () => ({ success: true, data: {}, metadata: { source: "tech", latencyMs: 0 } }),
       },
     }
@@ -57,7 +58,7 @@ describe("registerCrossFactorTools", () => {
       onchain_balance: {
         name: "onchain_balance",
         description: "Balance",
-        parameters: {} as any,
+        parameters: z.object({}),
         execute: async () => ({ success: true, data: {}, metadata: { source: "onchain", latencyMs: 0 } }),
       },
     }

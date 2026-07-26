@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
 
 const { mockMetaAndAssetCtxs, mockAllMids, mockL2Book, mockPerpsAtOpenInterestCap } = vi.hoisted(() => ({
   mockMetaAndAssetCtxs: vi.fn().mockResolvedValue([

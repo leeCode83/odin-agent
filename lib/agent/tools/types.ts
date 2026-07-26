@@ -13,7 +13,8 @@ import { z } from "zod"
  */
 export interface ToolResult {
   success: boolean
-  data?: unknown
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: any
   error?: string
   metadata: {
     source: string
@@ -26,11 +27,12 @@ export interface ToolResult {
  * @description A tool that a subagent can invoke — named, described, parameterized, and executable.
  * @template TParams - Zod schema type for parameter validation.
  */
-export interface ToolDefinition<TParams = z.ZodTypeAny> {
+export interface ToolDefinition<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string
   description: string
   parameters: TParams
-  execute: (params: z.infer<TParams>) => Promise<ToolResult>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  execute: (params: any) => Promise<ToolResult>
 }
 
 /**

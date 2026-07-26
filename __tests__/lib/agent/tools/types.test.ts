@@ -17,7 +17,7 @@ describe("ToolDefinition interface", () => {
       name: "get_price",
       description: "Get current price of an asset",
       parameters: z.object({ asset: z.string() }),
-      execute: async (_params) => ({
+      execute: async () => ({
         success: true,
         data: { price: 65000 },
         metadata: { source: "hyperliquid", latencyMs: 100 },

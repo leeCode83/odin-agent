@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 
 export function useTrade() {
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
   const runTrade = useCallback(async (asset: string, userId: string, walletAddress: string) => {

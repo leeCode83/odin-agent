@@ -23,13 +23,11 @@ import {
   runDDAgent,
   computeDeterministicScore,
   buildFinalReport,
-  type DDAgentParams,
 } from "@/lib/agent/due-diligence/agent"
-import { think, plan, rePlan, aggregate } from "@/lib/agent/due-diligence/llm"
+import { plan, rePlan, aggregate } from "@/lib/agent/due-diligence/llm"
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { recordDDReport } from "@/lib/db/graph-memory"
-import type { Factor, FactorReport, SubagentPlan } from "@/lib/agent/due-diligence/types"
-import type { DDReport } from "@/lib/agent/types"
+import type { FactorReport, SubagentPlan } from "@/lib/agent/due-diligence/types"
 
 function makeFactorReport(overrides: { factor: string } & Record<string, unknown>): FactorReport {
   return {

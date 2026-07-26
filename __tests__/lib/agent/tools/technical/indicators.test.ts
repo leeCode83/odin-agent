@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from "vitest"
+import { describe, it, expect, beforeAll } from "vitest"
 import type { CandleMap } from "@/lib/agent/tools/technical/candles"
 import type { CandleData } from "@/lib/data/types"
 import type { ToolDefinition } from "@/lib/agent/tools/types"
@@ -36,7 +36,6 @@ describe("buildIndicators", () => {
   let tools: ToolDefinition[]
 
   beforeAll(async () => {
-    vi.isFakeTimers = false
     const { buildIndicators } = await import("@/lib/agent/tools/technical/indicators")
     tools = buildIndicators(candleMap)
   })

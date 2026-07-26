@@ -235,7 +235,7 @@ export async function recordDDReport(
       timestamp: new Date().toISOString(),
       processingTimeMs: (report.processingTimeMs as number) || 0,
     }
-    const result = await db.collection(GraphCollectionNames.DD_REPORTS).save(doc as Record<string, unknown>)
+    const result = await db.collection(GraphCollectionNames.DD_REPORTS).save(doc as unknown as Record<string, unknown>)
     return result._key
   } catch (err) {
     console.warn("[graph-memory] Failed to persist DD report:", err)

@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest"
-import { z } from "zod"
 
 let toolsModule: typeof import("@/lib/agent/tools/onchain/explorer") | null = null
 async function getModule() {

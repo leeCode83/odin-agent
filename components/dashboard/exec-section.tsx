@@ -3,11 +3,10 @@
 import { useRef, useState } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import { Zap, Loader2, XCircle, AlertCircle, StopCircle } from "lucide-react"
+import { Zap, Loader2, XCircle, StopCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useExecution } from "@/hooks/use-execution"
 import { useDashboard } from "@/context/dashboard-context"
 

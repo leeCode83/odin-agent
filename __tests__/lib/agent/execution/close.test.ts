@@ -54,7 +54,7 @@ vi.mock("@/lib/db/graph-memory", () => ({
 
 vi.mock("@/lib/utils", () => ({
   withRetry: vi.fn((fn: () => unknown) => fn()),
-  withTimeout: vi.fn((promise: Promise<unknown>) => promise),
+  withTimeout: vi.fn((input: unknown) => typeof input === "function" ? (input as () => unknown)() : input),
 }))
 
 const OLD_ENV = process.env
@@ -80,7 +80,7 @@ describe("closeAllPositions", () => {
   it("returns closed:0 when no positions", async () => {
     mockClearinghouseState.mockResolvedValue({})
     const { closeAllPositions } = await import("@/lib/agent/execution/close")
-    const result = await closeAllPositions()
+    const result = await closeAllPositions(); console.log('DEBUG_RESULT', result);
     expect(result.closed).toBe(0)
     expect(result.positions).toEqual([])
   })

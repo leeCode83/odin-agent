@@ -330,13 +330,6 @@ function createFibonacciTool(candleMap: CandleMap): ToolDefinition {
   }
 }
 
-interface DivergenceParams {
-  timeframe: "1h" | "15m" | "1d"
-  indicator: "rsi" | "macd"
-  period: number
-  lookback: number
-}
-
 function createDivergenceTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_divergence",
@@ -347,7 +340,7 @@ function createDivergenceTool(candleMap: CandleMap): ToolDefinition {
       period: z.number().default(14),
       lookback: z.number().default(30),
     }),
-    execute: async (params: DivergenceParams) => {
+    execute: async (params) => {
       const start = Date.now()
       const candles = getTimeframeCandles(params.timeframe, candleMap)
       if (candles.length < params.lookback + params.period) return fail(`Not enough candles`, start)

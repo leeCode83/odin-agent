@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { z } from "zod"
 
 const mockFetch = vi.fn()
 vi.stubGlobal("fetch", mockFetch)

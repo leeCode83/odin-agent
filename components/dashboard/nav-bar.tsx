@@ -3,7 +3,7 @@
 import { useRef } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import { Shield, Wallet, Activity, Bot } from "lucide-react"
+import { Shield, Bot } from "lucide-react"
 import { useDashboard } from "@/context/dashboard-context"
 
 export function NavBar() {

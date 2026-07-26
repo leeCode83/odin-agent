@@ -4,7 +4,6 @@ import {
   type FactorReport,
   type SignalEntry,
   type AgentRunState,
-  type AgentPlan,
   type SubagentPlan,
   type ReDeployEntry,
   type CrossValidation,
