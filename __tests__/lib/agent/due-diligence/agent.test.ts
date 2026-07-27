@@ -62,7 +62,7 @@ const defaultAggregationResult = {
 // ----- computeDeterministicScore -----
 
 describe("computeDeterministicScore", () => {
-  it("averages scores and takes min confidence", () => {
+  it("averages scores and averages confidence", () => {
     const reports: FactorReport[] = [
       makeFactorReport({ factor: "technical", score: 80, confidence: 90 }),
       makeFactorReport({ factor: "onchain", score: 60, confidence: 70 }),
@@ -72,7 +72,8 @@ describe("computeDeterministicScore", () => {
     const result = computeDeterministicScore(reports)
 
     expect(result.overallScore).toBe(70)
-    expect(result.overallConfidence).toBe(70)
+    // average of [90, 70, 80] = 80
+    expect(result.overallConfidence).toBe(80)
   })
 
   it("returns 0,0 when all scores null", () => {
@@ -103,6 +104,17 @@ describe("computeDeterministicScore", () => {
     const result = computeDeterministicScore(reports)
 
     expect(result.overallScore).toBe(73)
+  })
+
+  it("single factor: confidence equals that factor's confidence", () => {
+    const reports: FactorReport[] = [
+      makeFactorReport({ factor: "technical", score: 85, confidence: 75 }),
+    ]
+
+    const result = computeDeterministicScore(reports)
+
+    expect(result.overallScore).toBe(85)
+    expect(result.overallConfidence).toBe(75)
   })
 })
 
@@ -279,7 +291,10 @@ describe("runDDAgent", () => {
 
     expect(result.status).toBe("complete")
     expect(result.iterations).toBe(2)
-    expect(result.factorReports).toHaveLength(6)
+    expect(result.factorReports).toHaveLength(4)
+    // re-deployed factors show updated values, not duplicates
+    expect(result.factorReports!.find((r) => r.factor === "sentiment")?.score).toBe(75)
+    expect(result.factorReports!.find((r) => r.factor === "fundamental")?.score).toBe(72)
     expect(rePlan).toHaveBeenCalledTimes(1)
     expect(aggregate).toHaveBeenCalledTimes(2)
   })

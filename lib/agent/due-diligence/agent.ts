@@ -61,7 +61,9 @@ export function computeDeterministicScore(
   const overallScore = Math.round(
     active.reduce((sum, r) => sum + (r.score ?? 0), 0) / active.length
   )
-  const overallConfidence = Math.min(...active.map((r) => r.confidence ?? 0))
+  const overallConfidence = Math.round(
+    active.reduce((sum, r) => sum + (r.confidence ?? 0), 0) / active.length
+  )
 
   return { overallScore, overallConfidence }
 }
@@ -188,7 +190,10 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       })
     )
 
-    allFactorReports = [...allFactorReports, ...subagentResults]
+    // ponytail: Map dedupe by factor — latest report per factor wins
+    allFactorReports = Array.from(
+      new Map([...allFactorReports, ...subagentResults].map((r) => [r.factor, r])).values()
+    )
 
     // AGGREGATE
     try {

@@ -230,7 +230,8 @@ describe("runSubagent", () => {
     expect(report.confidence).toBeNull()
     expect(report.iterations).toBe(3)
     expect(report.dataSources).toContain("test")
-    expect(mockThink).toHaveBeenCalledTimes(3)
+    // 3 tool-call iterations + 1 forced-return LLM call
+    expect(mockThink).toHaveBeenCalledTimes(4)
   })
 
   // ponytail: wall-clock timeout tested implicitly via maxLoops.

@@ -1,56 +1,123 @@
 {
     "report": {
-        "asset": "BTC",
+        "asset": "ETH",
         "category": "major",
-        "timestamp": "2026-07-26T14:07:34.567Z",
+        "timestamp": "2026-07-27T06:01:13.280Z",
         "sections": {
             "technical": {
                 "score": 50,
-                "summary": "BTC is currently in a neutral zone. No strong bullish or bearish signals detected from RSI and MACD. Suggest monitoring for breakout or reversal patterns.",
+                "summary": "ETH is consolidating between identified support and resistance levels. Await breakout for directional bias.",
                 "signals": [
                     "RSI neutral",
-                    "MACD neutral"
+                    "Support level detected",
+                    "Resistance level detected"
                 ]
             },
             "onchain": {
-                "score": 55,
-                "summary": "BTC shows moderate on-chain activity with neutral funding, suggesting a balanced outlook.",
+                "score": 65,
+                "summary": "ETH shows signs of accumulation with exchange outflows. However, limited data scope reduces confidence. Overall moderately bullish.",
                 "signals": [
-                    "Whale Transaction Activity",
-                    "Funding Rate"
+                    "Exchange Net Outflow",
+                    "Stable Supply"
                 ]
             },
             "sentiment": {
-                "score": 45,
-                "summary": "Neutral sentiment with slight bearish tilt; lack of additional data reduces confidence.",
+                "score": 50,
+                "summary": "Sentiment for ETH is neutral based on Fear & Greed Index; lack of social media sentiment data prevents stronger conviction.",
                 "signals": [
-                    "Fear & Greed Index"
+                    "Fear & Greed Index at neutral level (approx 50-60)",
+                    "Twitter sentiment data unavailable due to fetch failure"
                 ]
             },
             "fundamental": {
-                "score": 75,
-                "summary": "Bitcoin fundamentals remain strong due to robust network security, increasing adoption, and favorable macro environment. Regulatory developments are mixed but progressing.",
+                "score": 78,
+                "summary": "Ethereum shows strong fundamental health driven by continuous network improvements, active developer community, and robust DeFi ecosystem. The long-term outlook is positive, but regulatory uncertainties and competitive pressures warrant moderate caution.",
                 "signals": [
-                    "Network security (hashrate)",
-                    "Institutional adoption (ETF inflows)",
-                    "Macro hedge narrative",
-                    "Regulatory progress",
-                    "Deflationary supply (fixed cap)"
+                    "High developer activity",
+                    "Network upgrades (EIP-4844)",
+                    "Staking yield (~3-5%)",
+                    "Strong DeFi TVL",
+                    "Regulatory headwinds (mixed)"
                 ]
             }
         },
-        "aggregated_thesis": "Bitcoin's fundamentals are robust with strong network security, institutional inflows via ETFs, and a deflationary supply narrative. On-chain metrics show accumulation signals from whale activity, exchange outflows, and moderately positive funding rates. Technical indicators are neutral, suggesting no immediate momentum, and sentiment is neutral with low confidence due to data limitations. Overall, a moderately bullish outlook is warranted, with potential for upward movement as fundamental and on-chain strength outweighs neutral technicals.",
-        "confidence_score": 20,
+        "aggregated_thesis": "Ethereum presents a strong fundamental case driven by continuous network upgrades (EIP-4844), high developer activity, and a robust DeFi ecosystem. Onchain data indicates accumulation via exchange outflows, suggesting bullish investor sentiment. However, technical analysis shows consolidation with neutral RSI, and sentiment data is mixed due to limited social media indicators. The overall outlook is cautiously bullish, with potential for upside if price breaks above resistance or if regulatory clarity improves.",
+        "confidence_score": 54,
         "risk_flags": [
-            "Neutral RSI and MACD indicate lack of momentum; possible consolidation or reversal without clear directional signal.",
-            "Low confidence due to failed data fetches; sentiment may be mispriced if actual retail or social sentiment shifts.",
-            "Some on-chain data is simulated or from limited sources; actual accumulation trend not fully confirmed."
+            "Regulatory headwinds, particularly SEC scrutiny on ETH as a security or ETF delays, could dampen sentiment and price.",
+            "Competition from other smart contract platforms (e.g., Solana, Avalanche) may erode market share and DeFi TVL.",
+            "Low confidence sentiment data due to fetch failure; potential for unmeasured negative social sentiment to affect price.",
+            "Consolidation near resistance could lead to a breakdown if support fails, triggering stop-losses and further decline."
         ],
         "factorReports": [
             {
+                "factor": "fundamental",
+                "score": 78,
+                "confidence": 65,
+                "signals": [
+                    {
+                        "name": "High developer activity",
+                        "strength": 85,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Network upgrades (EIP-4844)",
+                        "strength": 90,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Staking yield (~3-5%)",
+                        "strength": 60,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Strong DeFi TVL",
+                        "strength": 75,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Regulatory headwinds (mixed)",
+                        "strength": 40,
+                        "direction": "bearish"
+                    }
+                ],
+                "dataSources": [
+                    "coingecko"
+                ],
+                "reasoning": "Ethereum continues to lead in smart contract platforms with major network upgrades like EIP-4844 improving scalability and reducing L2 fees. Developer activity remains high, indicating strong ecosystem health. Staking adoption provides a yield and secures the network. DeFi TVL is substantial, though facing competition from L2s and other chains. Regulatory developments are mixed; spot ETF approvals are bullish but ongoing SEC scrutiny poses risks. Overall fundamentals are solid for long-term value.",
+                "iterations": 3,
+                "conclusion": "Ethereum shows strong fundamental health driven by continuous network improvements, active developer community, and robust DeFi ecosystem. The long-term outlook is positive, but regulatory uncertainties and competitive pressures warrant moderate caution.",
+                "errors": []
+            },
+            {
+                "factor": "onchain",
+                "score": 65,
+                "confidence": 60,
+                "signals": [
+                    {
+                        "name": "Exchange Net Outflow",
+                        "strength": 70,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Stable Supply",
+                        "strength": 50,
+                        "direction": "neutral"
+                    }
+                ],
+                "dataSources": [
+                    "coingecko",
+                    "explorer"
+                ],
+                "reasoning": "Exchange flow data shows net outflow of ETH from exchanges, suggesting accumulation by investors. Token supply remains stable, indicating no dilution pressure. DeFi TVL and staking metrics were not directly assessed due to tool limitations, but the onchain data points to bullish sentiment.",
+                "iterations": 3,
+                "conclusion": "ETH shows signs of accumulation with exchange outflows. However, limited data scope reduces confidence. Overall moderately bullish.",
+                "errors": []
+            },
+            {
                 "factor": "technical",
                 "score": 50,
-                "confidence": 70,
+                "confidence": 60,
                 "signals": [
                     {
                         "name": "RSI neutral",
@@ -58,51 +125,36 @@
                         "direction": "neutral"
                     },
                     {
-                        "name": "MACD neutral",
-                        "strength": 50,
-                        "direction": "neutral"
+                        "name": "Support level detected",
+                        "strength": 70,
+                        "direction": "bullish"
+                    },
+                    {
+                        "name": "Resistance level detected",
+                        "strength": 70,
+                        "direction": "bearish"
                     }
                 ],
                 "dataSources": [
                     "technicalindicators"
                 ],
-                "reasoning": "Based on RSI and MACD analysis, both indicators show neutral readings. RSI is around 50 and MACD is near zero line, indicating no clear momentum. Further analysis with additional tools would be needed for a complete picture.",
+                "reasoning": "RSI indicates neutral momentum (value around 50). Support and resistance levels are identified from recent price action, suggesting a ranging market. No clear trend or divergence detected with available data.",
                 "iterations": 3,
-                "conclusion": "BTC is currently in a neutral zone. No strong bullish or bearish signals detected from RSI and MACD. Suggest monitoring for breakout or reversal patterns.",
-                "errors": []
-            },
-            {
-                "factor": "onchain",
-                "score": 55,
-                "confidence": 40,
-                "signals": [
-                    {
-                        "name": "Funding rate near zero",
-                        "strength": 50,
-                        "direction": "neutral"
-                    },
-                    {
-                        "name": "Exchange net outflow detected",
-                        "strength": 60,
-                        "direction": "bullish"
-                    }
-                ],
-                "dataSources": [
-                    "hyperliquid",
-                    "explorer"
-                ],
-                "reasoning": "Funding rate from Hyperliquid is near zero, indicating balanced sentiment. Exchange flow data suggests net outflows, which typically indicates accumulation. Without direct on-chain volume or whale data, confidence is moderate. BTC shows neutral to slightly bullish short-term signals.",
-                "iterations": 3,
-                "conclusion": "BTC on-chain metrics are mixed but leaning bullish due to exchange outflows.",
+                "conclusion": "ETH is consolidating between identified support and resistance levels. Await breakout for directional bias.",
                 "errors": []
             },
             {
                 "factor": "sentiment",
                 "score": 50,
-                "confidence": 20,
+                "confidence": 30,
                 "signals": [
                     {
-                        "name": "Fear & Greed Index",
+                        "name": "Fear & Greed Index at neutral level (approx 50-60)",
+                        "strength": 50,
+                        "direction": "neutral"
+                    },
+                    {
+                        "name": "Twitter sentiment data unavailable due to fetch failure",
                         "strength": 50,
                         "direction": "neutral"
                     }
@@ -111,279 +163,111 @@
                     "cryptocurrency.cv",
                     "altme"
                 ],
-                "reasoning": "Only the Fear & Greed Index was successfully retrieved; AI sentiment fetch failed. The index is neutral, indicating balanced market sentiment. Due to lack of additional data (social media, news), confidence is low.",
+                "reasoning": "Used Fear & Greed Index as primary source; Twitter sentiment fetch failed; no alternative social data available within remaining loops. Asset is ETH, sentiment appears neutral with low confidence due to limited data.",
                 "iterations": 3,
-                "conclusion": "Market sentiment is neutral with low confidence due to limited data.",
-                "errors": [
-                    "get_ai_sentiment: fetch failed"
-                ]
-            },
-            {
-                "factor": "fundamental",
-                "score": 75,
-                "confidence": 80,
-                "signals": [
-                    {
-                        "name": "Network security (hashrate)",
-                        "strength": 90,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Institutional adoption (ETF inflows)",
-                        "strength": 85,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Macro hedge narrative",
-                        "strength": 70,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Regulatory progress",
-                        "strength": 60,
-                        "direction": "neutral"
-                    },
-                    {
-                        "name": "Deflationary supply (fixed cap)",
-                        "strength": 80,
-                        "direction": "bullish"
-                    }
-                ],
-                "dataSources": [
-                    "coingecko",
-                    "coingecko+publicdrop"
-                ],
-                "reasoning": "Assessed BTC's fundamental factors using coin metadata and tokenomics. Network hashrate remains at all-time highs, indicating strong security. Institutional adoption via spot ETFs has driven significant inflows. Bitcoin's fixed supply and decreasing inflation rate support a store-of-value narrative. Regulatory clarity has improved in major jurisdictions, though remains a risk. Overall, fundamentals are solid.",
-                "iterations": 3,
-                "conclusion": "Bitcoin fundamentals remain strong due to robust network security, increasing adoption, and favorable macro environment. Regulatory developments are mixed but progressing.",
-                "errors": []
-            },
-            {
-                "factor": "onchain",
-                "score": 75,
-                "confidence": 70,
-                "signals": [
-                    {
-                        "name": "Whale transaction volume increase",
-                        "strength": 80,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Funding rate positive moderate",
-                        "strength": 60,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Stablecoin inflows to exchanges (simulated)",
-                        "strength": 70,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Miner position changes (simulated)",
-                        "strength": 50,
-                        "direction": "neutral"
-                    }
-                ],
-                "dataSources": [
-                    "hyperliquid",
-                    "explorer"
-                ],
-                "reasoning": "Whale transaction data shows increased large-volume transfers, suggesting accumulation. Funding rate is moderately positive, indicating long bias but not excessive leverage. Simulated stablecoin inflows to exchanges and miner position changes provide additional context for accumulation. Overall on-chain metrics support a bullish accumulation signal.",
-                "iterations": 3,
-                "conclusion": "BTC on-chain metrics indicate accumulation with moderate conviction. Whale activity and funding rates align bullish, but data is partially simulated. Recommend long bias with caution.",
-                "errors": []
-            },
-            {
-                "factor": "sentiment",
-                "score": 50,
-                "confidence": 20,
-                "signals": [],
-                "dataSources": [
-                    "altme",
-                    "cryptocurrency.cv"
-                ],
-                "reasoning": "Only one tool succeeded (Fear & Greed index) but the actual value was not captured. AI sentiment tool failed. Cannot gather alternative sources or options flow due to no remaining loops. Insufficient data.",
-                "iterations": 3,
-                "conclusion": "Sentiment is neutral with low confidence due to lack of reliable data.",
-                "errors": [
-                    "get_ai_sentiment: fetch failed"
-                ]
-            },
-            {
-                "factor": "onchain",
-                "score": 60,
-                "confidence": 70,
-                "signals": [
-                    {
-                        "name": "Positive funding rate",
-                        "strength": 60,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "High open interest",
-                        "strength": 70,
-                        "direction": "bullish"
-                    }
-                ],
-                "dataSources": [
-                    "hyperliquid"
-                ],
-                "reasoning": "Based on available on-chain data from Hyperliquid: funding rate is positive, indicating bullish sentiment among perpetual traders. Open interest is elevated, suggesting strong market participation and liquidity. These metrics align with a moderately bullish outlook for BTC.",
-                "iterations": 3,
-                "conclusion": "BTC shows positive on-chain signals with moderate bullish bias.",
-                "errors": []
-            },
-            {
-                "factor": "sentiment",
-                "score": 50,
-                "confidence": 30,
-                "signals": [
-                    {
-                        "name": "Fear & Greed Index",
-                        "strength": 50,
-                        "direction": "neutral"
-                    }
-                ],
-                "dataSources": [
-                    "altme",
-                    "cryptocurrency.cv"
-                ],
-                "reasoning": "Only the Fear & Greed Index was successfully retrieved, indicating neutral sentiment. Twitter sentiment API failed, and no other sentiment sources (news, options) were fetched due to zero remaining loops. Confidence is low due to limited data.",
-                "iterations": 3,
-                "conclusion": "Neutral sentiment with insufficient data to determine strong bias.",
-                "errors": [
-                    "get_twitter_sentiment: fetch failed"
-                ]
-            },
-            {
-                "factor": "onchain",
-                "score": 55,
-                "confidence": 30,
-                "signals": [
-                    {
-                        "name": "Whale Transaction Activity",
-                        "strength": 60,
-                        "direction": "bullish"
-                    },
-                    {
-                        "name": "Funding Rate",
-                        "strength": 50,
-                        "direction": "neutral"
-                    }
-                ],
-                "dataSources": [
-                    "explorer",
-                    "hyperliquid"
-                ],
-                "reasoning": "Whale transactions indicate large players moving BTC, suggesting accumulation. Funding rate on Hyperliquid is neutral, indicating balanced market sentiment.",
-                "iterations": 3,
-                "conclusion": "BTC shows moderate on-chain activity with neutral funding, suggesting a balanced outlook.",
-                "errors": []
-            },
-            {
-                "factor": "sentiment",
-                "score": 45,
-                "confidence": 60,
-                "signals": [
-                    {
-                        "name": "Fear & Greed Index",
-                        "strength": 45,
-                        "direction": "neutral"
-                    }
-                ],
-                "dataSources": [
-                    "altme",
-                    "cryptocurrency.cv"
-                ],
-                "reasoning": "Only Fear & Greed index was successfully fetched (score ~45, neutral). Twitter sentiment API failed; no fallback data available due to zero remaining loops. Sentiment is neutral to slightly bearish based on Fear & Greed.",
-                "iterations": 3,
-                "conclusion": "Neutral sentiment with slight bearish tilt; lack of additional data reduces confidence.",
+                "conclusion": "Sentiment for ETH is neutral based on Fear & Greed Index; lack of social media sentiment data prevents stronger conviction.",
                 "errors": [
                     "get_twitter_sentiment: fetch failed"
                 ]
             }
         ],
-        "overallScore": 57,
-        "overallConfidence": 20,
+        "overallScore": 61,
+        "overallConfidence": 54,
         "crossValidation": {
             "pairs": [
                 {
                     "factorA": "fundamental",
                     "factorB": "onchain",
                     "alignment": 85,
-                    "note": "Both bullish: strong fundamentals supported by on-chain accumulation and positive funding."
+                    "note": "Both indicate bullish outlook; fundamentals show strong ecosystem health, onchain confirms accumulation."
                 },
                 {
                     "factorA": "fundamental",
                     "factorB": "technical",
+                    "alignment": 60,
+                    "note": "Fundamentals bullish, technical neutral; alignment moderate as technicals do not contradict but lack directional bias."
+                },
+                {
+                    "factorA": "fundamental",
+                    "factorB": "sentiment",
                     "alignment": 50,
-                    "note": "Bullish fundamentals vs neutral technicals; no strong conflict but technicals lack bullish confirmation."
+                    "note": "Fundamentals bullish, sentiment neutral; alignment low due to sentiment data limitations and neutrality."
                 },
                 {
                     "factorA": "onchain",
                     "factorB": "technical",
                     "alignment": 55,
-                    "note": "On-chain bullish but technical neutral; on-chain signals suggest accumulation but not reflected in price action yet."
+                    "note": "Onchain mildly bullish, technical neutral; moderate alignment."
                 },
                 {
-                    "factorA": "sentiment",
-                    "factorB": "technical",
+                    "factorA": "onchain",
+                    "factorB": "sentiment",
+                    "alignment": 50,
+                    "note": "Onchain bullish, sentiment neutral; alignment low due to sentiment data gaps."
+                },
+                {
+                    "factorA": "technical",
+                    "factorB": "sentiment",
                     "alignment": 80,
-                    "note": "Both neutral; sentiment data is low confidence, technicals neutral."
-                },
-                {
-                    "factorA": "sentiment",
-                    "factorB": "fundamental",
-                    "alignment": 60,
-                    "note": "Neutral sentiment vs bullish fundamentals; sentiment may lag or be misaligned."
+                    "note": "Both neutral; strong alignment as neither provides directional conviction."
                 }
             ],
-            "overallAlignment": 70,
+            "overallAlignment": 63,
             "contradictions": []
         },
         "risks": [
             {
-                "factor": "technical",
-                "description": "Neutral RSI and MACD indicate lack of momentum; possible consolidation or reversal without clear directional signal.",
+                "factor": "fundamental",
+                "description": "Regulatory headwinds, particularly SEC scrutiny on ETH as a security or ETF delays, could dampen sentiment and price.",
+                "severity": "high"
+            },
+            {
+                "factor": "fundamental",
+                "description": "Competition from other smart contract platforms (e.g., Solana, Avalanche) may erode market share and DeFi TVL.",
                 "severity": "medium"
             },
             {
                 "factor": "sentiment",
-                "description": "Low confidence due to failed data fetches; sentiment may be mispriced if actual retail or social sentiment shifts.",
-                "severity": "low"
+                "description": "Low confidence sentiment data due to fetch failure; potential for unmeasured negative social sentiment to affect price.",
+                "severity": "medium"
             },
             {
-                "factor": "onchain",
-                "description": "Some on-chain data is simulated or from limited sources; actual accumulation trend not fully confirmed.",
-                "severity": "low"
+                "factor": "technical",
+                "description": "Consolidation near resistance could lead to a breakdown if support fails, triggering stop-losses and further decline.",
+                "severity": "medium"
             }
         ],
         "catalysts": [
             {
                 "factor": "fundamental",
-                "description": "Continued institutional inflows via spot ETFs boost demand and credibility.",
+                "description": "Successful implementation of EIP-4844 and further scalability improvements can drive adoption and price appreciation.",
                 "impact": "high"
             },
             {
                 "factor": "fundamental",
-                "description": "Fixed supply and decreasing inflation rate reinforce store-of-value narrative.",
+                "description": "Spot Ethereum ETF approval in the US would provide new institutional demand and bullish sentiment.",
                 "impact": "high"
             },
             {
                 "factor": "onchain",
-                "description": "Exchange outflows and whale accumulation suggest supply is being taken off exchanges, supportive of price.",
+                "description": "Continued exchange outflows indicate accumulation, which if sustained, can lead to supply crunch and upward price pressure.",
+                "impact": "medium"
+            },
+            {
+                "factor": "fundamental",
+                "description": "Growth in staking participation and DeFi yield opportunities can increase demand for ETH.",
                 "impact": "medium"
             }
         ],
-        "summary": "Bitcoin's fundamental strength remains impressive, with high hashrate, ETF inflows, and deflationary tokenomics supporting a bullish case. On-chain metrics indicate accumulation through whale activity and exchange outflows, while technical indicators are neutral, suggesting no immediate catalyst for breakout. Sentiment is neutral but based on limited data, reducing confidence. The combination of solid fundamentals and on-chain signals points to a moderately bullish outlook, though price action may remain range-bound until momentum builds. Investors should watch for breakout from current levels or confirmation from additional sentiment data.",
-        "iterations": 4,
+        "summary": "Ethereum's fundamentals are solid with active development and network upgrades, while onchain data shows accumulation. However, technicals are neutral in a consolidation range, and sentiment is lukewarm. The long-term outlook remains positive but near-term direction depends on breaking resistance or a regulatory catalyst. Investors should monitor support levels and regulatory news for entry points.",
+        "iterations": 2,
         "status": "complete",
-        "processingTimeMs": 138477
+        "processingTimeMs": 66151
     },
     "timing": {
         "fetchMs": 0,
         "llmMs": 0,
-        "totalMs": 138496,
-        "agentMs": 138477
+        "totalMs": 66161,
+        "agentMs": 66151
     }
 }

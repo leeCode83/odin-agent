@@ -2,7 +2,7 @@ import OpenAI from "openai"
 import { PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT } from "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { SubAgentThought } from "@/lib/agent/due-diligence/subagent"
-import type { SubagentPlan, FactorReport } from "@/lib/agent/due-diligence/types"
+import { FACTOR_KEYS, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
@@ -209,7 +209,36 @@ export async function aggregate(params: {
       { timeout: 30_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "{}"
-    return JSON.parse(content)
+    const parsed = JSON.parse(content)
+
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new Error("Aggregate response is not an object")
+    }
+
+    const validFactors = new Set<string>(FACTOR_KEYS)
+
+    if (Array.isArray(parsed.risks)) {
+      parsed.risks = parsed.risks.filter(
+        (r: { factor?: unknown }) => r && typeof r.factor === "string" && validFactors.has(r.factor)
+      )
+    }
+
+    if (Array.isArray(parsed.catalysts)) {
+      parsed.catalysts = parsed.catalysts.filter(
+        (c: { factor?: unknown }) => c && typeof c.factor === "string" && validFactors.has(c.factor)
+      )
+    }
+
+    if (parsed.crossValidation && Array.isArray(parsed.crossValidation.pairs)) {
+      parsed.crossValidation.pairs = parsed.crossValidation.pairs.filter(
+        (p: { factorA?: unknown; factorB?: unknown }) =>
+          p &&
+          typeof p.factorA === "string" && validFactors.has(p.factorA) &&
+          typeof p.factorB === "string" && validFactors.has(p.factorB)
+      )
+    }
+
+    return parsed as any
   } catch (err) {
     console.error("[DD:aggregate] LLM call failed:", err instanceof Error ? err.message : String(err))
     return {

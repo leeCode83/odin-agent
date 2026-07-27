@@ -148,23 +148,7 @@ export async function runSubagent(params: {
       }
     }
 
-    // On last loop, force-return instead of executing a tool whose result won't be analyzed
-    if (maxLoops - i - 1 <= 0) {
-      const factor = params.factor as FactorReport["factor"]
-      return {
-        factor,
-        score: null,
-        confidence: null,
-        signals: [],
-        dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
-        reasoning: `LLM requested tool "${thought.toolName}" on last iteration — forced return.`,
-        iterations: i + 1,
-        conclusion: "Subagent did not return a conclusion — force returned on last loop.",
-        errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
-      }
-    }
-
-    // ACT — execute the chosen tool
+    // ACT — execute the chosen tool (even on last iteration — data can inform forced return)
     const tool = params.tools[thought.toolName]
     if (!tool) {
       history.push({
@@ -212,7 +196,47 @@ export async function runSubagent(params: {
     }
   }
 
-  // Force return on last loop or timeout — build from whatever history we have
+  // Force return on last loop or timeout — ask LLM one final time for a conclusion
+  try {
+    const systemPrompt = params.getSystemPrompt(params.factor, params.tools, params.instruction)
+    const forceReturnMessages: Array<{ role: string; content: string }> = [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: JSON.stringify({
+          factor: params.factor,
+          asset: params.asset,
+          instruction: params.instruction,
+          remainingLoops: 0,
+          availableTools: toolNames,
+          history,
+          forceReturn: true,
+          message:
+            "This is your final opportunity. You MUST return a conclusion now. Provide your best analysis based on the data collected so far, even if incomplete. Do NOT request tools. You MUST return with score (0-100), confidence (0-100), signals, reasoning, and conclusion.",
+        }),
+      },
+    ]
+
+    const finalThought = await params.llmThink(forceReturnMessages)
+
+    if (finalThought.action === "return") {
+      const factor = params.factor as FactorReport["factor"]
+      return {
+        factor,
+        score: finalThought.score,
+        confidence: finalThought.confidence,
+        signals: finalThought.signals.map(normalizeSignal),
+        dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
+        reasoning: finalThought.reasoning,
+        iterations: maxLoops,
+        conclusion: finalThought.conclusion,
+        errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
+      }
+    }
+  } catch {
+    // fall through to nulls below
+  }
+
   const factor = params.factor as FactorReport["factor"]
   return {
     factor,
