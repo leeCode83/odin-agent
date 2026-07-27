@@ -1,5 +1,5 @@
 import { withTimeout, withRetry } from "@/lib/utils"
-import type { FearGreedData } from "@/lib/data/fetch-utils"
+import type { FearGreedData } from "@/lib/data/types"
 
 /**
  * @constant BASE

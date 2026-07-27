@@ -102,36 +102,6 @@ export async function fetchCandlesByInterval(
   }))
 }
 
-/**
- * @function fetchAllHLData
- * @description Fetches all Hyperliquid data (candles 1h/15m/1d + on-chain) in parallel
- * with per-call retry (up to 3 attempts each). Failed sub-calls retry independently
- * without affecting parallel siblings.
- * @param {string} asset - Asset ticker.
- * @returns {Promise<{candles1h: CandleData[], candles15m: CandleData[], candles1d: CandleData[], currentPrice: number, priceChange24h: number, onchain: OnchainData}>}
- */
-export async function fetchAllHLData(asset: string): Promise<{
-  candles1h: CandleData[]
-  candles15m: CandleData[]
-  candles1d: CandleData[]
-  currentPrice: number
-  priceChange24h: number
-  onchain: OnchainData
-}> {
-  const client = createHLClient()
-  const now = Date.now()
-  const [candles1h, candles15m, candles1d, onchain] = await Promise.all([
-    withRetry(() => fetchCandles(client, asset), { retries: 2 }),
-    withRetry(() => fetchCandlesByInterval(client, asset, "15m", now - 24 * 60 * 60 * 1000, now), { retries: 2 }),
-    withRetry(() => fetchCandlesByInterval(client, asset, "1d", now - 30 * 24 * 60 * 60 * 1000, now), { retries: 2 }),
-    withRetry(() => fetchOnchainData(client, asset), { retries: 2 }),
-  ])
-  const currentPrice = candles1h.length > 0 ? candles1h[candles1h.length - 1].close : 0
-  const priceChange24h = candles1d.length >= 2
-    ? ((candles1d[candles1d.length - 1].close - candles1d[candles1d.length - 2].close) / candles1d[candles1d.length - 2].close) * 100
-    : 0
-  return { candles1h, candles15m, candles1d, currentPrice, priceChange24h, onchain }
-}
 
 /**
  * @function fetchMarkPrice

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { createHLClient, fetchCandles, fetchOnchainData, fetchAllHLData, fetchMarkPrice, fetchUserEquity, fetchUserBalance, fetchCandlesForATR } from "@/lib/data/hyperliquid"
+import { createHLClient, fetchCandles, fetchOnchainData, fetchMarkPrice, fetchUserEquity, fetchUserBalance, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 
 const { mockCandleSnapshot, mockMetaAndAssetCtxs, mockFundingHistory, mockPerpsAtOpenInterestCap, mockAllMids, mockClearinghouseState } = vi.hoisted(() => ({
   mockCandleSnapshot: vi.fn().mockResolvedValue([
@@ -120,19 +120,6 @@ describe("fetchOnchainData", () => {
   })
 })
 
-describe("fetchAllHLData", () => {
-  it("returns combined technical + onchain data", async () => {
-    const data = await fetchAllHLData("BTC")
-    expect(data).toHaveProperty("candles1h")
-    expect(data).toHaveProperty("onchain")
-    expect(data.onchain).toHaveProperty("fundingRate")
-  })
-
-  it("handles errors gracefully after exhausting retries", async () => {
-    mockCandleSnapshot.mockRejectedValue(new Error("API down"))
-    await expect(fetchAllHLData("BTC")).rejects.toThrow()
-  }, 10_000)
-})
 
 describe("fetchMarkPrice", () => {
   it("returns mid price > 0 for known asset", async () => {

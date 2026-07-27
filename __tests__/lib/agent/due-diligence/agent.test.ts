@@ -363,7 +363,7 @@ describe("runDDAgent", () => {
     expect(result.errors!.some((e: string) => e.includes("Initial plan failed"))).toBe(true)
   })
 
-  it("handles aggregation failure gracefully", async () => {
+  it("handles aggregation failure gracefully — returns null instead of fake data", async () => {
     vi.mocked(plan).mockResolvedValueOnce([
       { factor: "technical", instruction: "Analyze", priority: 1 },
       { factor: "onchain", instruction: "Analyze", priority: 2 },
@@ -372,7 +372,7 @@ describe("runDDAgent", () => {
     vi.mocked(runSubagent).mockImplementation(async ({ factor }) =>
       makeFactorReport({ factor: factor as string, score: 80, confidence: 85 })
     )
-    vi.mocked(aggregate).mockRejectedValueOnce(new Error("Aggregation error"))
+    vi.mocked(aggregate).mockResolvedValueOnce(null)
 
     const result = await runDDAgent({
       asset: "BTC",
@@ -380,8 +380,13 @@ describe("runDDAgent", () => {
       maxLoops: 2,
     })
 
-    expect(result.status).toBe("complete")
-    expect(result.errors!.some((e: string) => e.includes("Aggregation failed"))).toBe(true)
+    expect(result.status).toBe("partial")
+    expect(result.aggregated_thesis).toBe("")
+    expect(result.summary).toBe("")
+    expect(result.risks).toEqual([])
+    expect(result.catalysts).toEqual([])
+    expect(result.crossValidation).toEqual({ pairs: [], overallAlignment: 0, contradictions: [] })
+    expect(result.errors!.some((e: string) => e.includes("cross-factor analysis unavailable"))).toBe(true)
   })
 
   it("handles rePlan failure with fallback", async () => {

@@ -210,6 +210,8 @@ describe("aggregate()", () => {
       category: "major",
       factorReports: [],
     })
+    expect(result).not.toBeNull()
+    if (!result) return // type guard
     expect(result.thesis).toBe("BTC is bullish overall across technical and on-chain factors")
     expect(result.crossValidation.overallAlignment).toBe(80)
     expect(result.crossValidation.pairs).toHaveLength(1)
@@ -222,28 +224,24 @@ describe("aggregate()", () => {
     expect(result.summary).toBeTruthy()
   })
 
-  it("returns default on LLM error", async () => {
+  it("returns null on LLM error instead of fake data", async () => {
     mockCreate.mockRejectedValueOnce(new Error("API error"))
     const result = await aggregate({
       asset: "BTC",
       category: "major",
       factorReports: [],
     })
-    expect(result.thesis).toBe("Aggregation failed")
-    expect(result.crossValidation.overallAlignment).toBe(0)
-    expect(result.risks).toEqual([])
-    expect(result.catalysts).toEqual([])
+    expect(result).toBeNull()
   })
 
-  it("returns default on missing API key", async () => {
+  it("returns null on missing API key", async () => {
     delete process.env.DEEPSEEK_API_KEY
     const result = await aggregate({
       asset: "BTC",
       category: "major",
       factorReports: [],
     })
-    expect(result.thesis).toBe("LLM unavailable")
-    expect(result.crossValidation.overallAlignment).toBe(0)
+    expect(result).toBeNull()
   })
 })
 

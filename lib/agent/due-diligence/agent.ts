@@ -196,14 +196,13 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
     )
 
     // AGGREGATE
-    try {
-      aggregation = await aggregate({
-        asset: params.asset,
-        category: params.category.name,
-        factorReports: allFactorReports,
-      })
-    } catch (e) {
-      errors.push(`Aggregation failed: ${String(e)}`)
+    aggregation = await aggregate({
+      asset: params.asset,
+      category: params.category.name,
+      factorReports: allFactorReports,
+    })
+    if (!aggregation) {
+      errors.push("Aggregation step returned null — cross-factor analysis unavailable")
     }
 
     const deterministic = computeDeterministicScore(allFactorReports)
@@ -212,7 +211,7 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
     const evaluation = evaluateResults(allFactorReports, aggregation?.crossValidation as CrossValidation | undefined)
 
     if (evaluation.decision === "ACCEPT") {
-      status = "complete"
+      status = aggregation ? "complete" : "partial"
       const report = buildFinalReport({
         asset: params.asset,
         category: params.category.name,

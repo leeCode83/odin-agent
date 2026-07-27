@@ -168,11 +168,7 @@ export async function rePlan(params: {
  * @returns {Promise<{ thesis: string; crossValidation: { pairs: Array<{ factorA: string; factorB: string; alignment: number; note: string }>; overallAlignment: number; contradictions: string[] }; risks: Array<{ factor: string; description: string; severity: string }>; catalysts: Array<{ factor: string; description: string; impact: string }>; summary: string }>}
  *   The aggregated thesis, cross-validation data, risks, catalysts, and summary.
  */
-export async function aggregate(params: {
-  asset: string
-  category: string
-  factorReports: FactorReport[]
-}): Promise<{
+interface AggregateResult {
   thesis: string
   crossValidation: {
     pairs: Array<{ factorA: string; factorB: string; alignment: number; note: string }>
@@ -182,71 +178,114 @@ export async function aggregate(params: {
   risks: Array<{ factor: string; description: string; severity: string }>
   catalysts: Array<{ factor: string; description: string; impact: string }>
   summary: string
-}> {
-  const c = getClient()
-  if (!c) {
-    return {
-      thesis: "LLM unavailable",
-      crossValidation: { pairs: [], overallAlignment: 0, contradictions: [] },
-      risks: [],
-      catalysts: [],
-      summary: "LLM client not configured",
+}
+
+/**
+ * @function repairJSON
+ * @description Attempts to salvage truncated JSON by closing unclosed braces and brackets.
+ *   Falls back to null if the input is irreparable.
+ * @param {string} raw - The potentially truncated JSON string.
+ * @returns {object | null} Repaired parsed object, or null if beyond repair.
+ */
+function repairJSON(raw: string): object | null {
+  try { return JSON.parse(raw) } catch { /* parse failed, attempt repair */ }
+
+  let fixed = raw
+  const stack: string[] = []
+  for (const ch of raw) {
+    if (ch === "{" || ch === "[") {
+      stack.push(ch === "{" ? "}" : "]")
+    } else if (ch === "}" || ch === "]") {
+      stack.pop()
     }
   }
+  // Close any unclosed braces/brackets in reverse order
+  while (stack.length > 0) fixed += stack.pop()
 
+  try { return JSON.parse(fixed) } catch { /* repair failed */ }
+  return null
+}
+
+export async function aggregate(params: {
+  asset: string
+  category: string
+  factorReports: FactorReport[]
+}): Promise<AggregateResult | null> {
+  const c = getClient()
+  if (!c) return null
+
+  let content: string
   try {
     const response = await c.chat.completions.create(
       {
         model: DEEPSEEK_MODEL,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: 8192,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: AGGREGATE_PROMPT },
-          { role: "user", content: JSON.stringify(params) },
+          {
+            role: "user",
+            content: JSON.stringify({
+              asset: params.asset,
+              category: params.category,
+              factorReports: params.factorReports.map((fr) => {
+                // Strip reasoning — aggregate only needs structured data
+                const { reasoning: _reasoning, ...rest } = fr
+                void _reasoning
+                return rest
+              }),
+            }),
+          },
         ],
       },
       { timeout: 30_000, maxRetries: 1 }
     )
-    const content = response.choices?.[0]?.message?.content || "{}"
-    const parsed = JSON.parse(content)
-
-    if (typeof parsed !== "object" || parsed === null) {
-      throw new Error("Aggregate response is not an object")
-    }
-
-    const validFactors = new Set<string>(FACTOR_KEYS)
-
-    if (Array.isArray(parsed.risks)) {
-      parsed.risks = parsed.risks.filter(
-        (r: { factor?: unknown }) => r && typeof r.factor === "string" && validFactors.has(r.factor)
-      )
-    }
-
-    if (Array.isArray(parsed.catalysts)) {
-      parsed.catalysts = parsed.catalysts.filter(
-        (c: { factor?: unknown }) => c && typeof c.factor === "string" && validFactors.has(c.factor)
-      )
-    }
-
-    if (parsed.crossValidation && Array.isArray(parsed.crossValidation.pairs)) {
-      parsed.crossValidation.pairs = parsed.crossValidation.pairs.filter(
-        (p: { factorA?: unknown; factorB?: unknown }) =>
-          p &&
-          typeof p.factorA === "string" && validFactors.has(p.factorA) &&
-          typeof p.factorB === "string" && validFactors.has(p.factorB)
-      )
-    }
-
-    return parsed as any
+    content = response.choices?.[0]?.message?.content || "{}"
   } catch (err) {
-    console.error("[DD:aggregate] LLM call failed:", err instanceof Error ? err.message : String(err))
-    return {
-      thesis: "Aggregation failed",
-      crossValidation: { pairs: [], overallAlignment: 0, contradictions: [] },
-      risks: [],
-      catalysts: [],
-      summary: "Aggregation step failed after retry",
-    }
+    console.error("[DD:aggregate] API error:", err instanceof Error ? err.message : String(err))
+    return null
   }
+
+  // Try strict parse first, then JSON repair for truncated output
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    console.error("[DD:aggregate] JSON parse failed, attempting repair. Raw length:", content.length)
+    const repaired = repairJSON(content)
+    if (!repaired) {
+      console.error("[DD:aggregate] JSON repair also failed")
+      return null
+    }
+    parsed = repaired
+  }
+
+  if (typeof parsed !== "object" || parsed === null) return null
+
+  const validFactors = new Set<string>(FACTOR_KEYS)
+
+  if (Array.isArray((parsed as Record<string, unknown>).risks)) {
+    (parsed as Record<string, unknown>).risks = (
+      (parsed as Record<string, unknown>).risks as Array<{ factor?: unknown }>
+    ).filter((r) => r && typeof r.factor === "string" && validFactors.has(r.factor))
+  }
+
+  if (Array.isArray((parsed as Record<string, unknown>).catalysts)) {
+    (parsed as Record<string, unknown>).catalysts = (
+      (parsed as Record<string, unknown>).catalysts as Array<{ factor?: unknown }>
+    ).filter((c) => c && typeof c.factor === "string" && validFactors.has(c.factor))
+  }
+
+  const cv = (parsed as Record<string, unknown>).crossValidation as Record<string, unknown> | undefined
+  if (cv && Array.isArray(cv.pairs)) {
+    cv.pairs = (cv.pairs as Array<{ factorA?: unknown; factorB?: unknown }>).filter(
+      (p) =>
+        p &&
+        typeof p.factorA === "string" && validFactors.has(p.factorA) &&
+        typeof p.factorB === "string" && validFactors.has(p.factorB)
+    )
+  }
+
+  return parsed as AggregateResult
 }
