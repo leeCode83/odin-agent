@@ -30,3 +30,16 @@ export interface FearGreedData {
   classification: string | null
 }
 
+export interface GlobalMarketData {
+  total_market_cap: number | null
+  total_volume_24h: number | null
+}
+
+export interface AssetMomentumData {
+  price_usd: number | null
+  percent_change_1h: number | null
+  percent_change_24h: number | null
+  percent_change_7d: number | null
+  volume_24h_usd: number | null
+}
+
