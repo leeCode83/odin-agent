@@ -20,9 +20,9 @@ export async function runTradePipeline(
   const ddMs = Date.now() - t0
   const ddReport = ddOutput.report
 
-  const planningOutput = await runPlanningPipeline({ ddReport, userId, walletAddress })
+  const planningOutput = await runPlanningPipeline({ asset, userId, walletAddress })
   const planningMs = Date.now() - t0 - ddMs
-  const tradePlan = planningOutput.plan
+  const tradePlan = planningOutput.report
 
   if (tradePlan.autonomy_decision === "approve") {
     return {

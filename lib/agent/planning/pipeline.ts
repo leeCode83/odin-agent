@@ -1,11 +1,15 @@
-import { DDReportSchema, TradePlanSchema } from "@/lib/agent/types"
-import type { PerspectiveResult, PlanningPipelineInput, PlanningPipelineOutput } from "./types"
-import { fetchMarkPrice, fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
-import { queryGraphPatterns } from "@/lib/db/graph-memory"
-import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
-import { generatePerspective, aggregatePerspectives } from "./llm"
-import { computeATR, computeSLTP, computePositionSize, capLeverage } from "./risk-engine"
-import { autonomyGate } from "./gate"
+/**
+ * @file planning/pipeline.ts
+ * @description Thin pipeline wrapper that calls the planning swarm agent
+ *   (runPlanningAgent) and validates the returned TradePlan. Mirrors the DD
+ *   pipeline structure (see lib/agent/due-diligence/pipeline.ts).
+ * @module planning
+ * @layer service
+ */
+
+import { runPlanningAgent } from "@/lib/agent/planning/agent"
+import { TradePlanSchema } from "@/lib/agent/types"
+import type { TradePlan } from "@/lib/agent/types"
 
 /**
  * @class PlanningError
@@ -27,91 +31,66 @@ export class PlanningError extends Error {
 }
 
 /**
- * @function runPlanningPipeline
- * @description Executes the full trade planning pipeline, combining DD report analysis, risk thresholds, market data, and multiple LLM perspectives.
- * @param {PlanningPipelineInput} input - The input containing the DD report, user ID, and wallet address.
- * @returns {Promise<PlanningPipelineOutput>} The generated trade plan and execution timings.
+ * @interface PlanningPipelineResult
+ * @description Output of the planning pipeline: the validated trade plan and
+ *   execution timings.
  */
-export async function runPlanningPipeline(
-  input: PlanningPipelineInput
-): Promise<PlanningPipelineOutput> {
-  const ddReport = DDReportSchema.parse(input.ddReport)
-  const errors: string[] = []
-  const startTime = Date.now()
-
-  // 1. Parallel fetch: mark price, equity, candles, thresholds, graph patterns
-  const fetchStart = Date.now()
-  const allSignals = Object.values(ddReport.sections).flatMap((s) => s.signals)
-  const atrInterval = (process.env.ATR_CANDLE_INTERVAL || "1h") as "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "8h" | "12h" | "1d" | "3d" | "1w" | "1M"
-  const atrWindow = Number(process.env.ATR_CANDLE_COUNT) || 20
-  const [markPrice, equity, candles, storedThresholds, graphPatterns] = await Promise.all([
-    fetchMarkPrice(ddReport.asset).catch((e) => { errors.push(`mark_price: ${e.message}`); throw e; }),
-    fetchUserEquity(input.walletAddress).catch((e) => { errors.push(`equity: ${e.message}`); throw e; }),
-    fetchCandlesForATR(ddReport.asset, atrInterval, atrWindow).catch((e) => { errors.push(`candles: ${e.message}`); throw e; }),
-    getRiskThresholds(input.userId).catch((e) => { errors.push(`thresholds: ${e.message}`); return null; }),
-    queryGraphPatterns(ddReport.asset, ddReport.category, allSignals).catch((e) => { errors.push(`graph: ${e.message}`); return []; }),
-  ])
-  const fetchMs = Date.now() - fetchStart
-  const thresholds = storedThresholds ?? envDefaults()
-
-  // 2. Three perspective LLM runs in parallel (thinking mode)
-  const llmStart = Date.now()
-  const [conservative, balance, aggressive] = await Promise.all([
-    generatePerspective("conservative", ddReport, graphPatterns),
-    generatePerspective("balance", ddReport, graphPatterns),
-    generatePerspective("aggressive", ddReport, graphPatterns),
-  ])
-
-  const validPerspectives = [conservative, balance, aggressive].filter((p): p is PerspectiveResult => p !== null)
-  if (validPerspectives.length === 0) {
-    throw new PlanningError("All 3 LLM perspectives failed")
+export interface PlanningPipelineResult {
+  report: TradePlan
+  timing: {
+    totalMs: number
+    agentMs: number
   }
+}
 
-  // 3. Aggregator LLM call (thinking mode)
-  const aggregated = await aggregatePerspectives(validPerspectives, ddReport)
-  if (!aggregated) {
-    throw new PlanningError("Aggregator LLM call failed")
-  }
-  const llmMs = Date.now() - llmStart
+/**
+ * @function runPlanningPipeline
+ * @description Executes the full planning pipeline: calls the planning swarm
+ *   agent (Plan-Execute-Reflect loop) and validates its TradePlan.
+ * @param {object} input - Pipeline input.
+ * @param {string} input.asset - Asset ticker.
+ * @param {string} input.userId - User identifier.
+ * @param {string} input.walletAddress - User's wallet address.
+ * @param {number} [input.targetProfitPercent] - Target profit percent; defaults to 100.
+ * @returns {Promise<PlanningPipelineResult>} The validated trade plan and execution timings.
+ * @throws {PlanningError} When the agent fails or the plan fails validation.
+ */
+export async function runPlanningPipeline(input: {
+  asset: string
+  userId: string
+  walletAddress: string
+  targetProfitPercent?: number
+}): Promise<PlanningPipelineResult> {
+  const t0 = Date.now()
+  const { asset, userId, walletAddress, targetProfitPercent = 100 } = input
 
-  // 4. Deterministic risk engine
-  const riskStart = Date.now()
-  const atrPeriod = Number(process.env.ATR_PERIOD) || 14
-  const slMult = Number(process.env.ATR_SL_MULTIPLIER) || 1.5
-  const tpMult = Number(process.env.ATR_TP_MULTIPLIER) || 3.0
-  const atr = computeATR(candles, atrPeriod)
-  const { stopLoss, takeProfit } = computeSLTP(markPrice, atr, aggregated.side, { slMultiplier: slMult, tpMultiplier: tpMult })
-  const leverage = capLeverage(aggregated.leverage_suggested, thresholds.max_leverage)
-  const { positionSizeUsdc, positionSizeContracts } = computePositionSize(equity, markPrice, stopLoss, thresholds.risk_per_trade_percent)
-  const riskEngineMs = Date.now() - riskStart
+  try {
+    const { report } = await runPlanningAgent({
+      asset,
+      userId,
+      walletAddress,
+      targetProfitPercent,
+    })
 
-  // 5. Autonomy gate
-  const autonomyDecision = autonomyGate(aggregated.confidence_score, positionSizeUsdc, thresholds)
-
-  const totalMs = Date.now() - startTime
-
-  const plan = TradePlanSchema.parse({
-    asset: ddReport.asset,
-    side: aggregated.side,
-    entry_price: markPrice,
-    position_size_usdc: positionSizeUsdc,
-    position_size_contracts: positionSizeContracts,
-    stop_loss: stopLoss,
-    take_profit: takeProfit,
-    leverage,
-    confidence_score: aggregated.confidence_score,
-    confidence_breakdown: aggregated.confidence_breakdown,
-    thesis: aggregated.thesis,
-    reasoning: aggregated.reasoning,
-    autonomy_decision: autonomyDecision,
-    risk_flags: aggregated.risk_flags,
-    graph_patterns_used: graphPatterns,
-    timestamp: new Date().toISOString(),
-    errors: errors.length > 0 ? errors : undefined,
-  })
-
-  return {
-    plan,
-    timing: { fetchMs, graphMs: fetchMs, llmMs, riskEngineMs, totalMs },
+    return {
+      report: TradePlanSchema.parse(report),
+      timing: {
+        totalMs: Date.now() - t0,
+        // reason: agentMs prefers the agent-reported wall time; falls back to
+        // the pipeline wall time when the plan carries no processingTimeMs.
+        agentMs: report.processingTimeMs ?? Date.now() - t0,
+      },
+    }
+  } catch (err) {
+    // reason: carry over structured detail/processingTimeMs from an already
+    // wrapped PlanningError so the route layer (spec §9.6) can surface them.
+    if (err instanceof PlanningError) {
+      throw new PlanningError(
+        `Planning pipeline failed for ${asset}: ${err.message}`,
+        err.detail,
+        err.processingTimeMs
+      )
+    }
+    throw new PlanningError(`Planning pipeline failed for ${asset}: ${String(err)}`)
   }
 }

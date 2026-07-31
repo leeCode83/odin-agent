@@ -80,7 +80,7 @@ vi.mock("@/lib/agent/execution/pipeline", () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   mockRunDDPipeline.mockResolvedValue({ report: mockDDReport, timing: { fetchMs: 100, llmMs: 200, totalMs: 300 } })
-  mockRunPlanningPipeline.mockResolvedValue({ plan: mockTradePlanAuto, timing: { fetchMs: 100, graphMs: 50, llmMs: 200, riskEngineMs: 30, totalMs: 380 } })
+  mockRunPlanningPipeline.mockResolvedValue({ report: mockTradePlanAuto, timing: { totalMs: 380, agentMs: 300 } })
   mockRunExecutionPipeline.mockResolvedValue(mockExecutionOutput)
 })
 
@@ -101,7 +101,7 @@ describe("runTradePipeline", () => {
   })
 
   it("returns requires_approval when autonomy is approve", async () => {
-    mockRunPlanningPipeline.mockResolvedValue({ plan: mockTradePlanApprove, timing: { fetchMs: 100, graphMs: 50, llmMs: 200, riskEngineMs: 30, totalMs: 380 } })
+    mockRunPlanningPipeline.mockResolvedValue({ report: mockTradePlanApprove, timing: { totalMs: 380, agentMs: 300 } })
 
     const output = await runTradePipeline({
       asset: "BTC",
@@ -122,12 +122,12 @@ describe("runTradePipeline", () => {
     })
 
     expect(mockRunDDPipeline).toHaveBeenCalledWith({ asset: "BTC", userId: "user-1" })
-    expect(mockRunPlanningPipeline).toHaveBeenCalledWith({ ddReport: mockDDReport, userId: "user-1", walletAddress: "0xmaster" })
+    expect(mockRunPlanningPipeline).toHaveBeenCalledWith({ asset: "BTC", userId: "user-1", walletAddress: "0xmaster" })
     expect(mockRunExecutionPipeline).toHaveBeenCalledWith({ tradePlan: mockTradePlanAuto, walletAddress: "0xmaster", userId: "user-1", ddReport: mockDDReport })
   })
 
   it("does not call execution when plan requires approval", async () => {
-    mockRunPlanningPipeline.mockResolvedValue({ plan: mockTradePlanApprove, timing: { fetchMs: 100, graphMs: 50, llmMs: 200, riskEngineMs: 30, totalMs: 380 } })
+    mockRunPlanningPipeline.mockResolvedValue({ report: mockTradePlanApprove, timing: { totalMs: 380, agentMs: 300 } })
 
     await runTradePipeline({
       asset: "BTC",
