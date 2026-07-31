@@ -9,12 +9,20 @@ import { autonomyGate } from "./gate"
 
 /**
  * @class PlanningError
- * @description Custom error class for errors occurring during the planning pipeline.
+ * @description Custom error class for errors occurring during the planning
+ *   pipeline. Carries optional structured detail (spec §9.6 error response
+ *   shape: phase, reports, aggregation, ddReport) and the wall-clock time of
+ *   the failed run, so the route layer can surface them to the client.
  */
 export class PlanningError extends Error {
-  constructor(message: string) {
+  detail?: Record<string, unknown>
+  processingTimeMs?: number
+
+  constructor(message: string, detail?: Record<string, unknown>, processingTimeMs?: number) {
     super(message)
     this.name = "PlanningError"
+    this.detail = detail
+    this.processingTimeMs = processingTimeMs
   }
 }
 
