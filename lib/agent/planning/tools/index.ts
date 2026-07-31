@@ -1,7 +1,8 @@
 /**
  * @file planning/tools/index.ts
  * @description Entry point for the planning swarm tools. Builds a ToolRegistry
- * merging risk-engine and market-data tools, bound to a shared planning context.
+ * merging risk-engine, market-data, funding, liquidation, and web-search tools,
+ * bound to a shared planning context.
  * @module planning/tools
  * @layer agent
  */
@@ -10,6 +11,9 @@ import type { ToolDefinition, ToolRegistry } from "@/lib/agent/tools/types"
 import { registerTools } from "@/lib/agent/tools/registry"
 import { buildRiskEngineTools } from "./risk-engine"
 import { buildMarketDataTools } from "./market-data"
+import { buildFundingTools } from "./funding"
+import { buildLiquidationTools } from "./liquidation"
+import { buildWebSearchTools } from "./web-search"
 
 /**
  * @interface PlanningToolContext
@@ -28,8 +32,9 @@ export interface PlanningToolContext {
 
 /**
  * @function buildPlanningToolRegistry
- * @description Builds the planning swarm ToolRegistry, merging the risk-engine
- * and market-data tool sets bound to the provided context.
+ * @description Builds the planning swarm ToolRegistry, merging the risk-engine,
+ * market-data, funding, liquidation, and web-search tool sets bound to the
+ * provided context.
  * @param {PlanningToolContext} ctx - Shared planning context (wallet, user, asset, equity).
  * @returns {ToolRegistry} Registry of deterministic planning tools.
  */
@@ -38,7 +43,9 @@ export function buildPlanningToolRegistry(ctx: PlanningToolContext): ToolRegistr
   const tools: ToolDefinition[] = [
     ...buildRiskEngineTools(ctx),
     ...buildMarketDataTools(ctx),
-    // reason: funding/liquidation/web-search tools merged by T3 (parallel task)
+    ...buildFundingTools(ctx),
+    ...buildLiquidationTools(ctx),
+    ...buildWebSearchTools(ctx),
   ]
   registerTools(registry, tools)
   return registry
