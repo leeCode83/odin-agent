@@ -168,6 +168,28 @@ describe("runExecutionPipeline", () => {
     })
   })
 
+  it("throws ExecutionError when action is NO_TRADE", async () => {
+    await expect(
+      runExecutionPipeline({
+        tradePlan: { ...validTradePlan, action: "NO_TRADE" },
+        walletAddress: "0xmaster",
+        userId: "user-1",
+      })
+    ).rejects.toThrow("Cannot execute a NO_TRADE plan")
+  })
+
+  it("treats missing action as LONG and executes", async () => {
+    // reason: schema default fills action=LONG for missing input (guard contract)
+    const noActionPlan = { ...validTradePlan } as Omit<TradePlan, "action">
+    const output = await runExecutionPipeline({
+      tradePlan: noActionPlan as TradePlan,
+      walletAddress: "0xmaster",
+      userId: "user-1",
+    })
+
+    expect(output.execution.status).toBe("placed")
+  })
+
   it("throws ExecutionError when autonomy_decision is approve", async () => {
     await expect(
       runExecutionPipeline({

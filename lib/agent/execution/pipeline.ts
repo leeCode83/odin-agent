@@ -1,3 +1,11 @@
+/**
+ * @file execution/pipeline.ts
+ * @description Execution pipeline: places a validated TradePlan as a
+ *   Hyperliquid order bundle (entry + TP/SL) and monitors fills.
+ * @module execution
+ * @layer service
+ */
+
 import { TradePlanSchema } from "@/lib/agent/types"
 import { getAgentSigner, getExchangeClient, getAssetIndex } from "./client"
 import { buildOrders } from "./orders"
@@ -6,6 +14,11 @@ import { recordGraphMemory } from "@/lib/db/graph-memory"
 import { withRetry, withTimeout } from "@/lib/utils"
 import type { ExecutionPipelineInput, ExecutionPipelineOutput, ExecutionResult } from "./types"
 
+/**
+ * @class ExecutionError
+ * @description Error thrown when the pipeline cannot or must not place orders
+ *   (manual-approval plans, uninitialized agent wallet, NO_TRADE plans).
+ */
 export class ExecutionError extends Error {
   constructor(message: string) {
     super(message)
@@ -16,6 +29,15 @@ export class ExecutionError extends Error {
 const fillTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
 const hlTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
 
+/**
+ * @function runExecutionPipeline
+ * @description Executes a trade plan end-to-end: validates, guards, builds
+ *   orders, places them, and monitors fills.
+ * @param {ExecutionPipelineInput} input - Trade plan plus user/wallet context.
+ * @returns {Promise<ExecutionPipelineOutput>} Execution result and timings.
+ * @throws {ExecutionError} When the plan is NO_TRADE, requires approval, or
+ *   the agent wallet is not initialized.
+ */
 export async function runExecutionPipeline(
   input: ExecutionPipelineInput
 ): Promise<ExecutionPipelineOutput> {
@@ -23,6 +45,13 @@ export async function runExecutionPipeline(
   const { tradePlan, userId, ddReport } = input
 
   const validated = TradePlanSchema.parse(tradePlan)
+
+  // reason: defensive guard — a NO_TRADE plan must never reach order
+  // placement; action is optional in the schema, so missing means LONG.
+  if ((validated.action ?? "LONG") === "NO_TRADE") {
+    throw new ExecutionError("Cannot execute a NO_TRADE plan")
+  }
+
   if (validated.autonomy_decision === "approve") {
     throw new ExecutionError("TradePlan requires manual approval — cannot auto-execute")
   }

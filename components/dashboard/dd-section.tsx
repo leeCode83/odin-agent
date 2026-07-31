@@ -18,7 +18,7 @@ const POPULAR_ASSETS = ["BTC", "ETH", "SOL", "ARB", "DOGE", "WIF", "PEPE", "HYPE
 export function DDSection() {
   const cardRef = useRef<HTMLDivElement>(null)
   const [asset, setAsset] = useState("")
-  const { ddReport, setDDReport, walletAddress } = useDashboard()
+  const { ddReport, setDDReport, setAsset: setContextAsset, walletAddress } = useDashboard()
   const { loading, runDD } = useDD()
   const confidenceScore = ddReport?.overallConfidence ?? ddReport?.confidence_score
 
@@ -36,7 +36,11 @@ export function DDSection() {
   const handleRunDD = async () => {
     if (!asset.trim()) return
     const result = await runDD(asset.trim().toUpperCase(), walletAddress ?? "anonymous")
-    if (result) setDDReport(result)
+    // reason: plan-section plans the analyzed asset — sync it into the shared context
+    if (result) {
+      setDDReport(result)
+      setContextAsset(result.asset)
+    }
   }
 
   const handleAssetClick = (a: string) => {
