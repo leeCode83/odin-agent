@@ -1,10 +1,11 @@
 
-# DD Agent Refactor — Task List
+# Planning Agent Refactor — Task List
 
 **Plan:** `tasks/plan.md`
-**Spec:** `docs/refactor/dd-spec.md`
+**Spec:** `docs/refactor/planning-spec.md`
+**Previous pattern:** `tasks/todo.md` (DD Agent Refactor)
 
-Documentation rule: Every file, function, interface, and inline logic gets JSDoc (`@function`, `@param`, `@returns`, `@description`) or inline `// reason:` comment. Follow existing pattern in `lib/data/hyperliquid.ts`.
+Documentation rule: Every file, function, interface, and inline logic gets JSDoc (`@function`, `@param`, `@returns`, `@description`) or inline `// reason:` comment. Follow existing pattern in `lib/data/hyperliquid.ts`, `lib/agent/due-diligence/agent.ts`.
 
 TDD rule: Write failing test first (RED) → verify failure → minimal implementation (GREEN) → verify pass → refactor. No production code without a failing test first.
 
@@ -12,438 +13,359 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 
 ## Phase 0: Foundation (Main Agent)
 
-### T0 — Install package + create dirs
+### T0 — Create directories + env keys
 
-**Description:** Install `technicalindicators` npm. Create directory structure for the new tool layer.
+**Description:** Create planning tool layer directories and register new env keys. No npm installs needed (technicalindicators already installed; Exa uses plain fetch).
 
 **Files to create:**
-- `lib/agent/tools/` (dir)
-- `lib/agent/tools/technical/` (dir)
-- `lib/agent/tools/onchain/` (dir)
-- `lib/agent/tools/sentiment/` (dir)
-- `lib/agent/tools/fundamental/` (dir)
-- `__tests__/lib/agent/tools/` (dir)
-- `__tests__/lib/agent/tools/technical/` (dir)
-- `__tests__/lib/agent/tools/onchain/` (dir)
-- `__tests__/lib/agent/tools/sentiment/` (dir)
-- `__tests__/lib/agent/tools/fundamental/` (dir)
-- `__tests__/lib/agent/due-diligence/` (dir)
+- `lib/agent/planning/tools/` (dir)
+- `__tests__/lib/agent/planning/tools/` (dir)
 
-**Verification:** `npm list technicalindicators` shows installed. Directories exist.
+**Files to modify:**
+- `.env.example` — add `DEEPSEEK_PLANNING_MODEL=deepseek-v4-pro` (orchestrator/aggregator, thinking mode) and `EXA_API_KEY=` (optional, web search)
+
+**Verification:** Directories exist. `.env.example` shows both keys.
 **Dependencies:** None
 
-- [ ] `npm install technicalindicators`
-- [ ] Create all directories
+- [ ] Create both directories
+- [ ] Update `.env.example`
+- [ ] `npm run typecheck` still clean
 
 ---
 
-## Phase 1: Types & Schema (2 parallel subagents)
+## Phase 1: Types & Tools (3 parallel subagents)
 
-### T1 — Tool types + registry + DDReport extension
+### T1 — Types: PerspectiveReport + TradePlan.action + SubAgentThought extension
 
-**Description:** Create tool interface types (ToolDefinition, ToolResult, ToolRegistry), the registry module, and extend DDReport with new fields.
+**Description:** Add planning swarm types, extend `TradePlanSchema` with `action`, extend `SubAgentThoughtSchema` return variant with optional planning fields. Critical for capture: zod strips unknown keys, so the planning wrapper can only receive `side`/`suggested_*` if the schema declares them.
 
 **Acceptance:**
-- `ToolDefinition<TParams>` defined with `name`, `description`, `parameters` (Zod), `execute` → `ToolResult`
-- `ToolResult` has `success`, `data?`, `error?`, `metadata.source/latencyMs`
-- `ToolRegistry = Record<string, ToolDefinition>`
-- `getToolRegistry(factor)` returns subset, `getCrossFactorRegistry()` returns all tools
-- DDReport extended: `factorReports`, `overallScore`, `overallConfidence`, `crossValidation`, `risks`, `catalysts`, `summary`, `iterations`, `status`, `processingTimeMs`
-- Old fields `aggregated_thesis` and `confidence_score` kept as deprecated aliases
-- `FactorReport`, `SignalEntry`, `AgentRunState`, `AgentPlan`, `SubagentPlan`, `ReDeployEntry` types in due-diligence/types.ts
-
-**Files to create:**
-- `lib/agent/tools/types.ts`
-- `lib/agent/tools/registry.ts`
-- `lib/agent/due-diligence/types.ts`
-- `__tests__/lib/agent/tools/types.test.ts`
-- `__tests__/lib/agent/due-diligence/types.test.ts`
+- `lib/agent/planning/types.ts` ADDS:
+  - `PerspectiveReportSchema` + `PerspectiveReport` — `perspective` (PerspectiveSchema), `score` (number|null), `confidence` (number|null), `side` ("long"|"short"|"no_trade"), `entry_price` (number), `signals` (SignalEntry[]), `dataSources` (string[]), `reasoning` (string), `iterations` (number), `conclusion` (string), `errors` (string[]), `suggested_stop_loss`/`suggested_take_profit`/`suggested_leverage`/`suggested_position_size_usdc` (numbers), `risk_flags` (string[])
+  - `PlanningSubagentPlan` — `{ perspective: Perspective, instruction: string, priority: number }`
+  - `PlanningAgentPlan` — `{ subagents: PlanningSubagentPlan[], reDeployHistory: ReDeployEntry[] }`
+  - `ReDeployEntry` — `{ perspective: string, previousConfidence: number | null, newInstruction: string, iteration: number }`
+  - `ConsensusResult` — `{ decision: "ACCEPT" | "RE-DEPLOY" | "NO_TRADE" | "FAILED", lowConsensusPerspectives: string[], contradictions: string[], message: string, noTradeReason?: string }`
+  - `PlanningAgentInput` — `{ asset: string, userId: string, walletAddress: string, targetProfitPercent: number }`
+  - `PlanningAgentOutput` — `{ report: TradePlan, timing: { ddMs, planMs, executeMs, aggregateMs, evaluateMs, totalMs }, iterations: number, status: "complete" | "no_trade" | "partial" | "failed" }`
+  - `PlanningAggregationResult` — `AggregatedReasoning` + `consensus_alignment` (number), `contradictions` (string[]), `profit_feasible` (boolean), `no_trade_reason?` (string), `side` widened to `"long" | "short" | "no_trade"`, adds `entry_price`, `stop_loss`, `take_profit`, `position_size_usdc`
+- KEEP `PerspectiveSchema`. Mark `PerspectiveResult`, `PlanningPipelineInput`, `AggregatedReasoning` with `@deprecated` JSDoc (deleted in T10).
+- `lib/agent/types.ts` `TradePlanSchema` adds: `action: z.enum(["LONG", "SHORT", "NO_TRADE"]).default("LONG")`, `consensus_alignment: z.number().min(0).max(100).optional()`, `processingTimeMs: z.number().optional()`, `iterations: z.number().optional()`
+- `lib/agent/due-diligence/subagent.ts` `SubAgentThoughtSchema` return variant ADDS optional: `side: z.enum(["long","short","no_trade"]).optional()`, `entry_price`, `suggested_stop_loss`, `suggested_take_profit`, `suggested_leverage`, `suggested_position_size_usdc` (all `z.number().optional()`), `risk_flags: z.array(z.string()).optional()`. No other changes to the file.
 
 **Files to modify:**
-- `lib/agent/types.ts` — EXTEND DDReport, add new interfaces
+- `lib/agent/planning/types.ts`
+- `lib/agent/types.ts`
+- `lib/agent/due-diligence/subagent.ts` (schema only)
 
-**Verification:** `npx vitest run __tests__/lib/agent/tools/types.test.ts __tests__/lib/agent/due-diligence/types.test.ts`
+**Files to create:**
+- `__tests__/lib/agent/planning/types.test.ts` (extend)
+- `__tests__/lib/agent/due-diligence/subagent.test.ts` (extend — extras pass through, DD paths unchanged)
+
+**Verification:** `npx vitest run __tests__/lib/agent/planning/types.test.ts __tests__/lib/agent/due-diligence/` then `npm run typecheck`
 **Dependencies:** T0
 
-- [ ] ToolDefinition, ToolResult, ToolRegistry types + tests
-- [ ] registry.ts with getToolRegistry + getCrossFactorRegistry + tests
-- [ ] DDReport extended with new fields + tests (Zod parse old + new format)
-- [ ] due-diligence/types.ts with FactorReport, SignalEntry, AgentRunState, etc. + tests
+- [ ] PerspectiveReport + PlanningAggregationResult + ConsensusResult + agent input/output types + tests
+- [ ] TradePlanSchema: action + 3 optional fields + tests (old shape still parses, action defaults "LONG")
+- [ ] SubAgentThoughtSchema: optional planning fields + tests (DD return path unchanged)
+- [ ] Run full `__tests__/lib/agent/due-diligence/` — zero regressions
 
 ---
 
-### T2 — DB schema migration
+### T2 — Risk engine + market data tools
 
-**Description:** Add `dd_reports` collection and `decision_has_factorreport` edge to ArangoDB setup + graph memory.
+**Description:** Wrap `lib/agent/planning/risk-engine.ts` functions and existing data fetchers as `ToolDefinition`s. Deterministic, pure — no LLM.
 
 **Acceptance:**
-- `GraphCollectionNames` gains `DD_REPORTS` and `EDGE_HAS_FACTORREPORT`
-- `setupArangoGraph()` creates `dd_reports` doc collection + `decision_has_factorreport` edge collection + edge definition
-- `recordDDReport(report, userId, walletAddress)` persists to `dd_reports` collection
-- DB unavailable → log warning, return empty string (non-fatal)
+- `lib/agent/planning/tools/risk-engine.ts`:
+  - `compute_atr` `{ asset, period? }` → `{ atr, atrPercentOfEntry, source: "hyperliquid" }` — `fetchCandlesForATR(asset, "1h", 20)` + `computeATR(candles, period ?? 14)` + `fetchMarkPrice(asset)`
+  - `compute_sltp` `{ entry, atr, side, slMultiplier?, tpMultiplier? }` → `{ stopLoss, takeProfit }` — `computeSLTP(entry, atr, side, { slMultiplier: slMultiplier ?? 1.5, tpMultiplier: tpMultiplier ?? 3.0 })`
+  - `compute_position_size` `{ equity, entry, stopLoss, riskPercent }` → `{ positionSizeUsdc, positionSizeContracts }` — `computePositionSize(...)`
+  - `cap_leverage` `{ llmSuggested, maxAllowed }` → `{ leverage }` — `capLeverage(...)`
+- `lib/agent/planning/tools/market-data.ts`:
+  - `get_mark_price` `{ asset }` → `{ markPrice }` (`fetchMarkPrice`)
+  - `get_candles` `{ asset, interval?, count? }` → `{ candles }` (`fetchCandlesForATR`)
+  - `get_risk_thresholds` `{ userId }` → `{ thresholds }` (`getRiskThresholds(userId) ?? envDefaults()`)
+  - `get_graph_patterns` `{ asset, category?, signals? }` → `{ patterns }` (`queryGraphPatterns`, errors → `success: false`)
+  - `get_orderbook_depth` — re-export the existing `getOrderbookDepthTool()` from `lib/agent/tools/onchain/hyperliquid.ts` (no rewrite)
+  - NO `get_equity` tool (resolved §16.4) — orchestrator pre-fetches equity once via `fetchUserEquity(walletAddress)` and passes it through ctx
+- `lib/agent/planning/tools/index.ts`: `buildPlanningToolRegistry(ctx: { walletAddress: string, userId: string, asset: string, equity: number })` → `ToolRegistry` merging risk-engine + market-data + funding + liquidation + web-search registries. Candle fetches use `ctx.asset` when params omit it.
+- All tools: Zod params (`.describe()` each), errors → `{ success: false, error }`, `metadata.source` set.
 
 **Files to create:**
-- `__tests__/lib/db/dd-report-persistence.test.ts` — mock arangojs
+- `lib/agent/planning/tools/risk-engine.ts`
+- `lib/agent/planning/tools/market-data.ts`
+- `lib/agent/planning/tools/index.ts` (stub funding/liquidation/web-search imports after T3 lands)
+- `__tests__/lib/agent/planning/tools/risk-engine.test.ts`
+- `__tests__/lib/agent/planning/tools/market-data.test.ts`
 
-**Files to modify:**
-- `lib/db/arango-types.ts` — add DDReportNode, EDGE_HAS_FACTORREPORT
-- `lib/db/setup.ts` — add new collections + edge definitions
-- `lib/db/graph-memory.ts` — append recordDDReport()
+**Verification:** `npx vitest run __tests__/lib/agent/planning/tools/`
+**Dependencies:** T0 (T1 types optional here — tools only need `ToolDefinition`)
 
-**Verification:** `npx vitest run __tests__/lib/db/dd-report-persistence.test.ts`
+- [ ] risk-engine.ts: 4 tools + tests (mock candles/price, verify ATR/SLTP/size math)
+- [ ] market-data.ts: 5 tools (no get_equity) + tests (mock fetchers, error paths → success:false)
+- [ ] index.ts: buildPlanningToolRegistry merges all + test (ctx includes equity)
+
+---
+
+### T3 — Vibe + web search tools
+
+**Description:** Funding regime, OI/funding divergence, liquidation approximation, Exa web search. Vibe tools derive from `lib/agent/skills/perp-funding-basis` + `liquidation-heatmap` methodology but use only HL public data (honest approximation — HL exposes no liquidation heatmap).
+
+**Acceptance:**
+- `lib/agent/planning/tools/funding.ts`:
+  - `analyze_funding_regime` `{ asset }` → `{ regime: "normal" | "overheated_long" | "overheated_short", fundingRate, openInterest, markPrice, predictedFunding?, notes }` — deterministic: `|fundingRate| > 0.05%` → overheated (long if positive). Data via `fetchOnchainData`/`fetchMarkPrice` from `lib/data/hyperliquid.ts`; predicted funding included from `predictedFundings` endpoint (`HlPerp` venue, first perp dex only) when available (resolved §16.3). Description text says "approx — HL funding snapshot".
+  - `detect_oi_funding_divergence` `{ asset }` → `{ divergence: boolean, priceChangePct, oiChangePct, fundingRate, signal: "bullish" | "bearish" | "neutral", notes }` — price up + OI up + funding strongly positive → neutral/overextended; price up + funding negative → divergence flagged.
+- `lib/agent/planning/tools/liquidation.ts`:
+  - `check_liquidation_zones` `{ asset, entryPrice, stopLoss }` → `{ warning: boolean, zones: Array<{ price, label }>, notes }` — approximation: nearest bid/ask clusters from `getOrderbookDepthTool` as proxy for magnet zones; flags when `stopLoss` sits within 0.5% of a cluster.
+  - `assess_cascade_risk` `{ asset }` → `{ cascadeRisk: "low" | "medium" | "high", notes }` — approximation: combines funding magnitude + OI + orderbook thinness. Label "approximation" in description AND result `notes`.
+- `lib/agent/planning/tools/web-search.ts`:
+  - `web_search` `{ query }` → `{ results: Array<{ title, url, text }> }` — POST `https://api.exa.ai/search` with `{ query, numResults: 5 }`, header `Authorization: Bearer ${process.env.EXA_API_KEY}`, 15s timeout. Missing key → `{ success: false, error: "EXA_API_KEY not configured" }` (fast, non-fatal).
+
+**Files to create:**
+- `lib/agent/planning/tools/funding.ts`
+- `lib/agent/planning/tools/liquidation.ts`
+- `lib/agent/planning/tools/web-search.ts`
+- `__tests__/lib/agent/planning/tools/funding.test.ts`
+- `__tests__/lib/agent/planning/tools/liquidation.test.ts`
+- `__tests__/lib/agent/planning/tools/web-search.test.ts`
+
+**Verification:** `npx vitest run __tests__/lib/agent/planning/tools/`
 **Dependencies:** T0
 
-- [ ] arango-types.ts: DDReportNode + EDGE_HAS_FACTORREPORT
-- [ ] setup.ts: new collections in DOC_COLLECTIONS + EDGE_COLLECTIONS + EDGE_DEFINITIONS
-- [ ] graph-memory.ts: recordDDReport() + tests
+- [ ] funding.ts: 2 tools + threshold tests (mock onchain data)
+- [ ] liquidation.ts: 2 tools + tests (mock orderbook, cluster proximity)
+- [ ] web-search.ts: tool + tests (mock fetch; key-missing path returns success:false)
 
 ---
 
-## Phase 2: Tool Implementations (5 parallel subagents)
+## Phase 2: Subagent + Evaluation (2 parallel subagents)
 
-### T3 — Technical tools: candles + indicators
+### T4 — Perspective subagent wrapper + LLM + prompts
 
-**Description:** Build candle pre-fetch (3 timeframes) + 13 ToolDefinitions wrapping `technicalindicators` + manual calcs.
-
-**Acceptance:**
-- `fetchCandleMap(asset)` → `CandleMap` with `1h` (200), `15m` (200), `1d` (100) candles — uses existing `fetchCandlesByInterval`
-- `getTimeframeCandles(timeframe, candleMap)` returns correct array
-- All 13 tools registered: `get_rsi`, `get_macd`, `get_ema`, `get_sma`, `get_bb`, `get_atr`, `get_stoch`, `get_obv`, `get_ichimoku`, `get_volume`, `get_support_resistance`, `get_fibonacci`, `get_divergence`
-- Each tool: Zod param validation, reads from CandleMap, returns computed values
-- `buildTechnicalRegistry(candleMap)` → `ToolRegistry`
-
-**Files to create:**
-- `lib/agent/tools/technical/candles.ts`
-- `lib/agent/tools/technical/indicators.ts`
-- `lib/agent/tools/technical/index.ts`
-- `__tests__/lib/agent/tools/technical/candles.test.ts`
-- `__tests__/lib/agent/tools/technical/indicators.test.ts`
-- `__tests__/lib/agent/tools/technical/index.test.ts`
-
-**Verification:** `npx vitest run __tests__/lib/agent/tools/technical/`
-**Dependencies:** T1
-
-- [ ] candles.ts: fetchCandleMap + CandleMap type + tests
-- [ ] indicators.ts: 13 ToolDefinitions + tests (Zod params, mock candle data, verify indicator output)
-- [ ] index.ts: buildTechnicalRegistry + tests
-
----
-
-### T4 — Onchain tools: HL + DeFiLlama + CG + explorer
-
-**Description:** Wrap existing HL data fetchers + add DeFiLlama, CoinGecko onchain, and simple explorer tracker as ToolDefinitions.
+**Description:** Thin wrapper around DD `runSubagent()` + planning LLM functions (`plan`/`rePlan`/`aggregate`, deepseek-v4-pro thinking) + prompts (spec §7.2-7.4). NO new loop code.
 
 **Acceptance:**
-- HL tools: `get_funding_rate`, `get_open_interest`, `get_orderbook_depth`, `get_mark_price`
-- DeFiLlama tools: `get_tvl`, `get_protocol_volume`, `get_protocol_fees`
-- CG tools: `get_token_supply`, `get_market_cap`, `get_24h_volume`
-- Explorer tools: `get_whale_txns` (minValue filter), `get_exchange_flow`
-- All tools return `ToolResult` shape, errors → `success: false` + `error` string
-- `buildOnchainRegistry()` → `ToolRegistry`
+- `lib/agent/planning/subagent.ts`:
+  - `runPerspectiveSubagent({ perspective, instruction, asset, ddReport, targetProfitPercent, tools })` → `Promise<PerspectiveReport>`
+  - `llmThink`: closure — calls DD `think()` (from `@/lib/agent/due-diligence/llm`), if result `action === "return"` stashes it; returns result to `runSubagent` unchanged.
+  - `getSystemPrompt`: `makePlanningSystemPrompt({ targetProfitPercent })(perspective, tools, instruction)`
+  - `runSubagent({ factor: perspective, tools, instruction, asset, maxLoops: 5, timeoutMs: 60000, llmThink, getSystemPrompt })`
+  - Mapping: `side: stash?.side ?? "no_trade"`, `entry_price: stash?.entry_price ?? 0`, `suggested_*: stash?.suggested_* ?? 0`, `risk_flags: stash?.risk_flags ?? []`, rest copied from returned `FactorReport`.
+- `lib/agent/planning/llm.ts` ADDS (old `generatePerspective`/`aggregatePerspectives` KEPT, `@deprecated`):
+  - `plan({ ddReport, targetProfitPercent })` → `Promise<PlanningSubagentPlan[]>` — model `DEEPSEEK_PLANNING_MODEL` (default `deepseek-v4-pro`), thinking mode (NO temperature param; `reasoning_effort` from `DEEPSEEK_REASONING_EFFORT`), `json_object`, `max_tokens: 8192`, timeout 60s, retry 1. Failure/parse error → `[]` + console.error. Sanitize: only 3 perspectives, dedupe, priority 1-3.
+  - `rePlan({ ddReport, targetProfitPercent, lowConsensusPerspectives, previousReports })` → `Promise<PlanningSubagentPlan[]>` — same model config.
+  - `aggregate({ reports, ddReport, targetProfitPercent })` → `Promise<PlanningAggregationResult | null>` — same model config; null on failure. Sanitize against `PlanningAggregationResult` (numbers clamped 0-100, `side` enum).
+- `lib/agent/planning/prompts.ts` ADDS (old prompts KEPT until T10):
+  - `makePlanningSystemPrompt({ targetProfitPercent })` → `(factor, tools, instruction) => string` — spec §7.2: perspective analyst persona, "do NOT re-analyze technical indicators (DDReport already did)", tasks 1-4, tool list via `describeZodSchema` (import from DD prompts), return format incl. `side`, `entry_price`, `suggested_*`, `risk_flags`. Requires: "Use at least 2 tools before returning."
+  - `PLAN_PROMPT` (spec §7.3), `AGGREGATE_PROMPT` (spec §7.4 incl. "If 2+ perspectives conclude no_trade, final action is no_trade" + `profit_feasible` + `no_trade_reason`), `REPLAN_PROMPT` (targeted new instructions for low-consensus perspectives, past reports included).
 
 **Files to create:**
-- `lib/agent/tools/onchain/hyperliquid.ts`
-- `lib/agent/tools/onchain/defillama.ts`
-- `lib/agent/tools/onchain/coingecko.ts`
-- `lib/agent/tools/onchain/explorer.ts`
-- `lib/agent/tools/onchain/index.ts`
-- `__tests__/lib/agent/tools/onchain/hyperliquid.test.ts`
-- `__tests__/lib/agent/tools/onchain/defillama.test.ts`
-- `__tests__/lib/agent/tools/onchain/coingecko.test.ts`
-- `__tests__/lib/agent/tools/onchain/explorer.test.ts`
-
-**Verification:** `npx vitest run __tests__/lib/agent/tools/onchain/`
-**Dependencies:** T1
-
-- [ ] hyperliquid.ts: wrap existing HL calls as tools + tests
-- [ ] defillama.ts: DeFiLlama API client + tools + tests
-- [ ] coingecko.ts: wrap CG calls as tools + tests
-- [ ] explorer.ts: simple whale tracker + tests
-- [ ] index.ts: buildOnchainRegistry + tests
-
----
-
-### T5 — Sentiment tools: cryptocurrency.cv + AltMe
-
-**Description:** Create cryptocurrency.cv API client + wrap AltMe as ToolDefinitions.
-
-**Acceptance:**
-- cryptocurrency.cv tools: `get_ai_sentiment`, `get_narratives`, `get_trending_topics`, `get_twitter_sentiment`, `get_ai_research`, `get_news`
-- Base URL for cryptocurrency.cv configurable via env var `CRYPTOCURRENCY_CV_BASE_URL`
-- AltMe tool: `get_fear_greed` — wraps existing `fetchFearGreedIndex`
-- Tools return ToolResult, errors → non-fatal
-- `buildSentimentRegistry()` → `ToolRegistry`
-
-**Files to create:**
-- `lib/agent/tools/sentiment/cryptocurrencycv.ts`
-- `lib/agent/tools/sentiment/altme.ts`
-- `lib/agent/tools/sentiment/index.ts`
-- `__tests__/lib/agent/tools/sentiment/cryptocurrencycv.test.ts`
-- `__tests__/lib/agent/tools/sentiment/altme.test.ts`
-
-**Verification:** `npx vitest run __tests__/lib/agent/tools/sentiment/`
-**Dependencies:** T1
-
-- [ ] cryptocurrencycv.ts: 6 tools + HTTP client + tests
-- [ ] altme.ts: wrap fetchFearGreedIndex as tool + tests
-- [ ] index.ts: buildSentimentRegistry + tests
-
----
-
-### T6 — Fundamental tools: CG metadata + PublicDrop
-
-**Description:** Wrap existing CoinGecko metadata + PublicDrop fetchers as ToolDefinitions.
-
-**Acceptance:**
-- CG metadata tools: `get_coin_metadata`, `get_tokenomics` (supply + unlock), `get_ath`, `get_developer_activity` (GitHub stats)
-- PublicDrop tools: `get_unlock_events`, `get_inflation_data`
-- Tools return ToolResult, errors → non-fatal
-- `buildFundamentalRegistry()` → `ToolRegistry`
-
-**Files to create:**
-- `lib/agent/tools/fundamental/coingecko-metadata.ts`
-- `lib/agent/tools/fundamental/publicdrop.ts`
-- `lib/agent/tools/fundamental/index.ts`
-- `__tests__/lib/agent/tools/fundamental/coingecko-metadata.test.ts`
-- `__tests__/lib/agent/tools/fundamental/publicdrop.test.ts`
-
-**Verification:** `npx vitest run __tests__/lib/agent/tools/fundamental/`
-**Dependencies:** T1
-
-- [ ] coingecko-metadata.ts: wrap as tools + tests
-- [ ] publicdrop.ts: wrap as tools + tests
-- [ ] index.ts: buildFundamentalRegistry + tests
-
----
-
-### T7 — Cross-factor registry + Binance fallback
-
-**Description:** Update main registry to include cross-factor access for Main Agent. Refactor Binance fallback as tools.
-
-**Acceptance:**
-- `getCrossFactorRegistry()` returns ALL tools (technical + onchain + sentiment + fundamental)
-- Binance tools: `get_binance_funding`, `get_binance_oi`, `get_binance_volume`
-- Main Agent can access any tool for cross-verification between factors
-
-**Files to create:**
-- `__tests__/lib/agent/tools/registry-cross.test.ts`
+- `lib/agent/planning/subagent.ts`
+- `__tests__/lib/agent/planning/subagent.test.ts`
 
 **Files to modify:**
-- `lib/agent/tools/registry.ts` — add `getCrossFactorRegistry()`
-- `lib/data/onchain/binance.ts` — add tool wrappers (keep existing functions, add new exports)
+- `lib/agent/planning/llm.ts`
+- `lib/agent/planning/prompts.ts`
+- `__tests__/lib/agent/planning/llm.test.ts` (extend)
+- `__tests__/lib/agent/planning/prompts.test.ts` (extend)
 
-**Verification:** `npx vitest run __tests__/lib/agent/tools/registry-cross.test.ts`
-**Dependencies:** T1, T3, T4, T5, T6
+**Verification:** `npx vitest run __tests__/lib/agent/planning/subagent.test.ts __tests__/lib/agent/planning/llm.test.ts __tests__/lib/agent/planning/prompts.test.ts`
+**Dependencies:** T1, T2, T3
 
-- [ ] getCrossFactorRegistry tests: contains all factor registries
-- [ ] Binance tool wrappers: wrap fetchBinanceOnchain as tools + tests
+- [ ] subagent.ts wrapper: maps FactorReport + stashed extras + tests (mock llmThink: tool_call loop, return with extras, no stash → defaults)
+- [ ] llm.ts: plan() sanitizes 3 perspectives + tests
+- [ ] llm.ts: rePlan() targeted instructions + tests
+- [ ] llm.ts: aggregate() sanitizes result, null on failure + tests
+- [ ] prompts.ts: 4 prompt builders/constants render targetProfitPercent + tool descriptions + tests
 
 ---
 
-## Phase 3: SubAgent ReAct (2 sequential subagents)
+### T5 — Consensus evaluation + circuit breaker + logging
 
-### T8 — SubAgent generic ReAct loop + evaluation
-
-**Description:** Build the generic ReAct loop that each factor subagent uses. + structured evaluation logic.
+**Description:** Deterministic Layer 1 evaluation (spec §8.1), in-memory circuit breaker (§9.7), leveled logging (§9.8).
 
 **Acceptance:**
-- `runSubagent({factor, tools, instruction, asset, maxLoops?, timeoutMs?})` → `FactorReport`
-- Internal: THINK (LLM decides tool_call or return) → ACT (tool.execute) → OBSERVE (record result) → REFLECT (loop or return)
-- Max 3 loops — if LLM still wants more at loop 3, force return with partial data
-- 60s timeout per subagent — force stop, return partial FactorReport
-- Tool failure → record in `FactorReport.errors[]`, continue with other tools
-- `evaluateResults(factorReports, aggregated)` → `{decision, lowConfidenceFactors}`
-- Decision matrix:
-  - >=3 factors confidence >= 60, no contradictions → ACCEPT
-  - 1-2 factors < 60 → RE-DEPLOY
-  - >=3 factors fail → PARTIAL
-  - Contradictions found → RE-DEPLOY cross-verify
+- `lib/agent/planning/evaluate.ts` — `evaluateConsensus(reports: PerspectiveReport[], aggregation: PlanningAggregationResult | null)` → `ConsensusResult`. Decision rules, FIRST MATCH WINS:
+  1. All 3 reports `score === null` (failed) → `FAILED`
+  2. ≥2 reports `side === "no_trade"` → `NO_TRADE` (noTradeReason from aggregation?.no_trade_reason)
+  3. ≥2 reports' `risk_flags` joined-lowercase contain "funding" → `NO_TRADE` (overheating, spec §8.1 row 6)
+  4. All 3 same side (long/short) AND aggregation.confidence_score >= 60 AND profit_feasible === true → `ACCEPT`
+  5. 2/3 same side AND aggregation.confidence_score >= 50 → `ACCEPT`
+  6. Aggregation confidence < 50 OR 1-2 disagree → `RE-DEPLOY` (lowConsensusPerspectives = disagreeing/low-confidence)
+  7. Else → `RE-DEPLOY` (fallback, message explains)
+- `lib/agent/planning/circuit-breaker.ts` — class `PlanningCircuitBreaker` (module singleton):
+  - `recordDDFailure()` / `isDDPanicked()`: ≥3 DD failures within 5 min → reject 60 s (window slides by timestamps)
+  - `recordLLMFailure()` / `isLLMPanicked()`: ≥5 LLM failures within 10 min → reject 120 s
+  - `reset()` for tests. In-memory only (§9.7).
+- `lib/agent/planning/log.ts` — `log(level: "debug" | "info" | "warn" | "error", event: string, data?: Record<string, unknown>)` — console; DEBUG only when `NODE_ENV === "development"`. Event names per spec §9.8 table.
 
 **Files to create:**
-- `lib/agent/due-diligence/subagent.ts`
-- `lib/agent/due-diligence/evaluate.ts`
-- `__tests__/lib/agent/due-diligence/subagent.test.ts`
-- `__tests__/lib/agent/due-diligence/evaluate.test.ts`
+- `lib/agent/planning/evaluate.ts`
+- `lib/agent/planning/circuit-breaker.ts`
+- `lib/agent/planning/log.ts`
+- `__tests__/lib/agent/planning/evaluate.test.ts`
+- `__tests__/lib/agent/planning/circuit-breaker.test.ts`
+- `__tests__/lib/agent/planning/log.test.ts`
 
-**Verification:** `npx vitest run __tests__/lib/agent/due-diligence/subagent.test.ts __tests__/lib/agent/due-diligence/evaluate.test.ts`
-**Dependencies:** T1 (types), T3-T7 (tools)
+**Verification:** `npx vitest run __tests__/lib/agent/planning/evaluate.test.ts __tests__/lib/agent/planning/circuit-breaker.test.ts __tests__/lib/agent/planning/log.test.ts`
+**Dependencies:** T1
 
-- [ ] runSubagent: THINK→ACT loop with ≤3 iterations + tests
-- [ ] runSubagent: tool failure → error metadata, continue + tests
-- [ ] runSubagent: timeout → partial FactorReport + tests
-- [ ] evaluateResults: all decision matrix branches + tests
-
----
-
-### T9 — LLM prompts for ReAct + integration
-
-**Description:** Refactor LLM module for subagent THINK step + main agent PLAN/AGGREGATE/EVALUATE prompts.
-
-**Acceptance:**
-- `think()` — LLM call for subagent THINK step, returns parsed SubAgentThought (action: "tool_call" or "return")
-- `plan()` — LLM call for initial plan: subagent list + instructions
-- `rePlan()` — LLM call for re-deploy plan: targeted instructions for low-confidence factors
-- `aggregate()` — LLM call merging FactorReports → thesis + cross-validation
-- ReAct system prompts include tool descriptions (format per spec §7.2) for each factor
-- Aggregation prompt includes cross-validation + risk/catalyst instructions
-- Main agent thinking mode: `deepseek-v4-pro`, subagent non-thinking: `deepseek-v4-flash`
-- SubAgentThoughtSchema validates LLM output (discriminated union: tool_call | return)
-
-**Files to modify:**
-- `lib/agent/due-diligence/llm.ts` — add think(), plan(), rePlan(), aggregate()
-- `lib/agent/due-diligence/prompts.ts` — add ReAct prompts for all 4 factors + aggregation + evaluation
-- `lib/agent/due-diligence/__tests__/` — integration tests with mock LLM
-
-**Verification:** `npx vitest run __tests__/lib/agent/due-diligence/llm-rethought.test.ts`
-**Dependencies:** T8
-
-- [ ] think() with SubAgentThoughtSchema + tests
-- [ ] plan() + rePlan() + tests
-- [ ] aggregate() + tests
-- [ ] ReAct prompts with formatted tool descriptions + tests
-- [ ] Aggregation + evaluation prompts + tests
+- [ ] evaluateConsensus: all 7 rule branches + tests (first-match ordering asserted)
+- [ ] circuit-breaker: window slide + reject/accept + tests (vi.useFakeTimers)
+- [ ] log.ts: level gating + event payload + tests (spy console)
 
 ---
 
-## Phase 4: Main Agent (2 sequential subagents)
+## Phase 3: Orchestrator (2 sequential subagents)
 
-### T10 — Main Agent Plan-Execute-Reflect
+### T6 — Main agent runPlanningAgent()
 
-**Description:** Build DDAgentMain that coordinates the full swarm: plans, deploys subagents in parallel, aggregates, evaluates, re-deploys if needed.
+**Description:** Plan-Execute-Reflect orchestrator. Mirrors `runDDAgent()` loop structure (see `lib/agent/due-diligence/agent.ts:149-288`).
 
 **Acceptance:**
-- `runDDAgent({asset, category, maxLoops?})` → `DDReport`
+- `runPlanningAgent(params: PlanningAgentInput)` → `PlanningAgentOutput`
+- Step 0: `const category = getCategory(params.asset)` (from `@/lib/asset-categories`); missing → throw `PlanningError("Unknown asset")`. `ddReport = await runDDAgent({ asset, category, userId, walletAddress })`; failure → throw `PlanningError("PLANNING_FAILED")` with `phase: "dd"` detail. **Equity pre-fetch** (resolved §16.4): `equity = await fetchUserEquity(walletAddress).catch(() => 0)` once, before the loop — used for tool registry ctx + position sizing.
 - Loop (max 5):
-  1. PLAN: LLM generates subagent list + instructions
-  2. EXECUTE: `Promise.all(runSubagent())` for all active factors
-  3. AGGREGATE: LLM merge + `computeDeterministicScore()`
-  4. EVALUATE: structured check from evaluate.ts
-  5. RE-DEPLOY or ACCEPT/PARTIAL/FAILED
-- `computeDeterministicScore()` — weighted composite from FactorReport scores
-- `buildFinalReport()` — merges FactorReports + LLM aggregation + deterministic scoring
-- Happy path: all 4 factors OK → complete with overallScore, overallConfidence
-- Re-deploy: low confidence → second loop with targeted instruction → ACCEPT
-- All fail: status = "failed"
-- Processing time tracked across all loops
+  1. **PLAN:** first iteration `plan({ ddReport, targetProfitPercent })`; empty result → fallback = all 3 perspectives with generic instruction. Later iterations: `rePlan(...)` for `lowConsensusPerspectives` only.
+  2. **EXECUTE:** `Promise.all` over planned perspectives → `runPerspectiveSubagent(...)` with `buildPlanningToolRegistry({ walletAddress, userId, asset, equity })`. Map-dedupe reports per perspective (pattern: agent.ts:193-196).
+  3. **AGGREGATE:** `aggregate({ reports, ddReport, targetProfitPercent })`; null → keep previous, record error, `profit_feasible: false` fallback context.
+  4. **EVALUATE:** `evaluateConsensus(reports, aggregation)`.
+  5. ACCEPT → break. NO_TRADE → build plan `action: "NO_TRADE"`, return. FAILED → throw `PlanningError("PLANNING_FAILED")` (reports in detail). RE-DEPLOY → count per perspective; `reDeployCounts[p] >= 2` → force ACCEPT (best available, spec §8.1 last row); else continue loop. Loop exhausted without ACCEPT → status `"partial"`, best-effort plan.
+- Layer 2 (ACCEPT): `thresholds = await getRiskThresholds(userId)` (fallback `envDefaults()`), `autonomyGate(aggregation.confidence_score, aggregation.position_size_usdc, thresholds)`.
+- Build TradePlan via `TradePlanSchema.parse`:
+  - `action`: side `no_trade` → `"NO_TRADE"`; else `"LONG"` / `"SHORT"`
+  - `side`: aggregation.side if long/short else `"long"` (schema requires it)
+  - `entry_price`: aggregation.entry_price; `stop_loss`/`take_profit`: aggregation values; for NO_TRADE: SL = entry*0.99, TP = entry*1.01, `position_size_usdc: 0`, `leverage: 1` (`// reason:` comment explains the encoding)
+  - `position_size_contracts` via `computePositionSize(equity, entry, stopLoss, thresholds.risk_per_trade_percent)` (equity from `fetchUserEquity(walletAddress)`, non-fatal → 0)
+  - `confidence_score`, `confidence_breakdown`, `thesis`, `reasoning`, `risk_flags`, `graph_patterns_used: []`, `consensus_alignment`, `processingTimeMs`, `iterations`, `timestamp`
+- Persistence: after ACCEPT, non-blocking `recordDecision({...} as any).catch(warn)` (mirror DD recordDDReport pattern, agent.ts:228-234).
+- Timing tracked per phase (ddMs, planMs, executeMs, aggregateMs, evaluateMs, totalMs).
 
 **Files to create:**
-- `lib/agent/due-diligence/agent.ts`
-- `__tests__/lib/agent/due-diligence/agent.test.ts`
+- `lib/agent/planning/agent.ts`
+- `__tests__/lib/agent/planning/agent.test.ts`
 
-**Verification:** `npx vitest run __tests__/lib/agent/due-diligence/agent.test.ts`
-**Dependencies:** T8, T9
+**Verification:** `npx vitest run __tests__/lib/agent/planning/agent.test.ts`
+**Dependencies:** T4, T5
 
-- [ ] runDDAgent happy path + tests
-- [ ] runDDAgent re-deploy path + tests
-- [ ] runDDAgent partial + failed paths + tests
-- [ ] computeDeterministicScore + buildFinalReport + tests
+- [ ] Step 0: DD auto-call + unknown asset + DD failure paths + equity pre-fetch + tests (mock runDDAgent)
+- [ ] Happy path: 3 perspectives agree → ACCEPT → TradePlan with action LONG/SHORT + tests
+- [ ] RE-DEPLOY path: 1-2 disagree → second loop → ACCEPT; reDeployCounts cap → forced accept + tests
+- [ ] NO_TRADE path: 2+ no_trade → action NO_TRADE + tests
+- [ ] FAILED path: all failed → PlanningError + tests
+- [ ] Layer 2 gate + TradePlan build (incl. NO_TRADE encoding) + tests
 
 ---
 
-### T11 — Pipeline wrapper refactor
+### T7 — Pipeline wrapper refactor
 
-**Description:** Refactor `runDDPipeline()` into a thin wrapper calling `runDDAgent()`. Maintain interface compatibility.
+**Description:** Thin wrapper, mirrors `lib/agent/due-diligence/pipeline.ts`.
 
 **Acceptance:**
-- `runDDPipeline(input)` calls `runDDAgent()` internally instead of current linear flow
-- Output includes new DDReport fields (factorReports, overallScore, etc.)
-- `DDPipelineOutput.timing` updated to track agent phases (planMs, executeMs, aggregateMs vs old fetchMs/llmMs)
-- Old data-fetch logic removed from pipeline (now handled by subagent tools)
+- `runPlanningPipeline(input: { asset: string, userId: string, walletAddress: string, targetProfitPercent?: number })` → `{ report: TradePlan, timing: { totalMs, agentMs } }`
+  - `targetProfitPercent` defaults to 100.
+  - Calls `runPlanningAgent(...)`; returns `report` (validated `TradePlanSchema.parse`).
+  - Errors rethrown as `PlanningError` with message prefix `Planning pipeline failed for <asset>: ...` (keep `PlanningError` class).
+- `lib/agent/pipeline.ts` barrel unchanged (already exports `runPlanningPipeline`).
 
 **Files to modify:**
-- `lib/agent/due-diligence/pipeline.ts` — complete refactor
-- `lib/agent/pipeline.ts` — barrel export (verify it still exports runDDPipeline)
+- `lib/agent/planning/pipeline.ts` (full rewrite)
+- `__tests__/lib/agent/planning/pipeline.test.ts` (full rewrite — new input shape, mock agent)
 
-**Files to create:**
-- `__tests__/lib/agent/due-diligence/pipeline.test.ts`
+**Verification:** `npx vitest run __tests__/lib/agent/planning/pipeline.test.ts` + `npm run typecheck`
+**Dependencies:** T6
 
-**Verification:** `npx vitest run __tests__/lib/agent/due-diligence/pipeline.test.ts`
-**Dependencies:** T10
-
-- [ ] pipeline.ts: thin wrapper calling runDDAgent + tests
-- [ ] Timing: planMs/executeMs/aggregateMs tracked + tests
+- [ ] pipeline.ts: thin wrapper + timing + tests
+- [ ] typecheck clean (old route.ts consumers still compile against new signature — fix imports in T8)
 
 ---
 
-## Phase 5: Cutover (3 tasks, last 2 parallel)
+## Phase 4: Cutover (first 2 parallel, then T10)
 
-### T12 — Update API route
+### T8 — API route + docs
 
-**Description:** Update `/api/agent/dd` route to accept new input format and return new DDReport.
+**Description:** New request contract (spec §12) + error contract (§9.6) + circuit breaker integration.
 
 **Acceptance:**
-- POST with `{asset, userId}` returns 200 with new DDReport
-- POST without required fields returns 400
-- Error cases: LLM failure → 500, asset not found → 400
+- `POST /api/agent/planning` body: `{ asset: string, userId: string, walletAddress: string, targetProfitPercent?: number }`
+  - zod: `asset` non-empty string; `targetProfitPercent` `z.number().positive().max(1000).optional()` (resolved §16.5 — decimal allowed: `100`, `76`, `20.5`; minus, zero, and fraction strings like "1/2" rejected)
+  - 400 on missing/invalid fields (`{ error: "asset, userId, and walletAddress required" }` / zod issues)
+- Circuit breaker: `isDDPanicked()` or `isLLMPanicked()` → 503 `{ error: "PLANNING_UNAVAILABLE", retryAfterSeconds }`
+- Success → 200 `{ report: TradePlan, timing, iterations, status }` (NO_TRADE is a normal 200 with `report.action === "NO_TRADE"`)
+- `runPlanningPipeline` throws → 500 with spec §9.6 shapes: `PlanningError` name `PLANNING_FAILED` → `{ error: "PLANNING_FAILED", message, details: { phase: "dd" | "orchestrator" | "execute" | "aggregate" | "evaluate", reports, aggregation, ddReport }, processingTimeMs }`; `CONSENSUS_FAILED` similarly.
+- Record `circuitBreaker.recordDDFailure()` when phase "dd" fails, `recordLLMFailure()` on LLM-layer errors (wrap in try/catch).
+- `docs/api-documentation.md`: update planning endpoint request/response examples (new body, error shapes).
 
 **Files to modify:**
-- `app/api/agent/dd/route.ts`
+- `app/api/agent/planning/route.ts`
+- `docs/api-documentation.md`
+- `__tests__/app/api/agent/planning/route.test.ts` (rewrite)
 
-**Files to create:**
-- `__tests__/app/api/agent/dd/route.test.ts` — mock pipeline
+**Verification:** `npx vitest run __tests__/app/api/agent/planning/`
+**Dependencies:** T7
 
-**Verification:** `npx vitest run __tests__/app/api/agent/dd/`
-**Dependencies:** T11
-
-- [ ] route.ts: updated to call new pipeline + tests
-- [ ] Error handling: 400 for missing fields, 500 for pipeline failure + tests
+- [ ] route.ts: new body validation + 400 cases + tests
+- [ ] route.ts: 503 breaker cases + tests (mock breaker state)
+- [ ] route.ts: PLANNING_FAILED / CONSENSUS_FAILED shapes + tests
+- [ ] api-documentation.md updated
 
 ---
 
-### T13 — Update consumers
+### T9 — Update consumers
 
-**Description:** Update all DDReport consumers to use new field names.
+**Description:** Dashboard + hooks + execution guard (spec §16.6: breaking change accepted).
 
 **Acceptance:**
-- Planning pipeline reads `summary` (was `aggregated_thesis`), `overallConfidence` (was `confidence_score`)
-- Dashboard DD section reads `summary` + `overallConfidence` from new DDReport
-- Trade pipeline DDReport reads updated if any
-- Old field names removed (only forward-compat as deprecated aliases in types)
-- All consumer tests still pass
+- `hooks/use-planning.ts` — request body becomes `{ asset, userId, walletAddress, targetProfitPercent }` (no ddReport); exposes `targetProfitPercent` state (default 100).
+- `components/dashboard/plan-section.tsx` — takes `asset` (from DD section's analyzed asset) + target profit input; calls planning on asset; when `plan.action === "NO_TRADE"` show reason and disable approve/execute buttons.
+- `lib/agent/execution/pipeline.ts` — guard at top: `if (tradePlan.action === "NO_TRADE") throw new ExecutionError("Cannot execute a NO_TRADE plan")` (defensive; `action` is optional in schema → treat missing as LONG).
+- Run full test suite; fix any test referencing old planning input.
 
 **Files to modify:**
-- `lib/agent/planning/pipeline.ts` — update field references
-- `lib/agent/execution/pipeline.ts` — update if reads DDReport fields
-- `lib/agent/trade/*.ts` — update if reads DDReport fields
-- `components/dashboard/dd-section.tsx` — update `aggregated_thesis` → `summary`, `confidence_score` → `overallConfidence`
-- `hooks/use-dd.ts` (if exists) — update types
+- `hooks/use-planning.ts`
+- `components/dashboard/plan-section.tsx`
+- `lib/agent/execution/pipeline.ts`
+- affected tests under `__tests__/`
 
-**Verification:** `npm test` (full suite)
-**Dependencies:** T11
+**Verification:** `npm test`
+**Dependencies:** T7
 
-- [ ] planning pipeline: updated field names + tests
-- [ ] dashboard: dd-section reads new fields
-- [ ] All other consumers updated
+- [ ] use-planning.ts: new body + tests if present
+- [ ] plan-section.tsx: asset + target profit + NO_TRADE handling
+- [ ] execution guard: NO_TRADE throws + test
+- [ ] Full `npm test` green (no regression)
 
 ---
 
-### T14 — Cleanup + final verification
+### T10 — Cleanup + final verification
 
-**Description:** Remove old linear pipeline code, run full test suite + lint + typecheck.
+**Description:** Delete old linear-pipeline code (spec §15), run full gate.
 
 **Acceptance:**
-- Old `fetchAllRawData()` removed from providers.ts if no other consumers
-- Old `analyzeSection()`, `synthesizeSections()`, old prompts removed from due-diligence/llm.ts, prompts.ts
-- `npm test` passes (all tests)
-- `npm run lint` passes
-- `npm run typecheck` passes (zero TS errors)
-- No dead code left
+- Removed from `lib/agent/planning/llm.ts`: `generatePerspective`, `aggregatePerspectives`
+- Removed from `lib/agent/planning/prompts.ts`: `PERSPECTIVE_SYSTEM_PROMPTS`, `PERSPECTIVE_USER_PROMPT`, `AGGREGATOR_SYSTEM_PROMPT`, `AGGREGATOR_USER_PROMPT`
+- Removed from `lib/agent/planning/types.ts`: `PerspectiveResult`/`PerspectiveResultSchema`, `PlanningPipelineInput`, `AggregatedReasoning` (keep `PerspectiveSchema`, `PlanningAggregationResult`)
+- No dead imports: `rg "generatePerspective|aggregatePerspectives|PERSPECTIVE_SYSTEM_PROMPTS|PERSPECTIVE_USER_PROMPT|AGGREGATOR_SYSTEM|AGGREGATOR_USER|PerspectiveResult|PlanningPipelineInput|AggregatedReasoning" lib app components hooks` → zero hits
+- `gate.ts` and `risk-engine.ts` KEPT (unchanged)
 
 **Verification:**
+- [ ] Dead-code rg sweep clean
 - [ ] `npm test` — all tests pass
 - [ ] `npm run lint` — zero errors
 - [ ] `npm run typecheck` — zero errors
-- [ ] Verify no dead old functions remain
+- [ ] `npm run build` — succeeds (smoke)
 
-**Dependencies:** T12, T13
+**Dependencies:** T8, T9
 
 ---
 
 ## Final Acceptance Gate
 
-- [ ] All 14 tasks completed
+- [ ] All 11 tasks completed (T0-T10)
 - [ ] Full test suite passes (`npm test`)
 - [ ] TypeScript clean (`npm run typecheck`)
 - [ ] Lint clean (`npm run lint`)
-- [ ] No dead code in due-diligence/ directory
-- [ ] Planning Agent + Execution Agent tests still pass (no regression)
+- [ ] No dead code in `lib/agent/planning/`
+- [ ] DD Agent + Execution Agent tests still pass (no regression)
+- [ ] POST /api/agent/planning accepts `{ asset, userId, walletAddress, targetProfitPercent }` and auto-runs DD internally

@@ -179,13 +179,14 @@ These let the LLM do "what-if" thinking:
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `get_mark_price` | Current mark price from Hyperliquid | `asset` |
-| `get_equity` | User account equity from Hyperliquid | `walletAddress` |
 | `get_candles` | OHLCV candles for ATR calculation | `asset`, `interval`, `count` |
 | `get_risk_thresholds` | User risk thresholds from DB | `userId` |
 | `get_graph_patterns` | Historical graph patterns from ArangoDB | `asset`, `category`, `signals` |
 | `get_orderbook_depth` | Bid/ask depth from Hyperliquid | `asset`, `depth` |
 
 All data from existing providers in `lib/data/hyperliquid.ts` and `lib/db/`.
+
+> **Equity (resolved §16.4):** no `get_equity` tool. The orchestrator pre-fetches equity once via public `fetchUserEquity(walletAddress)` and passes it through the tool registry context `{ walletAddress, userId, asset, equity }`.
 
 ### 4.4 Exa Web Search Tool
 
@@ -195,15 +196,17 @@ All data from existing providers in `lib/data/hyperliquid.ts` and `lib/db/`.
 
 LLM can use this to validate against real-world events. Example: "BTC news today" -> finds that Fed just announced rate hike -> adjusts confidence or adds risk flag.
 
+Requires `EXA_API_KEY` (optional, added to `.env.example` — resolved §16.1). Missing key → `{ success: false, error: "EXA_API_KEY not configured" }` returned fast; subagent continues with remaining tools.
+
 ### 4.5 Vibe-Trading Inspired Tools
 
 From skills downloaded to `lib/agent/skills/`. These are new tools built from the methodology in the SKILL.md files.
 
 | Tool | Source Skill | Description | Parameters |
 |------|-------------|-------------|------------|
-| `analyze_funding_regime` | perp-funding-basis | Check if funding is overheating (bullish carry, bearish sentiment, leveraged long buildup). Overheating = NO_TRADE signal. | `asset` |
-| `check_liquidation_zones` | liquidation-heatmap | Check if SL/TP levels overlap with known liquidation clusters. Returns warning if entry is near a magnet zone. | `asset`, `entryPrice`, `stopLoss` |
-| `assess_cascade_risk` | liquidation-heatmap | Check if multiple liquidation clusters are stacked within 5% of each other. High risk = reject entry or widen SL. | `asset` |
+| `analyze_funding_regime` | perp-funding-basis | Check if funding is overheating (bullish carry, bearish sentiment, leveraged long buildup). Overheating = NO_TRADE signal. Uses current funding + OI + mark; includes predicted funding (`HlPerp` venue via `predictedFundings` endpoint) when available. | `asset` |
+| `check_liquidation_zones` | liquidation-heatmap | Check if SL/TP levels overlap with known liquidation clusters. Returns warning if entry is near a magnet zone. **Approximation** — HL has no public liquidation data (resolved §16.2); orderbook clusters used as proxy. | `asset`, `entryPrice`, `stopLoss` |
+| `assess_cascade_risk` | liquidation-heatmap | Check if multiple liquidation clusters are stacked within 5% of each other. High risk = reject entry or widen SL. **Approximation** — funding magnitude + OI + orderbook thinness as proxy. | `asset` |
 | `detect_oi_funding_divergence` | perp-funding-basis | Compare price action vs open interest + funding rate. Divergence = trend may reverse. | `asset` |
 
 ### 4.6 Tool Access
@@ -711,7 +714,7 @@ The `ddReport` is no longer in the request body. Planning agent now calls DD age
 
 8. **Input format:** Planning API no longer receives `ddReport`. Body is `{ asset, userId, walletAddress, targetProfitPercent }`. Agent auto-calls DD agent as step 0.
 
-9. **targetProfitPercent:** Integer percentage (e.g. 100 = 100%, not 0.01). Used by aggregator to validate whether the plan's expected profit meets user expectations.
+9. **targetProfitPercent:** Decimal percentage (`100` = 100%, `20.5` = 20.5%). Validated `0 < v <= 1000` (resolved §16.5) — no minus, no zero, no fraction strings. Used by aggregator to validate whether the plan's expected profit meets user expectations.
 
 ---
 
@@ -772,22 +775,22 @@ npm test
 
 ---
 
-## 16. Open Questions
+## 16. Resolved Questions
 
-1. **Exa search implementation:** Exa MCP server needs API key. Is the user's Exa key already configured in the project, or does it need to be set up? The tool can be built but won't work without a key.
+1. **Exa search implementation:** Exa key is NOT configured in the project. `EXA_API_KEY` (optional) added to `.env.example` for the user to copy into the main `.env`. The tool is built against `https://api.exa.ai/search` (POST, Bearer, `numResults: 5`, 15s timeout) and returns `{ success: false, error: "EXA_API_KEY not configured" }` fast when the key is missing — subagent continues with remaining tools.
 
-2. **Liquidation data source:** Vibe-Trading's `liquidation-heatmap` skill assumes access to exchange liquidation data APIs (OKX, Binance). Hyperliquid's public API does have liquidation data, but format/availability should be verified before implementing `check_liquidation_zones` and `assess_cascade_risk`.
+2. **Liquidation data source (verified against Hyperliquid docs):** Hyperliquid's public API has NO public liquidation data. The info endpoints (`meta`, `metaAndAssetCtxs`, `clearinghouseState`, `fundingHistory`, `predictedFundings`, `userFills`, `l2Book`, `recentTrades`, `activeAssetData`) expose no liquidation events or heatmap. `check_liquidation_zones` and `assess_cascade_risk` therefore use orderbook + OI + funding proxies and label themselves "approximation" in tool descriptions and result payloads.
 
-3. **Funding rate data:** Hyperliquid API returns current funding rate via the info endpoint. The `analyze_funding_regime` tool needs to check: does HL also provide predicted funding rate (next payment estimate)? Or only current rate?
+3. **Funding rate data (verified against Hyperliquid docs):** HL provides BOTH. Current rate via `metaAndAssetCtxs` → `ctx.funding` (already used by `getFundingRateTool`), and predicted funding (next payment estimate, per venue `BinPerp`/`HlPerp`/`BybitPerp` with `nextFundingTime`) via the `predictedFundings` info endpoint (first perp dex only). `analyze_funding_regime` uses current funding + OI + mark; predicted funding (`HlPerp` venue) included as an extra field when available.
 
-4. **User equity fetch:** The `get_equity` tool calls Hyperliquid's user-specific endpoint which requires authentication. Should the tool execute with the user's wallet (implying the API route has access to user credentials), or does the orchestrator pre-fetch equity and pass it as context?
+4. **User equity fetch:** `get_equity` tool is DROPPED. The orchestrator pre-fetches equity once via public `fetchUserEquity(walletAddress)` (no credentials needed) and passes it through the tool registry context `{ walletAddress, userId, asset, equity }`. No `get_equity` tool exists.
 
-5. **targetProfitPercent validation:** Should there be a maximum cap (e.g. 1000%) to prevent unrealistic targets? Or trust the LLM to flag "impossible" targets on its own?
+5. **targetProfitPercent validation:** Hard cap 1000 (0 < v <= 1000). Must be a plain decimal number — no minus, no zero, no fraction strings like "1/2" or "75%". Decimal point allowed (`100`, `76`, `20.5` valid). Route zod-validates `z.number().positive().max(1000)`; invalid values → 400.
 
-6. **Existing consumers of planning API:** Should the old endpoint format (`{ ddReport, userId, walletAddress }`) still be accepted for backward compatibility, or is a breaking change acceptable (consumers must update to new format)?
+6. **Existing consumers of planning API:** Breaking change accepted. Old body format `{ ddReport, userId, walletAddress }` is NOT accepted; consumers updated in the same release (T9). Old format → 400.
 
-7. **DD Agent dependency:** If the auto-call to DD agent in step 0 takes 30-60 seconds, the planning API total latency could be 90-120 seconds. Is this acceptable? Or should DD and planning be decoupled (user runs DD first, then planning)?
+7. **DD Agent dependency:** Coupled is fine. DD failure fails planning immediately (`PLANNING_FAILED`, phase "dd") — no 90-120s wait on error. Circuit breaker (spec §9.7) is the safety net: 3 DD failures/5min → reject 60s, 5 LLM failures/10min → reject 120s, so users never wait long for a repeated error.
 
-8. **Subagent dedup:** If the orchestrator re-deploys a perspective with a new instruction, should the new result replace the old one (like DD does), or should both results be kept for the aggregator to compare?
+8. **Subagent dedup:** New report REPLACES the old one per perspective (map dedupe, mirroring DD `agent.ts` line 193-196). Aggregator always sees the latest report per perspective.
 
-9. **Testing with Vibe-Trading tools:** The liquidation and funding tools depend on live Hyperliquid API data. Should integration tests use mock data, or should there be a way to record/replay API responses?
+9. **Testing with Vibe-Trading tools:** Integration tests use mock data (mock fetch/HL client). No record/replay infrastructure. All HTTP, LLM, and arangojs calls mocked, same as DD refactor tests.
