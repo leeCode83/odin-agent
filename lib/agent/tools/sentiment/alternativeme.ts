@@ -25,12 +25,10 @@ export const getGlobalMarket: ToolDefinition<z.ZodObject<Record<string, never>>>
   },
 }
 
-export const getAssetMomentum: ToolDefinition<
-  z.ZodObject<{ coinId: z.ZodNumber }>
-> = {
+export const getAssetMomentum: ToolDefinition<z.ZodObject<{ coinId: z.ZodCoercedNumber }>> = {
   name: "get_asset_momentum",
-  description: "Fetches price change percentages (1h/24h/7d) and volume for a specific asset from Alternative.me. Use this to gauge asset-level sentiment momentum.",
-  parameters: z.object({ coinId: z.number().describe("Alternative.me coin ID (see https://api.alternative.me/v2/ticker/)") }),
+  description: "Fetches price change percentages (1h/24h/7d) and volume for a specific asset from Alternative.me. Use this to gauge asset-level sentiment momentum. coinId is the NUMERIC Alternative.me ticker id: bitcoin=1, ethereum=1027, solana=5426, avalanche-2=5805, dogecoin=74, xrp=2.",
+  parameters: z.object({ coinId: z.coerce.number().int().positive().describe("Alternative.me numeric coin ID (e.g. 1 for bitcoin, 1027 for ethereum, 5426 for solana)") }),
   execute: async (params) => {
     const start = Date.now()
     try {

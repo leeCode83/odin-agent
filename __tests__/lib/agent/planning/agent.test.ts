@@ -208,6 +208,56 @@ describe("runPlanningAgent", () => {
     })
   })
 
+  describe("step 0 — DD report quality gate", () => {
+    it("throws PlanningError with phase dd when the DD report status is failed", async () => {
+      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "failed" })
+
+      const err = await captureError(runPlanningAgent(INPUT))
+
+      expect(err).toBeInstanceOf(PlanningError)
+      expect((err as Error).message).toBe("PLANNING_FAILED")
+      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
+      expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
+    })
+
+    it("throws PlanningError with phase dd when the DD report status is partial", async () => {
+      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "partial" })
+
+      const err = await captureError(runPlanningAgent(INPUT))
+
+      expect(err).toBeInstanceOf(PlanningError)
+      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
+      expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
+    })
+
+    it("throws PlanningError with phase dd when every factor section has a null score", async () => {
+      runDDAgentMock.mockResolvedValue({
+        ...DD_REPORT,
+        status: "complete",
+        sections: {
+          technical: { score: null, summary: null, signals: [] },
+          onchain: { score: null, summary: null, signals: [] },
+          sentiment: { score: null, summary: null, signals: [] },
+          fundamental: { score: null, summary: null, signals: [] },
+        },
+      })
+
+      const err = await captureError(runPlanningAgent(INPUT))
+
+      expect(err).toBeInstanceOf(PlanningError)
+      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
+      expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
+    })
+
+    it("proceeds when the DD report has usable factor scores", async () => {
+      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "complete" })
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("complete")
+    })
+  })
+
   describe("happy path — ACCEPT", () => {
     it("accepts on full consensus and builds a LONG trade plan", async () => {
       const out = await runPlanningAgent(INPUT)

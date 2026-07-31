@@ -252,6 +252,29 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   }
   timing.ddMs = Date.now() - ddT0
 
+  // --- Step 0b: DD report quality gate (user-requested) ---
+  // reason: a "successful" DD run can still return a broken report (all factor
+  // sections null-scored, or status failed/partial). Planning on garbage input
+  // wastes minutes of LLM calls and always ends in a meaningless NO_TRADE, so
+  // break out early — the route maps phase "dd" to recordDDFailure() and the
+  // circuit breaker rejects subsequent requests for the cooldown window.
+  const usableScores = Object.values(ddReport.sections ?? {}).filter(
+    (s) => typeof s.score === "number"
+  ).length
+  if (ddReport.status === "failed" || ddReport.status === "partial" || usableScores === 0) {
+    throw new PlanningError(
+      "PLANNING_FAILED",
+      {
+        phase: "dd",
+        reports: [],
+        aggregation: null,
+        ddReport,
+        message: `DD report insufficient quality — status: ${ddReport.status ?? "unknown"}, usable factor scores: ${usableScores}`,
+      },
+      Date.now() - t0
+    )
+  }
+
   // reason: equity is pre-fetched once (spec §16.4) — no get_equity tool —
   // and shared through the tool registry ctx + position sizing.
   const equity = await fetchUserEquity(params.walletAddress).catch(() => 0)

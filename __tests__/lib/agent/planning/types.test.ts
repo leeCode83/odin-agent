@@ -74,6 +74,7 @@ describe("PerspectiveReportSchema", () => {
 
   it("rejects missing required entry_price", () => {
     const { entry_price: _omitted, ...rest } = validReport
+    void _omitted
     expect(() => PerspectiveReportSchema.parse(rest)).toThrow()
   })
 })

@@ -27,6 +27,41 @@ function getClient(): OpenAI | null {
 }
 
 /**
+ * @function normalizeThought
+ * @description Salvages common LLM output drift before strict schema parsing.
+ *   The discriminated union only accepts exactly "tool_call" | "return" —
+ *   LLMs drift on this field (null, "", "conclude", "EXTRACT", ...) and any
+ *   unrecognized value would discard a valid analysis into the score-0
+ *   fallback. Only a tool_call alias survives as "tool_call"; EVERYTHING else
+ *   becomes "return" so the subagent yields a usable report. Also defaults a
+ *   missing `conclusion` string on return thoughts to "".
+ * @param {unknown} raw - The parsed (but unvalidated) LLM output.
+ * @returns {unknown} The normalized output, ready for SubAgentThoughtSchema.
+ */
+function normalizeThought(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw
+  const p = raw as Record<string, unknown>
+  const action = typeof p.action === "string" ? p.action.toLowerCase() : ""
+  if (action === "tool_call" || ["call_tool", "use_tool", "execute_tool", "tool"].includes(action)) {
+    p.action = "tool_call"
+  } else {
+    // reason: unknown/null/missing action cannot be a tool call — defaulting
+    // to "return" keeps the analysis instead of failing into the fallback.
+    p.action = "return"
+  }
+  // reason: LLMs frequently omit "conclusion" on return thoughts; the schema
+  // requires a string, so default it rather than discarding the whole thought.
+  if (p.action === "return") {
+    if (typeof p.conclusion !== "string") p.conclusion = ""
+    if (typeof p.score !== "number") p.score = 0
+    if (typeof p.confidence !== "number") p.confidence = 0
+    if (!Array.isArray(p.signals)) p.signals = []
+    if (typeof p.reasoning !== "string") p.reasoning = "No reasoning provided — LLM returned incomplete response"
+  }
+  return raw
+}
+
+/**
  * @function think
  * @description LLM call for the subagent THINK step. Sends a message array (system prompt + context)
  *   and returns a parsed SubAgentThought (tool_call or return). Falls back to a safe default on failure.
@@ -39,38 +74,76 @@ export async function think(
   const c = getClient()
   if (!c) return { action: "return", score: 0, confidence: 0, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
 
+  // reason: the user message always carries {"factor": "...", ...} — extract it
+  // so failure logs identify which subagent the LLM call belonged to.
+  const userMsg = messages.find((m) => m.role === "user")
+  let factor = "unknown"
+  try {
+    const parsed = userMsg ? JSON.parse(userMsg.content) : null
+    if (parsed && typeof parsed.factor === "string") factor = parsed.factor
+  } catch { /* non-JSON user message — keep "unknown" */ }
+
   const fallback = { action: "return" as const, score: 0, confidence: 0, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
 
-  let content: string
-  try {
-    const response = await c.chat.completions.create(
-      {
-        model: DEEPSEEK_MODEL,
-        temperature: 0.3,
-        max_tokens: 2048,
-        response_format: { type: "json_object" },
-        messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-      },
-      { timeout: 30_000, maxRetries: 1 }
-    )
-    content = response.choices?.[0]?.message?.content || "{}"
-  } catch (err) {
-    console.error("[DD:think] API error:", err instanceof Error ? err.message : String(err))
-    return fallback
+  const callLLM = async (): Promise<string | null> => {
+    try {
+      const response = await c.chat.completions.create(
+        {
+          model: DEEPSEEK_MODEL,
+          temperature: 0.3,
+          max_tokens: 4096,
+          response_format: { type: "json_object" },
+          messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+        },
+        { timeout: 45_000, maxRetries: 1 }
+      )
+      const content = response.choices?.[0]?.message?.content || ""
+      if (!content.trim()) {
+        console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_MODEL)
+        return null
+      }
+      return content
+    } catch (err) {
+      console.error("[DD:think] API error. factor=%s:", factor, err instanceof Error ? err.message : String(err))
+      return null
+    }
   }
+
+  let content = await callLLM()
+  if (content === null) return fallback
 
   let parsed: unknown
   try {
     parsed = JSON.parse(content)
   } catch {
-    console.error("[DD:think] JSON parse failed. Raw (first 500 chars):", content?.slice(0, 500))
+    console.error("[DD:think] JSON parse failed. factor=%s. Raw (first 500 chars):", factor, content?.slice(0, 500))
+    // Truncated responses are usually transient — retry once before falling back.
+    await new Promise((r) => setTimeout(r, 500))
+    content = await callLLM()
+    if (content === null) return fallback
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      // Retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
+      const repaired = repairJSON(content)
+      if (!repaired) {
+        console.error("[DD:think] JSON repair failed. factor=%s", factor)
+        return fallback
+      }
+      parsed = repaired
+    }
+  }
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed as Record<string, unknown>).length === 0) {
+    console.error("[DD:think] LLM returned empty object {}. factor=%s — treating as failed response.", factor)
     return fallback
   }
 
   try {
-    return SubAgentThoughtSchema.parse(parsed)
+    return SubAgentThoughtSchema.parse(normalizeThought(parsed))
   } catch (err) {
-    console.error("[DD:think] Schema validation failed:", err)
+    console.error("[DD:think] Schema validation failed. factor=%s:", factor, err)
+    console.error("[DD:think] Raw LLM output (first 300 chars):", content?.slice(0, 300))
     return fallback
   }
 }
@@ -96,14 +169,14 @@ export async function plan(params: {
       {
         model: DEEPSEEK_MODEL,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: 4096,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: PLAN_PROMPT },
           { role: "user", content: JSON.stringify({ asset: params.asset, category: params.category }) },
         ],
       },
-      { timeout: 30_000, maxRetries: 1 }
+      { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
@@ -139,14 +212,14 @@ export async function rePlan(params: {
       {
         model: DEEPSEEK_MODEL,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: 4096,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: REPLAN_PROMPT },
           { role: "user", content: JSON.stringify(params) },
         ],
       },
-      { timeout: 30_000, maxRetries: 1 }
+      { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
@@ -192,13 +265,23 @@ function repairJSON(raw: string): object | null {
 
   let fixed = raw
   const stack: string[] = []
+  let inString = false
+  let escaped = false
   for (const ch of raw) {
-    if (ch === "{" || ch === "[") {
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') inString = false
+    } else if (ch === '"') {
+      inString = true
+    } else if (ch === "{" || ch === "[") {
       stack.push(ch === "{" ? "}" : "]")
     } else if (ch === "}" || ch === "]") {
       stack.pop()
     }
   }
+  // Unterminated string (truncated mid-value) — close it before closing structure.
+  if (inString) fixed += '"'
   // Close any unclosed braces/brackets in reverse order
   while (stack.length > 0) fixed += stack.pop()
 
@@ -239,7 +322,7 @@ export async function aggregate(params: {
           },
         ],
       },
-      { timeout: 30_000, maxRetries: 1 }
+      { timeout: 45_000, maxRetries: 1 }
     )
     content = response.choices?.[0]?.message?.content || "{}"
   } catch (err) {

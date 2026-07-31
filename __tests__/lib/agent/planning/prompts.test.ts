@@ -133,3 +133,20 @@ describe("REPLAN_PROMPT", () => {
     expect(REPLAN_PROMPT).toContain("perspective")
   })
 })
+
+describe("orchestrator prompts — DeepSeek json_object requirement", () => {
+  // reason: DeepSeek rejects response_format json_object with HTTP 400 unless
+  // the prompt mentions the word "json" somewhere. PLAN/REPLAN/AGGREGATE all
+  // use json_object, so every prompt must carry the keyword.
+  it("PLAN_PROMPT contains the JSON keyword", () => {
+    expect(PLAN_PROMPT).toMatch(/\bJSON\b/i)
+  })
+
+  it("REPLAN_PROMPT contains the JSON keyword", () => {
+    expect(REPLAN_PROMPT).toMatch(/\bJSON\b/i)
+  })
+
+  it("AGGREGATE_PROMPT contains the JSON keyword", () => {
+    expect(AGGREGATE_PROMPT).toMatch(/\bJSON\b/i)
+  })
+})

@@ -90,6 +90,114 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
   })
+
+  it("salvages a return thought when the LLM emits action 'conclude'", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "conclude",
+        score: 70,
+        confidence: 65,
+        signals: [{ name: "RSI", strength: 70, direction: "bullish" }],
+        reasoning: "Analysis complete",
+        conclusion: "Bullish momentum",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBe(70)
+      expect(result.conclusion).toBe("Bullish momentum")
+    }
+  })
+
+  it("defaults a missing conclusion to an empty string on a return thought", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "return",
+        score: 60,
+        confidence: 55,
+        signals: [],
+        reasoning: "Analysis complete",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBe(60)
+      expect(result.conclusion).toBe("")
+    }
+  })
+
+  it("defaults a null action to return and keeps the analysis", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: null,
+        score: 62,
+        confidence: 58,
+        signals: [],
+        reasoning: "Analysis complete",
+        conclusion: "Neutral",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBe(62)
+      expect(result.conclusion).toBe("Neutral")
+    }
+  })
+
+  it("defaults an empty action string to return", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "",
+        score: 55,
+        confidence: 50,
+        signals: [],
+        reasoning: "Analysis complete",
+        conclusion: "Neutral",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+  })
+
+  it("defaults an unknown action value to return", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "EXTRACT",
+        score: 66,
+        confidence: 60,
+        signals: [],
+        reasoning: "Analysis complete",
+        conclusion: "Bullish",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBe(66)
+    }
+  })
+
+  it("maps the call_tool alias to a tool_call", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "call_tool",
+        toolName: "get_price",
+        params: { asset: "BTC" },
+        reasoning: "Need price",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("tool_call")
+  })
 })
 
 describe("plan()", () => {

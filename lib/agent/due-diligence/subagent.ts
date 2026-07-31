@@ -114,7 +114,7 @@ export async function runSubagent(params: {
 }): Promise<FactorReport> {
   const maxLoops = params.maxLoops ?? 3
   const timeoutMs = params.timeoutMs ?? 60000
-  const history: Array<{ toolName: string; result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number } } }> = []
+  const history: Array<{ toolName: string; result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; data?: unknown } }> = []
   const toolNames = Object.keys(params.tools)
 
   const startTime = Date.now()
@@ -191,6 +191,7 @@ export async function runSubagent(params: {
           success: toolResult.success,
           error: toolResult.error,
           metadata: toolResult.metadata,
+          data: toolResult.data,
         },
       })
     } catch (err) {

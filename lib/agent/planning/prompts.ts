@@ -86,6 +86,7 @@ For each perspective, write an instruction that tells the subagent:
 - What tools to prioritize (risk calc, funding check, liquidation zones, web search)
 - Whether to be skeptical or trusting of the DDReport's conclusions
 
+You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
 
 /**
@@ -140,4 +141,5 @@ Given the list of low-consensus perspectives and the previous reports from all p
 - Suggest specific tools to re-check (risk calc, funding regime, liquidation zones, web search)
 - Set a clear expectation for what a good analysis must confirm before returning
 
+You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
