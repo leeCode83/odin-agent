@@ -94,25 +94,30 @@ Run Due Diligence pipeline for an asset. Fetches multi-factor analysis (technica
 
 ## POST /api/agent/planning
 
-Run Planning pipeline. Takes a DD report, produces a trade plan with position sizing, ATR-based SL/TP, confidence scoring, and autonomy decision.
+Run Planning pipeline. Takes an asset, internally runs the DD agent (step 0), then the planning swarm produces a trade plan with position sizing, ATR-based SL/TP, confidence scoring, and autonomy decision.
 
 **Request body:**
 
 ```json
 {
-  "ddReport": { /* DDReport object */ },
+  "asset": "BTC",
   "userId": "user_abc123",
-  "walletAddress": "0x..."
+  "walletAddress": "0x...",
+  "targetProfitPercent": 100
 }
 ```
+
+- `asset`, `userId`, `walletAddress` — required, non-empty strings.
+- `targetProfitPercent` — optional number, positive, max 1000 (decimals allowed, e.g. `20.5`).
 
 **Response `200`:**
 
 ```json
 {
-  "plan": {
+  "report": {
     "asset": "BTC",
     "side": "long",
+    "action": "LONG",
     "entry_price": 50123.45,
     "position_size_usdc": 500.0,
     "position_size_contracts": 0.00997,
@@ -130,13 +135,57 @@ Run Planning pipeline. Takes a DD report, produces a trade plan with position si
     "autonomy_decision": "approve",
     "risk_flags": ["flag1"],
     "graph_patterns_used": [],
-    "timestamp": "2026-07-21T10:00:00Z"
+    "timestamp": "2026-07-21T10:00:00Z",
+    "iterations": 3
   },
-  "timing": { "llmMs": 5000, "riskMs": 200, "graphMs": 300, "totalMs": 5500 }
+  "timing": { "totalMs": 5500, "agentMs": 5300 },
+  "iterations": 3,
+  "status": "complete"
 }
 ```
 
-**Errors:** 400 (missing fields, invalid ddReport), 500 (pipeline failure)
+`NO_TRADE` is a normal 200 with `report.action === "NO_TRADE"` and `status: "no_trade"` (zero-size placeholder plan).
+
+**Response `503`** (circuit breaker tripped — DD 3 failures/5min or LLM 5 failures/10min):
+
+```json
+{
+  "error": "PLANNING_UNAVAILABLE",
+  "retryAfterSeconds": 60
+}
+```
+
+**Response `500`** (spec §9.6):
+
+```json
+{
+  "error": "PLANNING_FAILED",
+  "message": "Planning pipeline failed for BTC: PLANNING_FAILED",
+  "details": {
+    "phase": "dd",
+    "reports": [],
+    "aggregation": null,
+    "ddReport": null
+  },
+  "processingTimeMs": 1234
+}
+```
+
+```json
+{
+  "error": "CONSENSUS_FAILED",
+  "message": "Planning pipeline failed for BTC: PLANNING_FAILED",
+  "details": {
+    "phase": "evaluate",
+    "reports": [],
+    "aggregation": null,
+    "ddReport": {}
+  },
+  "processingTimeMs": 5678
+}
+```
+
+**Errors:** 400 (missing/invalid fields, invalid JSON, invalid targetProfitPercent), 503 (PLANNING_UNAVAILABLE), 500 (PLANNING_FAILED / CONSENSUS_FAILED)
 
 ---
 
