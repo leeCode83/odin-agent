@@ -7,13 +7,8 @@
  */
 
 import { z } from "zod"
-import { ConfidenceBreakdownSchema } from "@/lib/agent/types"
 import { SignalEntrySchema } from "@/lib/agent/due-diligence/types"
-import type {
-  DDReport,
-  TradePlan,
-  ConfidenceBreakdown,
-} from "@/lib/agent/types"
+import type { TradePlan, ConfidenceBreakdown } from "@/lib/agent/types"
 
 /**
  * @constant PerspectiveSchema
@@ -26,28 +21,6 @@ export const PerspectiveSchema = z.enum(["conservative", "balance", "aggressive"
  * @description Inferred type for the trading perspective.
  */
 export type Perspective = z.infer<typeof PerspectiveSchema>
-
-/**
- * @constant PerspectiveResultSchema
- * @description Zod schema for the result of a single LLM perspective analysis.
- */
-export const PerspectiveResultSchema = z.object({
-  perspective: PerspectiveSchema,
-  thesis: z.string(),
-  confidence_breakdown: ConfidenceBreakdownSchema,
-  side: z.enum(["long", "short"]),
-  leverage_suggested: z.number().positive(),
-  reasoning: z.string(),
-  reasoningContent: z.string(),
-  risk_flags: z.array(z.string()),
-})
-
-/**
- * @type PerspectiveResult
- * @description Inferred type for the perspective result.
- * @deprecated Superseded by PerspectiveReport (T1); deleted in T10.
- */
-export type PerspectiveResult = z.infer<typeof PerspectiveResultSchema>
 
 /**
  * @constant PerspectiveReportSchema
@@ -160,29 +133,18 @@ export interface PlanningAgentOutput {
 }
 
 /**
- * @interface AggregatedReasoning
- * @description Structure for the synthesized trade thesis from multiple perspectives.
- * @deprecated Superseded by PlanningAggregationResult (T1); deleted in T10.
+ * @type PlanningAggregationResult
+ * @description Aggregated reasoning across planning perspectives, with
+ *   consensus metrics and a side widened to include `no_trade`.
  */
-export interface AggregatedReasoning {
-  side: "long" | "short"
+export type PlanningAggregationResult = {
+  side: "long" | "short" | "no_trade"
   thesis: string
   reasoning: string
   confidence_score: number
   confidence_breakdown: ConfidenceBreakdown
   leverage_suggested: number
   risk_flags: string[]
-}
-
-/**
- * @type PlanningAggregationResult
- * @description Aggregated reasoning across planning perspectives, with
- *   consensus metrics and a side widened to include `no_trade`.
- *   // reason: Omit the inherited `side` (narrow "long" | "short") so the
- *   intersection can widen it to include "no_trade" instead of narrowing.
- */
-export type PlanningAggregationResult = Omit<AggregatedReasoning, "side"> & {
-  side: "long" | "short" | "no_trade"
   consensus_alignment: number
   contradictions: string[]
   profit_feasible: boolean
@@ -191,17 +153,6 @@ export type PlanningAggregationResult = Omit<AggregatedReasoning, "side"> & {
   stop_loss: number
   take_profit: number
   position_size_usdc: number
-}
-
-/**
- * @interface PlanningPipelineInput
- * @description Input parameters for the trade planning pipeline.
- * @deprecated Superseded by PlanningAgentInput (T1); deleted in T10.
- */
-export interface PlanningPipelineInput {
-  ddReport: DDReport
-  userId: string
-  walletAddress: string
 }
 
 /**

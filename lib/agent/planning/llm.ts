@@ -1,19 +1,9 @@
 import OpenAI from "openai"
 import { z } from "zod"
-import type { Perspective, PerspectiveResult, AggregatedReasoning } from "./types"
-import { PerspectiveResultSchema, PerspectiveSchema } from "./types"
-import type { PlanningSubagentPlan, PlanningAggregationResult, PerspectiveReport } from "./types"
-import type { DDReport, GraphPattern } from "@/lib/agent/types"
-import {
-  PERSPECTIVE_SYSTEM_PROMPTS,
-  AGGREGATOR_SYSTEM_PROMPT,
-  PERSPECTIVE_USER_PROMPT,
-  AGGREGATOR_USER_PROMPT,
-  PLAN_PROMPT,
-  AGGREGATE_PROMPT,
-  REPLAN_PROMPT,
-} from "./prompts"
-import { withTimeout } from "@/lib/utils"
+import { PerspectiveSchema } from "./types"
+import type { Perspective, PlanningSubagentPlan, PlanningAggregationResult, PerspectiveReport } from "./types"
+import type { DDReport } from "@/lib/agent/types"
+import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "./prompts"
 
 type ThinkingParams = { thinking: { type: string }; reasoning_effort: string }
 
@@ -23,14 +13,11 @@ function thinkingParams(): ThinkingParams & Record<string, any> {
 }
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
 const DEEPSEEK_PLANNING_MODEL = process.env.DEEPSEEK_PLANNING_MODEL || "deepseek-v4-pro"
 const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high"
-const SELF_CONSISTENCY_TIMEOUT_MS = Number(process.env.SELF_CONSISTENCY_TIMEOUT_MS) || 30000
 
 // reason: planning orchestrator/aggregator calls run in thinking mode — DeepSeek
-// rejects `temperature` there, so it is omitted entirely (only the old
-// generatePerspective/aggregatePerspectives flash calls use it).
+// rejects `temperature` there, so it is omitted entirely.
 const PLANNING_TIMEOUT_MS = 60_000
 const PLANNING_MAX_RETRIES = 1
 
@@ -51,109 +38,6 @@ function getClient(): OpenAI | null {
     })
   }
   return client
-}
-
-/**
- * @function generatePerspective
- * @description Generates a specific trading perspective (conservative, balanced, aggressive) using the DeepSeek LLM.
- * @param {Perspective} perspective - The perspective to adopt.
- * @param {DDReport} ddReport - The due diligence report to base the analysis on.
- * @param {GraphPattern[]} graphPatterns - Historical graph patterns related to the asset.
- * @returns {Promise<PerspectiveResult | null>} The generated perspective result or null if it fails.
- * @deprecated Superseded by the ReAct perspective subagents (runPerspectiveSubagent, T4); deleted in T10.
- */
-export async function generatePerspective(
-  perspective: Perspective,
-  ddReport: DDReport,
-  graphPatterns: GraphPattern[]
-): Promise<PerspectiveResult | null> {
-  const c = getClient()
-  if (!c) return null
-
-  const attempt = async (): Promise<PerspectiveResult> => {
-    const response = await withTimeout(
-      c.chat.completions.create({
-        model: DEEPSEEK_MODEL,
-        max_tokens: 4096,
-        ...thinkingParams(),
-        messages: [
-          { role: "system", content: PERSPECTIVE_SYSTEM_PROMPTS[perspective] },
-          { role: "user", content: PERSPECTIVE_USER_PROMPT(ddReport, graphPatterns) },
-        ],
-      } as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
-      SELF_CONSISTENCY_TIMEOUT_MS
-    )
-
-    const content = response.choices?.[0]?.message?.content || ""
-    const reasoning = (response.choices?.[0]?.message as unknown as Record<string, unknown>)?.reasoning_content as string | undefined || ""
-
-    const parsed = PerspectiveResultSchema.omit({ perspective: true, reasoningContent: true }).parse(
-      JSON.parse(content)
-    )
-
-    return { ...parsed, perspective, reasoningContent: reasoning }
-  }
-
-  try {
-    return await attempt()
-  } catch {
-    try {
-      return await attempt()
-    } catch {
-      return null
-    }
-  }
-}
-
-/**
- * @function aggregatePerspectives
- * @description Aggregates multiple trading perspectives into a unified trade thesis using the DeepSeek LLM.
- * @param {PerspectiveResult[]} results - The generated perspective results.
- * @param {DDReport} _ddReport - The due diligence report (currently unused).
- * @returns {Promise<AggregatedReasoning | null>} The aggregated reasoning or null if it fails.
- * @deprecated Superseded by the swarm aggregator `aggregate` (T4); deleted in T10.
- */
-export async function aggregatePerspectives(
-  results: PerspectiveResult[],
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _ddReport: DDReport
-): Promise<AggregatedReasoning | null> {
-  const c = getClient()
-  if (!c) return null
-
-  try {
-    const response = await withTimeout(
-      c.chat.completions.create({
-        model: DEEPSEEK_MODEL,
-        max_tokens: 4096,
-        ...thinkingParams(),
-        messages: [
-          { role: "system", content: AGGREGATOR_SYSTEM_PROMPT },
-          { role: "user", content: AGGREGATOR_USER_PROMPT(results) },
-        ],
-      } as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
-      SELF_CONSISTENCY_TIMEOUT_MS
-    )
-
-    const content = response.choices?.[0]?.message?.content || ""
-    const parsed = JSON.parse(content)
-
-    return {
-      side: parsed.side ?? "long",
-      thesis: parsed.thesis || "",
-      reasoning: parsed.reasoning || "",
-      confidence_score: parsed.confidence_score ?? 0,
-      confidence_breakdown: {
-        factor_alignment: parsed.confidence_breakdown?.factor_alignment ?? 0,
-        historical_match: parsed.confidence_breakdown?.historical_match ?? 0,
-        signal_strength: parsed.confidence_breakdown?.signal_strength ?? 0,
-      },
-      leverage_suggested: parsed.leverage_suggested ?? 1,
-      risk_flags: parsed.risk_flags ?? [],
-    }
-  } catch {
-    return null
-  }
 }
 
 /**
