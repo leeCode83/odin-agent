@@ -2,10 +2,11 @@
  * @function describeZodSchema
  * @description Converts a Zod schema to a human-readable parameter string for LLM prompts.
  *   Handles ZodObject by extracting shape keys. Returns "{}" for unknown types.
+ *   Exported for reuse by the planning swarm prompts (T4).
  * @param {unknown} schema - The Zod schema to describe.
  * @returns {string} Human-readable parameter description.
  */
-function describeZodSchema(schema: unknown): string {
+export function describeZodSchema(schema: unknown): string {
   const def = (schema as Record<string, unknown>)?._def as Record<string, unknown> | undefined
   if (def?.type === "object") {
     const shape = def.shape as Record<string, unknown>

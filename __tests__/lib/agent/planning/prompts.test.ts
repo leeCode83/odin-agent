@@ -1,12 +1,18 @@
 import { describe, it, expect } from "vitest"
+import { z } from "zod"
 import {
   PERSPECTIVE_SYSTEM_PROMPTS,
   AGGREGATOR_SYSTEM_PROMPT,
   PERSPECTIVE_USER_PROMPT,
   AGGREGATOR_USER_PROMPT,
+  makePlanningSystemPrompt,
+  PLAN_PROMPT,
+  AGGREGATE_PROMPT,
+  REPLAN_PROMPT,
 } from "@/lib/agent/planning/prompts"
 import type { DDReport, GraphPattern } from "@/lib/agent/types"
 import type { PerspectiveResult, Perspective } from "@/lib/agent/planning/types"
+import type { ToolRegistry } from "@/lib/agent/tools/types"
 
 const mockDDReport: DDReport = {
   asset: "BTC",
@@ -127,5 +133,131 @@ describe("AGGREGATOR_USER_PROMPT", () => {
     expect(result).toContain("BTC cautious long")
     expect(result).toContain("BTC moderate long")
     expect(result).toContain("BTC strong long")
+  })
+})
+
+describe("makePlanningSystemPrompt", () => {
+  const tools: ToolRegistry = {
+    compute_atr: {
+      name: "compute_atr",
+      description: "Average True Range from candle data",
+      parameters: z.object({ asset: z.string(), period: z.number().default(14) }),
+      execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
+    },
+    web_search: {
+      name: "web_search",
+      description: "Search the web for recent news and sentiment",
+      parameters: z.object({ query: z.string() }),
+      execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
+    },
+  }
+
+  it("returns a function that renders the perspective persona", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("conservative trading analyst")
+  })
+
+  it("renders targetProfitPercent and instructs not to re-analyze indicators", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("balance", tools, "Validate")
+    expect(prompt).toContain("100%")
+    expect(prompt).toContain("do NOT re-analyze technical indicators")
+    expect(prompt).toContain("the DDReport already did that")
+  })
+
+  it("lists the four tasks from spec 7.2", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 50 })("aggressive", tools, "Validate")
+    expect(prompt).toContain("Validating the DDReport's conclusions against current market data")
+    expect(prompt).toContain("Computing risk parameters")
+    expect(prompt).toContain("external factors")
+    expect(prompt).toContain("50%")
+  })
+
+  it("renders tool descriptions with parameter schemas via describeZodSchema", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("compute_atr({asset, period})")
+    expect(prompt).toContain("Average True Range from candle data")
+    expect(prompt).toContain("web_search({query})")
+    expect(prompt).toContain("Search the web for recent news and sentiment")
+  })
+
+  it("requires at least 2 tools before returning", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("Use at least 2 tools before returning")
+  })
+
+  it("describes the return format with planning fields", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain('"action": "return"')
+    expect(prompt).toContain('"side": "long" | "short" | "no_trade"')
+    expect(prompt).toContain('"entry_price"')
+    expect(prompt).toContain('"suggested_stop_loss"')
+    expect(prompt).toContain('"suggested_take_profit"')
+    expect(prompt).toContain('"suggested_leverage"')
+    expect(prompt).toContain('"suggested_position_size_usdc"')
+    expect(prompt).toContain('"risk_flags"')
+  })
+
+  it("describes the tool_call return format", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain('"action": "tool_call"')
+    expect(prompt).toContain('"toolName"')
+    expect(prompt).toContain('"params"')
+  })
+
+  it("includes the instruction", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Focus on funding regime")
+    expect(prompt).toContain("Focus on funding regime")
+  })
+})
+
+describe("PLAN_PROMPT", () => {
+  it("describes orchestrating 3 perspectives with instructions and priorities", () => {
+    expect(PLAN_PROMPT).toContain("conservative")
+    expect(PLAN_PROMPT).toContain("balance")
+    expect(PLAN_PROMPT).toContain("aggressive")
+    expect(PLAN_PROMPT).toContain("instruction")
+    expect(PLAN_PROMPT).toContain("priority")
+    expect(PLAN_PROMPT).toContain("DDReport")
+  })
+
+  it("returns a JSON object with a subagents array", () => {
+    expect(PLAN_PROMPT).toContain("subagents")
+  })
+})
+
+describe("AGGREGATE_PROMPT", () => {
+  it("includes the 2+ no_trade consensus rule", () => {
+    expect(AGGREGATE_PROMPT).toContain("If 2+ perspectives conclude no_trade, final action is no_trade")
+  })
+
+  it("includes profit_feasible and no_trade_reason fields", () => {
+    expect(AGGREGATE_PROMPT).toContain("profit_feasible")
+    expect(AGGREGATE_PROMPT).toContain("no_trade_reason")
+  })
+
+  it("includes consensus and contradiction fields", () => {
+    expect(AGGREGATE_PROMPT).toContain("consensus_alignment")
+    expect(AGGREGATE_PROMPT).toContain("contradictions")
+  })
+
+  it("includes final plan parameters", () => {
+    expect(AGGREGATE_PROMPT).toContain("entry_price")
+    expect(AGGREGATE_PROMPT).toContain("stop_loss")
+    expect(AGGREGATE_PROMPT).toContain("take_profit")
+    expect(AGGREGATE_PROMPT).toContain("position_size_usdc")
+    expect(AGGREGATE_PROMPT).toContain("leverage_suggested")
+  })
+})
+
+describe("REPLAN_PROMPT", () => {
+  it("targets low-consensus perspectives with past reports", () => {
+    expect(REPLAN_PROMPT).toMatch(/low-consensus|low consensus/i)
+    expect(REPLAN_PROMPT).toMatch(/previous reports|past reports/i)
+  })
+
+  it("asks for targeted new instructions with priorities", () => {
+    expect(REPLAN_PROMPT).toContain("instruction")
+    expect(REPLAN_PROMPT).toContain("priority")
+    expect(REPLAN_PROMPT).toContain("perspective")
   })
 })
