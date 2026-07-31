@@ -61,6 +61,15 @@ export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
     signals: z.array(SignalEntrySchema),
     reasoning: z.string(),
     conclusion: z.string(),
+    // reason: optional planning swarm fields — zod strips unknown keys, so the
+    // planning wrapper can only receive these from the LLM if the schema declares them.
+    side: z.enum(["long", "short", "no_trade"]).optional(),
+    entry_price: z.number().optional(),
+    suggested_stop_loss: z.number().optional(),
+    suggested_take_profit: z.number().optional(),
+    suggested_leverage: z.number().optional(),
+    suggested_position_size_usdc: z.number().optional(),
+    risk_flags: z.array(z.string()).optional(),
   }),
 ])
 

@@ -57,6 +57,89 @@ describe("SubAgentThoughtSchema", () => {
       SubAgentThoughtSchema.parse({ action: "invalid" })
     ).toThrow()
   })
+
+  it("return variant passes through optional planning fields", () => {
+    const result = SubAgentThoughtSchema.parse({
+      action: "return",
+      score: 75,
+      confidence: 80,
+      signals: [],
+      reasoning: "Analysis complete",
+      conclusion: "Bullish",
+      side: "long",
+      entry_price: 65000,
+      suggested_stop_loss: 62000,
+      suggested_take_profit: 71000,
+      suggested_leverage: 5,
+      suggested_position_size_usdc: 100,
+      risk_flags: ["Funding positive"],
+    })
+    if (result.action !== "return") throw new Error("Expected return")
+    expect(result.side).toBe("long")
+    expect(result.entry_price).toBe(65000)
+    expect(result.suggested_stop_loss).toBe(62000)
+    expect(result.suggested_take_profit).toBe(71000)
+    expect(result.suggested_leverage).toBe(5)
+    expect(result.suggested_position_size_usdc).toBe(100)
+    expect(result.risk_flags).toEqual(["Funding positive"])
+  })
+
+  it("return variant parses without planning fields (DD path unchanged)", () => {
+    const result = SubAgentThoughtSchema.parse({
+      action: "return",
+      score: 75,
+      confidence: 80,
+      signals: [],
+      reasoning: "Analysis complete",
+      conclusion: "Bullish",
+    })
+    if (result.action !== "return") throw new Error("Expected return")
+    expect(result.side).toBeUndefined()
+    expect(result.entry_price).toBeUndefined()
+    expect(result.risk_flags).toBeUndefined()
+  })
+
+  it("return variant accepts no_trade side", () => {
+    const result = SubAgentThoughtSchema.parse({
+      action: "return",
+      score: null,
+      confidence: null,
+      signals: [],
+      reasoning: "No setup",
+      conclusion: "No trade",
+      side: "no_trade",
+    })
+    if (result.action !== "return") throw new Error("Expected return")
+    expect(result.side).toBe("no_trade")
+  })
+
+  it("return variant rejects invalid side", () => {
+    expect(() =>
+      SubAgentThoughtSchema.parse({
+        action: "return",
+        score: 75,
+        confidence: 80,
+        signals: [],
+        reasoning: "Analysis",
+        conclusion: "Bullish",
+        side: "buy",
+      })
+    ).toThrow()
+  })
+
+  it("tool_call variant ignores planning extras (return-only fields stripped)", () => {
+    const result = SubAgentThoughtSchema.parse({
+      action: "tool_call",
+      toolName: "get_price",
+      params: {},
+      reasoning: "Need data",
+      side: "long",
+    })
+    expect(result.action).toBe("tool_call")
+    if (result.action !== "tool_call") throw new Error("Expected tool_call")
+    expect(result.toolName).toBe("get_price")
+    expect(result).not.toHaveProperty("side")
+  })
 })
 
 describe("runSubagent", () => {
@@ -87,6 +170,37 @@ describe("runSubagent", () => {
     expect(report.signals[0].name).toBe("RSI")
     expect(report.iterations).toBe(1)
     expect(report.errors).toHaveLength(0)
+  })
+
+  it("drops planning extras from FactorReport (DD output shape unchanged)", async () => {
+    const tools: ToolRegistry = { get_price: makeTool("get_price") }
+    const mockThink = vi.fn().mockResolvedValue({
+      action: "return",
+      score: 75,
+      confidence: 80,
+      signals: [],
+      reasoning: "Analysis complete",
+      conclusion: "Bullish",
+      side: "long",
+      entry_price: 65000,
+      suggested_leverage: 5,
+      risk_flags: ["Funding positive"],
+    })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "Analyze BTC",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are a technical analyst.",
+    })
+
+    const flat = report as unknown as Record<string, unknown>
+    expect(flat["side"]).toBeUndefined()
+    expect(flat["entry_price"]).toBeUndefined()
+    expect(flat["suggested_leverage"]).toBeUndefined()
+    expect(flat["risk_flags"]).toBeUndefined()
   })
 
   it("executes tool call then returns on next iteration", async () => {

@@ -1,3 +1,11 @@
+/**
+ * @file agent/types.ts
+ * @description Shared agent type definitions — DD report, trade plan,
+ *   confidence breakdowns, and risk thresholds.
+ * @module agent
+ * @layer service
+ */
+
 import { z } from "zod"
 import {
   FactorReportSchema,
@@ -100,6 +108,7 @@ export type RiskThresholds = z.infer<typeof RiskThresholdsSchema>
 export const TradePlanSchema = z.object({
   asset: z.string(),
   side: SideSchema,
+  action: z.enum(["LONG", "SHORT", "NO_TRADE"]).default("LONG"),
   entry_price: z.number().positive(),
   position_size_usdc: z.number().min(0),
   position_size_contracts: z.number().min(0),
@@ -114,5 +123,9 @@ export const TradePlanSchema = z.object({
   risk_flags: z.array(z.string()),
   graph_patterns_used: z.array(GraphPatternSchema),
   timestamp: z.string().datetime(),
+  // reason: swarm fields stay optional so the pre-swarm pipeline shape keeps parsing
+  consensus_alignment: z.number().min(0).max(100).optional(),
+  processingTimeMs: z.number().optional(),
+  iterations: z.number().optional(),
 })
 export type TradePlan = z.infer<typeof TradePlanSchema>

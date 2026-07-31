@@ -7,6 +7,7 @@ const ASSET_INDEX = 0
 const longPlan: TradePlan = {
   asset: "BTC",
   side: "long",
+  action: "LONG",
   entry_price: 65000,
   position_size_usdc: 50,
   position_size_contracts: 0.001,
