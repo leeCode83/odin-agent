@@ -6,6 +6,7 @@ import { FACTOR_KEYS, type SubagentPlan, type FactorReport } from "@/lib/agent/d
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
+const DEEPSEEK_THINK_MODEL = process.env.DEEPSEEK_THINK_MODEL || "deepseek-v4-pro"
 
 let client: OpenAI | null = null
 
@@ -89,7 +90,7 @@ export async function think(
     try {
       const response = await c.chat.completions.create(
         {
-          model: DEEPSEEK_MODEL,
+          model: DEEPSEEK_THINK_MODEL,
           temperature: 0.3,
           max_tokens: 4096,
           response_format: { type: "json_object" },
@@ -97,9 +98,9 @@ export async function think(
         },
         { timeout: 45_000, maxRetries: 1 }
       )
-      const content = response.choices?.[0]?.message?.content || ""
-      if (!content.trim()) {
-        console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_MODEL)
+    const content = response.choices?.[0]?.message?.content || ""
+    if (!content.trim()) {
+      console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
         return null
       }
       return content

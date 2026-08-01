@@ -13,7 +13,7 @@ function thinkingParams(): ThinkingParams & Record<string, any> {
 }
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
-const DEEPSEEK_PLANNING_MODEL = process.env.DEEPSEEK_PLANNING_MODEL || "deepseek-v4-pro"
+const DEEPSEEK_THINK_MODEL = process.env.DEEPSEEK_THINK_MODEL || "deepseek-v4-pro"
 const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high"
 
 // reason: planning orchestrator/aggregator calls run in thinking mode — DeepSeek
@@ -163,7 +163,7 @@ async function callPlanningLLM<T>(options: {
   try {
     const response = await c.chat.completions.create(
       {
-        model: DEEPSEEK_PLANNING_MODEL,
+        model: DEEPSEEK_THINK_MODEL,
         max_tokens: 8192,
         response_format: { type: "json_object" },
         ...thinkingParams(),

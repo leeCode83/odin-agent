@@ -30,10 +30,7 @@ export function REACT_SYSTEM_PROMPT(
   instruction: string
 ): string {
   const toolDescriptions = Object.entries(tools)
-    .map(([name, tool]) => {
-      const params = tool.parameters ? describeZodSchema(tool.parameters) : "{}"
-      return `- ${name}(${params}): ${tool.description}`
-    })
+    .map(([name, tool]) => `- ${name}: ${tool.description}`)
     .join("\n")
 
   return `You are a ${factor} analysis agent. Analyze the asset using the available tools.

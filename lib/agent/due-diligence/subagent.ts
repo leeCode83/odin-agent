@@ -76,6 +76,73 @@ export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
 /** @typedef {z.infer<typeof SubAgentThoughtSchema>} SubAgentThought */
 export type SubAgentThought = z.infer<typeof SubAgentThoughtSchema>
 
+/** @typedef {Object} HistoryEntry - One tool invocation recorded during the ReAct loop. */
+type HistoryEntry = {
+  toolName: string
+  result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; data?: unknown }
+}
+
+/**
+ * @function summarizeData
+ * @description Compresses a single tool result payload to a short string for LLM context.
+ *   Large datasets become statistical/structural summaries; small values pass through.
+ * @param {unknown} data - Raw tool result data.
+ * @returns {unknown} Summary string, the value itself, or undefined for empty data.
+ */
+function summarizeData(data: unknown): unknown {
+  if (data === undefined || data === null) return undefined
+  if (Array.isArray(data)) {
+    if (data.length === 0) return "[] (empty)"
+    const first = data[0]
+    if (typeof first === "number") {
+      const nums = data as number[]
+      return `count=${nums.length}, min=${Math.min(...nums)}, max=${Math.max(...nums)}, last=${nums[nums.length - 1]}`
+    }
+    if (typeof first === "string") {
+      const strings = data as string[]
+      return `count=${strings.length}, first=${strings.slice(0, 3).join(", ")}${strings.length > 3 ? "..." : ""}`
+    }
+    if (typeof first === "object" && first !== null) {
+      return `count=${data.length}, keys=[${Object.keys(first).join(", ")}]`
+    }
+    return `count=${data.length}`
+  }
+  if (typeof data === "object") {
+    const str = JSON.stringify(data)
+    if (str.length <= 200) return data
+    const entries = Object.entries(data as Record<string, unknown>)
+    const preview = entries
+      .slice(0, 2)
+      .map(([k, v]) => `${k}: ${typeof v === "object" && v !== null ? JSON.stringify(v).slice(0, 50) : String(v)}`)
+      .join("; ")
+    return `keys=[${entries.map(([k]) => k).join(", ")}], preview=${preview}`
+  }
+  return data
+}
+
+/**
+ * @function summarizeHistory
+ * @description Maps the internal history into LLM-safe form: each entry's raw `data` is
+ *   replaced by a compact `dataSummary`. The original history is NOT mutated — raw data
+ *   stays in memory for dataSources/error reporting in the final FactorReport.
+ * @param {HistoryEntry[]} history - Full internal tool history.
+ * @returns {Array<{ toolName: string; result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; dataSummary?: unknown } }>}
+ */
+function summarizeHistory(history: HistoryEntry[]) {
+  return history.map((h) => {
+    const dataSummary = summarizeData(h.result.data)
+    return {
+      toolName: h.toolName,
+      result: {
+        success: h.result.success,
+        error: h.result.error,
+        metadata: h.result.metadata,
+        ...(dataSummary === undefined ? {} : { dataSummary }),
+      },
+    }
+  })
+}
+
 /**
  * @function runSubagent
  * @description Executes the generic ReAct loop for a single factor subagent.
@@ -114,7 +181,7 @@ export async function runSubagent(params: {
 }): Promise<FactorReport> {
   const maxLoops = params.maxLoops ?? 3
   const timeoutMs = params.timeoutMs ?? 60000
-  const history: Array<{ toolName: string; result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; data?: unknown } }> = []
+  const history: HistoryEntry[] = []
   const toolNames = Object.keys(params.tools)
 
   const startTime = Date.now()
@@ -134,7 +201,7 @@ export async function runSubagent(params: {
           instruction: params.instruction,
           remainingLoops: maxLoops - i - 1,
           availableTools: toolNames,
-          history,
+          history: summarizeHistory(history),
         }),
       },
     ]
@@ -219,7 +286,7 @@ export async function runSubagent(params: {
           instruction: params.instruction,
           remainingLoops: 0,
           availableTools: toolNames,
-          history,
+          history: summarizeHistory(history),
           forceReturn: true,
           message:
             "This is your final opportunity. You MUST return a conclusion now. Provide your best analysis based on the data collected so far, even if incomplete. Do NOT request tools. You MUST return with score (0-100), confidence (0-100), signals, reasoning, and conclusion.",

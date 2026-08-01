@@ -377,10 +377,11 @@ describe("REACT_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("Get the current market trend direction")
   })
 
-  it("includes parameter hints in tool descriptions", () => {
+  it("does not include parameter schemas in tool descriptions", () => {
     const prompt = REACT_SYSTEM_PROMPT("technical", tools, "Analyze BTC market data")
-    expect(prompt).toContain("{asset}")
-    expect(prompt).toContain("{}")
+    expect(prompt).not.toContain("{asset}")
+    expect(prompt).not.toContain("()")
+    expect(prompt).toContain("- get_price: Get the current price for an asset")
   })
 
   it("includes the instruction in the prompt", () => {

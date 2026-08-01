@@ -1,4 +1,3 @@
-
 # Implementation Plan: Planning Agent Refactor — Multi-Perspective Swarm
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -32,7 +31,7 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
 
 1. **Subagent reuse:** Planning perspective subagents call the existing DD `runSubagent()` (`lib/agent/due-diligence/subagent.ts`) with `factor` = perspective name, `maxLoops = 5`, `timeoutMs = 60000`, planning-specific `getSystemPrompt`. No loop rewrite.
 2. **Rich return via schema extension:** `SubAgentThoughtSchema` "return" variant gains OPTIONAL fields (`side`, `entry_price`, `suggested_stop_loss`, `suggested_take_profit`, `suggested_leverage`, `suggested_position_size_usdc`, `risk_flags`). Zod strips unknown keys, so capture is only possible with the extension. DD behavior unchanged (extras ignored). Planning wrapper's `llmThink` stashes the last parsed return thought and merges extras into `PerspectiveReport` after `runSubagent()` resolves — zero DD core edits.
-3. **LLM config:** Perspective subagents reuse DD `think()` (deepseek-v4-flash, temp 0.3, json_object). Orchestrator `plan()`/`aggregate()`/`rePlan()` use new `DEEPSEEK_PLANNING_MODEL` env (default `deepseek-v4-pro`), thinking mode (no temperature, `reasoning_effort` from `DEEPSEEK_REASONING_EFFORT`), json_object, max_tokens 8192.
+3. **LLM config:** Perspective subagents reuse DD `think()` (deepseek-v4-flash, temp 0.3, json_object). Orchestrator `plan()`/`aggregate()`/`rePlan()` use new `DEEPSEEK_THINK_MODEL` env (default `deepseek-v4-pro`), thinking mode (no temperature, `reasoning_effort` from `DEEPSEEK_REASONING_EFFORT`), json_object, max_tokens 8192.
 4. **Risk engine:** keep deterministic; existing functions become tool `execute()` bodies (no logic change). Tools let the LLM do what-if analysis.
 5. **Vibe tools honest approximation:** Hyperliquid public API has NO liquidation data (verified against HL docs, spec §16.2). `check_liquidation_zones`/`assess_cascade_risk` use orderbook + funding + OI proxies and label themselves "approximation" in descriptions + results. `analyze_funding_regime` uses HL assetCtx current funding/OI/mark + predicted funding (`predictedFundings` endpoint, `HlPerp` venue) when available (spec §16.3).
 6. **Web search graceful failure:** no `EXA_API_KEY` configured in repo (spec §16.1). Tool built against `https://api.exa.ai/search` (POST, Bearer), returns `success: false` with clear message when key missing — subagent continues with other tools. Add `EXA_API_KEY` (optional) to `.env.example`.
@@ -51,9 +50,10 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
 
 ### Phase 0: Foundation (1 task)
 
-- [ ] **T0:** Create `lib/agent/planning/tools/` + `__tests__/lib/agent/planning/tools/` dirs. Add `DEEPSEEK_PLANNING_MODEL` + `EXA_API_KEY` (optional) to `.env.example`. No npm install needed (technicalindicators already present).
+- [ ] **T0:** Create `lib/agent/planning/tools/` + `__tests__/lib/agent/planning/tools/` dirs. Add `DEEPSEEK_THINK_MODEL` + `EXA_API_KEY` (optional) to `.env.example`. No npm install needed (technicalindicators already present).
 
 ### Checkpoint: Foundation
+
 - [ ] Directories exist; `.env.example` updated; typecheck clean
 
 ---
@@ -79,6 +79,7 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
   - Tests: mock fetch, funding thresholds, missing-key path.
 
 ### Checkpoint: Types & Tools
+
 - [ ] T1-T3 tests pass (parallel); typecheck clean; all registries build
 
 ---
@@ -98,6 +99,7 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
   - Tests: full decision matrix, fake timers for breaker, log level gating.
 
 ### Checkpoint: Subagent
+
 - [ ] T4 + T5 tests pass; ReAct works with mock tools (≤5 calls); all 4 evaluation outcomes covered
 
 ---
@@ -114,6 +116,7 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
   - Tests: rewritten `__tests__/lib/agent/planning/pipeline.test.ts` (new input/output shape).
 
 ### Checkpoint: Orchestrator
+
 - [ ] T6 + T7 tests pass; full swarm runs with mocked subagents; TradePlan shape matches extended schema
 
 ---
@@ -137,6 +140,7 @@ Refactor linear `runPlanningPipeline()` into a multi-perspective swarm. Each per
   - Full gate: `npm test`, `npm run lint`, `npm run typecheck`, smoke `npm run build`.
 
 ### Checkpoint: Complete
+
 - [ ] All 11 tasks pass; zero TS/lint errors; no dead code in planning/; DD + execution tests green (no regression)
 
 ## Parallel Execution Strategy
@@ -157,16 +161,16 @@ Max parallel agents: **3** (Phase 1). Total tasks: 11 (≤ 10 subagent budget pe
 
 ## Risks
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| `SubAgentThoughtSchema` extension breaks DD | DD subagent tests fail | All new fields optional; run full `__tests__/lib/agent/due-diligence/` after T1 |
-| Planning subagent never returns rich fields | Aggregator lacks SL/TP/leverage suggestions | Prompt requires them in return format (§7.2); wrapper defaults (0 / "no_trade") documented; aggregator falls back to risk-engine tools |
-| Exa key missing → web_search always fails | Subagent wastes loop on failed tool | Tool returns `success: false` fast (<100ms) with clear message; subagent continues; prompt lists it as optional |
-| Vibe tools produce misleading numbers | LLM trusts approximation blindly | Tool descriptions + result payloads label "approximation"; evaluateConsensus only uses them as signals, never as hard gates |
-| Old pipeline still referenced during refactor | Dead-import churn | Old code untouched until T10; final rg sweep |
-| targetProfitPercent unrealistic (e.g. 5000%) | LLM chases impossible target | Zod cap 1000 in route; aggregator must set `profit_feasible: false` → NO_TRADE |
-| DeepSeek thinking mode latency (orchestrator 3 calls × 30-60s) | Slow API responses | Parallel subagents dominate time anyway; circuit breaker prevents cascade |
-| ArangoDB down during recordDecision | Plan request fails | Non-blocking try/catch persistence (mirror DD recordDDReport pattern) |
+| Risk                                                           | Impact                                      | Mitigation                                                                                                                             |
+| -------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `SubAgentThoughtSchema` extension breaks DD                    | DD subagent tests fail                      | All new fields optional; run full `__tests__/lib/agent/due-diligence/` after T1                                                        |
+| Planning subagent never returns rich fields                    | Aggregator lacks SL/TP/leverage suggestions | Prompt requires them in return format (§7.2); wrapper defaults (0 / "no_trade") documented; aggregator falls back to risk-engine tools |
+| Exa key missing → web_search always fails                      | Subagent wastes loop on failed tool         | Tool returns `success: false` fast (<100ms) with clear message; subagent continues; prompt lists it as optional                        |
+| Vibe tools produce misleading numbers                          | LLM trusts approximation blindly            | Tool descriptions + result payloads label "approximation"; evaluateConsensus only uses them as signals, never as hard gates            |
+| Old pipeline still referenced during refactor                  | Dead-import churn                           | Old code untouched until T10; final rg sweep                                                                                           |
+| targetProfitPercent unrealistic (e.g. 5000%)                   | LLM chases impossible target                | Zod cap 1000 in route; aggregator must set `profit_feasible: false` → NO_TRADE                                                         |
+| DeepSeek thinking mode latency (orchestrator 3 calls × 30-60s) | Slow API responses                          | Parallel subagents dominate time anyway; circuit breaker prevents cascade                                                              |
+| ArangoDB down during recordDecision                            | Plan request fails                          | Non-blocking try/catch persistence (mirror DD recordDDReport pattern)                                                                  |
 
 ## Open Questions
 
@@ -175,6 +179,7 @@ All resolved — see Architecture Decisions (spec §16 mapped: 1→A6, 2→A5, 3
 ## Documentation Standards
 
 Every file must have:
+
 - File-level JSDoc (`@file`, `@description`, `@module`, `@layer`) — pattern: `lib/agent/due-diligence/pipeline.ts`
 - Every exported function: `@function`, `@description`, `@param`, `@returns` — pattern: `lib/agent/due-diligence/agent.ts`
 - Every interface/type: `@interface`, `@description` — pattern: `lib/agent/planning/types.ts`

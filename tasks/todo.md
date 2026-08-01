@@ -1,4 +1,3 @@
-
 # Planning Agent Refactor — Task List
 
 **Plan:** `tasks/plan.md`
@@ -18,11 +17,13 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Create planning tool layer directories and register new env keys. No npm installs needed (technicalindicators already installed; Exa uses plain fetch).
 
 **Files to create:**
+
 - `lib/agent/planning/tools/` (dir)
 - `__tests__/lib/agent/planning/tools/` (dir)
 
 **Files to modify:**
-- `.env.example` — add `DEEPSEEK_PLANNING_MODEL=deepseek-v4-pro` (orchestrator/aggregator, thinking mode) and `EXA_API_KEY=` (optional, web search)
+
+- `.env.example` — add `DEEPSEEK_THINK_MODEL=deepseek-v4-pro` (orchestrator/aggregator, thinking mode) and `EXA_API_KEY=` (optional, web search)
 
 **Verification:** Directories exist. `.env.example` shows both keys.
 **Dependencies:** None
@@ -40,6 +41,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Add planning swarm types, extend `TradePlanSchema` with `action`, extend `SubAgentThoughtSchema` return variant with optional planning fields. Critical for capture: zod strips unknown keys, so the planning wrapper can only receive `side`/`suggested_*` if the schema declares them.
 
 **Acceptance:**
+
 - `lib/agent/planning/types.ts` ADDS:
   - `PerspectiveReportSchema` + `PerspectiveReport` — `perspective` (PerspectiveSchema), `score` (number|null), `confidence` (number|null), `side` ("long"|"short"|"no_trade"), `entry_price` (number), `signals` (SignalEntry[]), `dataSources` (string[]), `reasoning` (string), `iterations` (number), `conclusion` (string), `errors` (string[]), `suggested_stop_loss`/`suggested_take_profit`/`suggested_leverage`/`suggested_position_size_usdc` (numbers), `risk_flags` (string[])
   - `PlanningSubagentPlan` — `{ perspective: Perspective, instruction: string, priority: number }`
@@ -54,11 +56,13 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - `lib/agent/due-diligence/subagent.ts` `SubAgentThoughtSchema` return variant ADDS optional: `side: z.enum(["long","short","no_trade"]).optional()`, `entry_price`, `suggested_stop_loss`, `suggested_take_profit`, `suggested_leverage`, `suggested_position_size_usdc` (all `z.number().optional()`), `risk_flags: z.array(z.string()).optional()`. No other changes to the file.
 
 **Files to modify:**
+
 - `lib/agent/planning/types.ts`
 - `lib/agent/types.ts`
 - `lib/agent/due-diligence/subagent.ts` (schema only)
 
 **Files to create:**
+
 - `__tests__/lib/agent/planning/types.test.ts` (extend)
 - `__tests__/lib/agent/due-diligence/subagent.test.ts` (extend — extras pass through, DD paths unchanged)
 
@@ -77,6 +81,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Wrap `lib/agent/planning/risk-engine.ts` functions and existing data fetchers as `ToolDefinition`s. Deterministic, pure — no LLM.
 
 **Acceptance:**
+
 - `lib/agent/planning/tools/risk-engine.ts`:
   - `compute_atr` `{ asset, period? }` → `{ atr, atrPercentOfEntry, source: "hyperliquid" }` — `fetchCandlesForATR(asset, "1h", 20)` + `computeATR(candles, period ?? 14)` + `fetchMarkPrice(asset)`
   - `compute_sltp` `{ entry, atr, side, slMultiplier?, tpMultiplier? }` → `{ stopLoss, takeProfit }` — `computeSLTP(entry, atr, side, { slMultiplier: slMultiplier ?? 1.5, tpMultiplier: tpMultiplier ?? 3.0 })`
@@ -93,6 +98,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - All tools: Zod params (`.describe()` each), errors → `{ success: false, error }`, `metadata.source` set.
 
 **Files to create:**
+
 - `lib/agent/planning/tools/risk-engine.ts`
 - `lib/agent/planning/tools/market-data.ts`
 - `lib/agent/planning/tools/index.ts` (stub funding/liquidation/web-search imports after T3 lands)
@@ -113,6 +119,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Funding regime, OI/funding divergence, liquidation approximation, Exa web search. Vibe tools derive from `lib/agent/skills/perp-funding-basis` + `liquidation-heatmap` methodology but use only HL public data (honest approximation — HL exposes no liquidation heatmap).
 
 **Acceptance:**
+
 - `lib/agent/planning/tools/funding.ts`:
   - `analyze_funding_regime` `{ asset }` → `{ regime: "normal" | "overheated_long" | "overheated_short", fundingRate, openInterest, markPrice, predictedFunding?, notes }` — deterministic: `|fundingRate| > 0.05%` → overheated (long if positive). Data via `fetchOnchainData`/`fetchMarkPrice` from `lib/data/hyperliquid.ts`; predicted funding included from `predictedFundings` endpoint (`HlPerp` venue, first perp dex only) when available (resolved §16.3). Description text says "approx — HL funding snapshot".
   - `detect_oi_funding_divergence` `{ asset }` → `{ divergence: boolean, priceChangePct, oiChangePct, fundingRate, signal: "bullish" | "bearish" | "neutral", notes }` — price up + OI up + funding strongly positive → neutral/overextended; price up + funding negative → divergence flagged.
@@ -123,6 +130,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
   - `web_search` `{ query }` → `{ results: Array<{ title, url, text }> }` — POST `https://api.exa.ai/search` with `{ query, numResults: 5 }`, header `Authorization: Bearer ${process.env.EXA_API_KEY}`, 15s timeout. Missing key → `{ success: false, error: "EXA_API_KEY not configured" }` (fast, non-fatal).
 
 **Files to create:**
+
 - `lib/agent/planning/tools/funding.ts`
 - `lib/agent/planning/tools/liquidation.ts`
 - `lib/agent/planning/tools/web-search.ts`
@@ -146,6 +154,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Thin wrapper around DD `runSubagent()` + planning LLM functions (`plan`/`rePlan`/`aggregate`, deepseek-v4-pro thinking) + prompts (spec §7.2-7.4). NO new loop code.
 
 **Acceptance:**
+
 - `lib/agent/planning/subagent.ts`:
   - `runPerspectiveSubagent({ perspective, instruction, asset, ddReport, targetProfitPercent, tools })` → `Promise<PerspectiveReport>`
   - `llmThink`: closure — calls DD `think()` (from `@/lib/agent/due-diligence/llm`), if result `action === "return"` stashes it; returns result to `runSubagent` unchanged.
@@ -153,7 +162,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
   - `runSubagent({ factor: perspective, tools, instruction, asset, maxLoops: 5, timeoutMs: 60000, llmThink, getSystemPrompt })`
   - Mapping: `side: stash?.side ?? "no_trade"`, `entry_price: stash?.entry_price ?? 0`, `suggested_*: stash?.suggested_* ?? 0`, `risk_flags: stash?.risk_flags ?? []`, rest copied from returned `FactorReport`.
 - `lib/agent/planning/llm.ts` ADDS (old `generatePerspective`/`aggregatePerspectives` KEPT, `@deprecated`):
-  - `plan({ ddReport, targetProfitPercent })` → `Promise<PlanningSubagentPlan[]>` — model `DEEPSEEK_PLANNING_MODEL` (default `deepseek-v4-pro`), thinking mode (NO temperature param; `reasoning_effort` from `DEEPSEEK_REASONING_EFFORT`), `json_object`, `max_tokens: 8192`, timeout 60s, retry 1. Failure/parse error → `[]` + console.error. Sanitize: only 3 perspectives, dedupe, priority 1-3.
+  - `plan({ ddReport, targetProfitPercent })` → `Promise<PlanningSubagentPlan[]>` — model `DEEPSEEK_THINK_MODEL` (default `deepseek-v4-pro`), thinking mode (NO temperature param; `reasoning_effort` from `DEEPSEEK_REASONING_EFFORT`), `json_object`, `max_tokens: 8192`, timeout 60s, retry 1. Failure/parse error → `[]` + console.error. Sanitize: only 3 perspectives, dedupe, priority 1-3.
   - `rePlan({ ddReport, targetProfitPercent, lowConsensusPerspectives, previousReports })` → `Promise<PlanningSubagentPlan[]>` — same model config.
   - `aggregate({ reports, ddReport, targetProfitPercent })` → `Promise<PlanningAggregationResult | null>` — same model config; null on failure. Sanitize against `PlanningAggregationResult` (numbers clamped 0-100, `side` enum).
 - `lib/agent/planning/prompts.ts` ADDS (old prompts KEPT until T10):
@@ -161,10 +170,12 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
   - `PLAN_PROMPT` (spec §7.3), `AGGREGATE_PROMPT` (spec §7.4 incl. "If 2+ perspectives conclude no_trade, final action is no_trade" + `profit_feasible` + `no_trade_reason`), `REPLAN_PROMPT` (targeted new instructions for low-consensus perspectives, past reports included).
 
 **Files to create:**
+
 - `lib/agent/planning/subagent.ts`
 - `__tests__/lib/agent/planning/subagent.test.ts`
 
 **Files to modify:**
+
 - `lib/agent/planning/llm.ts`
 - `lib/agent/planning/prompts.ts`
 - `__tests__/lib/agent/planning/llm.test.ts` (extend)
@@ -186,6 +197,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Deterministic Layer 1 evaluation (spec §8.1), in-memory circuit breaker (§9.7), leveled logging (§9.8).
 
 **Acceptance:**
+
 - `lib/agent/planning/evaluate.ts` — `evaluateConsensus(reports: PerspectiveReport[], aggregation: PlanningAggregationResult | null)` → `ConsensusResult`. Decision rules, FIRST MATCH WINS:
   1. All 3 reports `score === null` (failed) → `FAILED`
   2. ≥2 reports `side === "no_trade"` → `NO_TRADE` (noTradeReason from aggregation?.no_trade_reason)
@@ -201,6 +213,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - `lib/agent/planning/log.ts` — `log(level: "debug" | "info" | "warn" | "error", event: string, data?: Record<string, unknown>)` — console; DEBUG only when `NODE_ENV === "development"`. Event names per spec §9.8 table.
 
 **Files to create:**
+
 - `lib/agent/planning/evaluate.ts`
 - `lib/agent/planning/circuit-breaker.ts`
 - `lib/agent/planning/log.ts`
@@ -224,6 +237,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Plan-Execute-Reflect orchestrator. Mirrors `runDDAgent()` loop structure (see `lib/agent/due-diligence/agent.ts:149-288`).
 
 **Acceptance:**
+
 - `runPlanningAgent(params: PlanningAgentInput)` → `PlanningAgentOutput`
 - Step 0: `const category = getCategory(params.asset)` (from `@/lib/asset-categories`); missing → throw `PlanningError("Unknown asset")`. `ddReport = await runDDAgent({ asset, category, userId, walletAddress })`; failure → throw `PlanningError("PLANNING_FAILED")` with `phase: "dd"` detail. **Equity pre-fetch** (resolved §16.4): `equity = await fetchUserEquity(walletAddress).catch(() => 0)` once, before the loop — used for tool registry ctx + position sizing.
 - Loop (max 5):
@@ -243,6 +257,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - Timing tracked per phase (ddMs, planMs, executeMs, aggregateMs, evaluateMs, totalMs).
 
 **Files to create:**
+
 - `lib/agent/planning/agent.ts`
 - `__tests__/lib/agent/planning/agent.test.ts`
 
@@ -263,6 +278,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Thin wrapper, mirrors `lib/agent/due-diligence/pipeline.ts`.
 
 **Acceptance:**
+
 - `runPlanningPipeline(input: { asset: string, userId: string, walletAddress: string, targetProfitPercent?: number })` → `{ report: TradePlan, timing: { totalMs, agentMs } }`
   - `targetProfitPercent` defaults to 100.
   - Calls `runPlanningAgent(...)`; returns `report` (validated `TradePlanSchema.parse`).
@@ -270,6 +286,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - `lib/agent/pipeline.ts` barrel unchanged (already exports `runPlanningPipeline`).
 
 **Files to modify:**
+
 - `lib/agent/planning/pipeline.ts` (full rewrite)
 - `__tests__/lib/agent/planning/pipeline.test.ts` (full rewrite — new input shape, mock agent)
 
@@ -288,6 +305,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** New request contract (spec §12) + error contract (§9.6) + circuit breaker integration.
 
 **Acceptance:**
+
 - `POST /api/agent/planning` body: `{ asset: string, userId: string, walletAddress: string, targetProfitPercent?: number }`
   - zod: `asset` non-empty string; `targetProfitPercent` `z.number().positive().max(1000).optional()` (resolved §16.5 — decimal allowed: `100`, `76`, `20.5`; minus, zero, and fraction strings like "1/2" rejected)
   - 400 on missing/invalid fields (`{ error: "asset, userId, and walletAddress required" }` / zod issues)
@@ -298,6 +316,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - `docs/api-documentation.md`: update planning endpoint request/response examples (new body, error shapes).
 
 **Files to modify:**
+
 - `app/api/agent/planning/route.ts`
 - `docs/api-documentation.md`
 - `__tests__/app/api/agent/planning/route.test.ts` (rewrite)
@@ -317,12 +336,14 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Dashboard + hooks + execution guard (spec §16.6: breaking change accepted).
 
 **Acceptance:**
+
 - `hooks/use-planning.ts` — request body becomes `{ asset, userId, walletAddress, targetProfitPercent }` (no ddReport); exposes `targetProfitPercent` state (default 100).
 - `components/dashboard/plan-section.tsx` — takes `asset` (from DD section's analyzed asset) + target profit input; calls planning on asset; when `plan.action === "NO_TRADE"` show reason and disable approve/execute buttons.
 - `lib/agent/execution/pipeline.ts` — guard at top: `if (tradePlan.action === "NO_TRADE") throw new ExecutionError("Cannot execute a NO_TRADE plan")` (defensive; `action` is optional in schema → treat missing as LONG).
 - Run full test suite; fix any test referencing old planning input.
 
 **Files to modify:**
+
 - `hooks/use-planning.ts`
 - `components/dashboard/plan-section.tsx`
 - `lib/agent/execution/pipeline.ts`
@@ -343,6 +364,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 **Description:** Delete old linear-pipeline code (spec §15), run full gate.
 
 **Acceptance:**
+
 - Removed from `lib/agent/planning/llm.ts`: `generatePerspective`, `aggregatePerspectives`
 - Removed from `lib/agent/planning/prompts.ts`: `PERSPECTIVE_SYSTEM_PROMPTS`, `PERSPECTIVE_USER_PROMPT`, `AGGREGATOR_SYSTEM_PROMPT`, `AGGREGATOR_USER_PROMPT`
 - Removed from `lib/agent/planning/types.ts`: `PerspectiveResult`/`PerspectiveResultSchema`, `PlanningPipelineInput`, `AggregatedReasoning` (keep `PerspectiveSchema`, `PlanningAggregationResult`)
@@ -350,6 +372,7 @@ TDD rule: Write failing test first (RED) → verify failure → minimal implemen
 - `gate.ts` and `risk-engine.ts` KEPT (unchanged)
 
 **Verification:**
+
 - [ ] Dead-code rg sweep clean
 - [ ] `npm test` — all tests pass
 - [ ] `npm run lint` — zero errors
