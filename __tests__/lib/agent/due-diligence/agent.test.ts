@@ -1,3 +1,13 @@
+/**
+ * @file __tests__/lib/agent/due-diligence/agent.test.ts
+ * @description Tests for runDDAgent(), computeDeterministicScore() and
+ *   buildFinalReport(). Mocks every external dependency (LLM, subagent, tool
+ *   registry, graph memory) while keeping the deterministic layers REAL, so
+ *   the Plan-Execute-Reflect loop, scoring, and report assembly are tested.
+ *   Also covers the fail-fast budgets (max 3 iterations, per-factor 120s,
+ *   pipeline timeout, early exit on 2+ failed factors).
+ */
+
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
 vi.mock("@/lib/agent/due-diligence/llm", () => ({
@@ -13,6 +23,13 @@ vi.mock("@/lib/agent/due-diligence/subagent", () => ({
 
 vi.mock("@/lib/agent/tools/registry", () => ({
   getToolRegistry: vi.fn(() => ({})),
+}))
+
+// reason: the real fetchCandleMap hits the network (variable latency) — it is
+// only consumed by getToolRegistry (already mocked), so stub it to keep the
+// pipeline-timeout test's tiny budget deterministic.
+vi.mock("@/lib/agent/tools/technical/candles", () => ({
+  fetchCandleMap: vi.fn(() => Promise.resolve(undefined)),
 }))
 
 vi.mock("@/lib/db/graph-memory", () => ({
@@ -164,6 +181,28 @@ describe("buildFinalReport", () => {
     expect(report.sections["onchain"]!.summary).toBe("Test conclusion")
     expect(report.risk_flags).toEqual(["Market volatility risk"])
     expect(report.errors).toBeUndefined()
+  })
+
+  it("counts usableFactorCount as non-null factor scores (null excluded, 0 included)", () => {
+    const reports: FactorReport[] = [
+      makeFactorReport({ factor: "technical", score: 80 }),
+      makeFactorReport({ factor: "onchain", score: null }),
+      makeFactorReport({ factor: "sentiment", score: 0 }),
+    ]
+
+    const report = buildFinalReport({
+      asset: "BTC",
+      category: "major",
+      factorReports: reports,
+      aggregation: null,
+      deterministic: { overallScore: 40, overallConfidence: 40 },
+      iterations: 1,
+      processingTimeMs: 1000,
+      status: "partial",
+      errors: [],
+    })
+
+    expect(report.usableFactorCount).toBe(2)
   })
 
   it("includes errors when non-empty", () => {
@@ -453,5 +492,117 @@ describe("runDDAgent", () => {
     expect(result.status).toBe("partial")
     expect(result.iterations).toBe(2)
     expect(result.errors!.some((e: string) => e.includes("Exhausted max loops"))).toBe(true)
+  })
+
+  it("default maxLoops caps the run at 3 iterations (fail fast, was 5)", async () => {
+    const plans: SubagentPlan[] = [
+      { factor: "technical", instruction: "Analyze", priority: 1 },
+      { factor: "onchain", instruction: "Analyze", priority: 2 },
+      { factor: "sentiment", instruction: "Analyze", priority: 3 },
+      { factor: "fundamental", instruction: "Analyze", priority: 4 },
+    ]
+
+    vi.mocked(plan).mockResolvedValueOnce(plans)
+    vi.mocked(rePlan).mockResolvedValue(plans)
+
+    // 2 high-confidence + 2 low-confidence factors → RE-DEPLOY every iteration,
+    // no factor fails → the early-exit must NOT trigger, so the loop runs to
+    // the default maxLoops cap.
+    vi.mocked(runSubagent).mockImplementation(async ({ factor }) =>
+      ["sentiment", "fundamental"].includes(factor as string)
+        ? makeFactorReport({ factor: factor as string, score: 40, confidence: 35 })
+        : makeFactorReport({ factor: factor as string, score: 80, confidence: 85 })
+    )
+    vi.mocked(aggregate).mockResolvedValue(defaultAggregationResult)
+
+    const result = await runDDAgent({
+      asset: "BTC",
+      category: defaultCategory,
+    })
+
+    expect(result.status).toBe("partial")
+    expect(result.iterations).toBe(3)
+    expect(runSubagent).toHaveBeenCalledTimes(12)
+    expect(result.errors!.some((e: string) => e.includes("Exhausted max loops"))).toBe(true)
+  })
+
+  it("passes the 120s per-factor timeout budget to every subagent run", async () => {
+    vi.mocked(plan).mockResolvedValueOnce([
+      { factor: "technical", instruction: "Analyze", priority: 1 },
+      { factor: "onchain", instruction: "Analyze", priority: 2 },
+      { factor: "sentiment", instruction: "Analyze", priority: 3 },
+      { factor: "fundamental", instruction: "Analyze", priority: 4 },
+    ])
+    vi.mocked(runSubagent).mockImplementation(async ({ factor }) =>
+      makeFactorReport({ factor: factor as string, score: 85, confidence: 90 })
+    )
+    vi.mocked(aggregate).mockResolvedValueOnce(defaultAggregationResult)
+
+    await runDDAgent({ asset: "BTC", category: defaultCategory })
+
+    expect(runSubagent).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 120000 }))
+  })
+
+  it("early-exits with a partial report when 2+ factors fail in iteration 1 (no re-deploy)", async () => {
+    vi.mocked(plan).mockResolvedValueOnce([
+      { factor: "technical", instruction: "Analyze", priority: 1 },
+      { factor: "onchain", instruction: "Analyze", priority: 2 },
+      { factor: "sentiment", instruction: "Analyze", priority: 3 },
+      { factor: "fundamental", instruction: "Analyze", priority: 4 },
+    ])
+    // 2 failed (onchain, sentiment) + 1 low-confidence (fundamental) →
+    // evaluateResults says RE-DEPLOY, but the early-exit must return partial
+    // instead of deploying further iterations.
+    vi.mocked(runSubagent).mockImplementation(async ({ factor }) => {
+      if (["onchain", "sentiment"].includes(factor as string)) {
+        return makeFactorReport({ factor: factor as string, score: null, confidence: null, errors: ["Failed"] })
+      }
+      return factor === "fundamental"
+        ? makeFactorReport({ factor: factor as string, score: 50, confidence: 45 })
+        : makeFactorReport({ factor: factor as string, score: 80, confidence: 85 })
+    })
+    vi.mocked(aggregate).mockResolvedValueOnce(defaultAggregationResult)
+    vi.mocked(rePlan).mockResolvedValue([])
+
+    const result = await runDDAgent({ asset: "BTC", category: defaultCategory })
+
+    expect(result.status).toBe("partial")
+    expect(result.iterations).toBe(1)
+    expect(rePlan).not.toHaveBeenCalled()
+    expect(runSubagent).toHaveBeenCalledTimes(4)
+    // Phase 2 gate compatibility: usable factors still counted correctly
+    expect(result.usableFactorCount).toBe(2)
+    expect(result.errors!.some((e: string) => e.includes("Early exit"))).toBe(true)
+  })
+
+  it("returns partial on pipeline timeout before maxLoops is reached", async () => {
+    vi.mocked(plan).mockResolvedValueOnce([
+      { factor: "technical", instruction: "Analyze", priority: 1 },
+      { factor: "onchain", instruction: "Analyze", priority: 2 },
+      { factor: "sentiment", instruction: "Analyze", priority: 3 },
+      { factor: "fundamental", instruction: "Analyze", priority: 4 },
+    ])
+    // 2 high + 2 low confidence → RE-DEPLOY so the loop would continue; the
+    // tiny pipeline budget must abort at the next iteration start instead.
+    vi.mocked(runSubagent).mockImplementation(async ({ factor }) => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      return ["sentiment", "fundamental"].includes(factor as string)
+        ? makeFactorReport({ factor: factor as string, score: 40, confidence: 35 })
+        : makeFactorReport({ factor: factor as string, score: 80, confidence: 85 })
+    })
+    vi.mocked(aggregate).mockResolvedValue(defaultAggregationResult)
+    vi.mocked(rePlan).mockResolvedValue([])
+
+    const result = await runDDAgent({
+      asset: "BTC",
+      category: defaultCategory,
+      pipelineTimeoutMs: 50,
+    })
+
+    expect(result.status).toBe("partial")
+    expect(result.iterations).toBe(1)
+    expect(runSubagent).toHaveBeenCalledTimes(4)
+    expect(result.usableFactorCount).toBe(4)
+    expect(result.errors!.some((e: string) => e.includes("Pipeline timeout"))).toBe(true)
   })
 })

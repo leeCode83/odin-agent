@@ -220,14 +220,86 @@ describe("runPlanningAgent", () => {
       expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
     })
 
-    it("throws PlanningError with phase dd when the DD report status is partial", async () => {
-      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "partial" })
+    it("proceeds with a confidence penalty when the DD report status is partial with usable scores", async () => {
+      runDDAgentMock.mockResolvedValue({
+        ...DD_REPORT,
+        status: "partial",
+        usableFactorCount: 3,
+        sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
+      })
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
 
-      const err = await captureError(runPlanningAgent(INPUT))
+      const out = await runPlanningAgent(INPUT)
 
-      expect(err).toBeInstanceOf(PlanningError)
-      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
-      expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
+      // 80 * 3/4 = 60 → below the 70 confidence threshold → approval path
+      expect(out.status).toBe("approval_required")
+      expect(out.report.autonomy_decision).toBe("approve")
+      expect(out.report.confidence_score).toBe(60)
+      expect(runPerspectiveSubagentMock).toHaveBeenCalled()
+    })
+
+    it("penalizes confidence by usable/expected for meme categories (2/3)", async () => {
+      getCategoryMock.mockReturnValue({
+        name: "meme",
+        activeFactors: ["technical", "onchain", "sentiment"] as const,
+      })
+      runDDAgentMock.mockResolvedValue({
+        ...DD_REPORT,
+        category: "meme",
+        status: "partial",
+        usableFactorCount: 2,
+        sections: {
+          technical: { score: 80, summary: "x", signals: [] },
+          onchain: { score: null, summary: null, signals: [] },
+          sentiment: { score: 70, summary: "y", signals: [] },
+          fundamental: { score: null, summary: null, signals: [] },
+        },
+      })
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent(INPUT)
+
+      // 80 * 2/3 = 53.33 → 53 → below the 70 confidence threshold → approval path
+      expect(out.status).toBe("approval_required")
+      expect(out.report.confidence_score).toBe(53)
+    })
+
+    it("keeps status complete when a penalized DD still clears the autonomy gate", async () => {
+      runDDAgentMock.mockResolvedValue({
+        ...DD_REPORT,
+        status: "partial",
+        usableFactorCount: 3,
+        sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
+      })
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 96 }))
+
+      const out = await runPlanningAgent(INPUT)
+
+      // 96 * 3/4 = 72 → at/above the 70 threshold → auto
+      expect(out.status).toBe("complete")
+      expect(out.report.autonomy_decision).toBe("auto")
+      expect(out.report.confidence_score).toBe(72)
+    })
+
+    it("keeps status no_trade when a partial DD still yields NO_TRADE", async () => {
+      runDDAgentMock.mockResolvedValue({
+        ...DD_REPORT,
+        status: "partial",
+        usableFactorCount: 3,
+        sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
+      })
+      runPerspectiveSubagentMock.mockImplementation(
+        async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) =>
+          makeReport({ perspective, side: "no_trade" })
+      )
+      aggregateMock.mockResolvedValue(
+        makeAggregation({ side: "no_trade", position_size_usdc: 0, confidence_score: 40, profit_feasible: false })
+      )
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("no_trade")
+      expect(out.report.autonomy_decision).toBe("auto")
     })
 
     it("throws PlanningError with phase dd when every factor section has a null score", async () => {
@@ -484,6 +556,40 @@ describe("runPlanningAgent", () => {
 
       expect(out.iterations).toBe(2)
       expect(out.status).toBe("complete")
+    })
+  })
+
+  describe("fail fast — MAX_LOOPS and loop deadline", () => {
+    it("exhausts the loop at MAX_LOOPS 3 (fail fast, was 5) when re-deploys never force accept", async () => {
+      // aggregation null + high-confidence same-side reports → rule 6 RE-DEPLOY
+      // with an EMPTY low-consensus set → the per-perspective re-deploy cap
+      // never fires, so the loop runs to MAX_LOOPS.
+      aggregateMock.mockResolvedValue(null)
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("partial")
+      expect(out.iterations).toBe(3)
+    })
+
+    it("breaks the loop early when the per-iteration deadline is exceeded", async () => {
+      // tiny loop budget via env → the deadline must trip at the next
+      // iteration start (no fake timers; same pattern as the DD agent)
+      vi.stubEnv("PLANNING_LOOP_TIMEOUT_MS", "50")
+      try {
+        runPerspectiveSubagentMock.mockImplementation(async ({ perspective }) => {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+          return makeReport({ perspective })
+        })
+        aggregateMock.mockResolvedValue(null)
+
+        const out = await runPlanningAgent(INPUT)
+
+        expect(out.status).toBe("partial")
+        expect(out.iterations).toBe(1)
+      } finally {
+        vi.unstubAllEnvs()
+      }
     })
   })
 

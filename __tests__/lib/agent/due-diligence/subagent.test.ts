@@ -348,6 +348,195 @@ describe("runSubagent", () => {
     expect(mockThink).toHaveBeenCalledTimes(4)
   })
 
+  it("executes tools via native tool_calls and feeds results back as tool messages", async () => {
+    const executeSpy = vi.fn(async () => ({
+      success: true,
+      data: { price: 65000 },
+      metadata: { source: "hyperliquid", latencyMs: 100 },
+    }))
+    const tools: ToolRegistry = {
+      get_price: {
+        name: "get_price",
+        description: "Get price",
+        parameters: z.object({ asset: z.string() }),
+        execute: executeSpy,
+      },
+    }
+
+    const mockThink = vi
+      .fn()
+      .mockResolvedValueOnce({
+        action: "native_tool_call",
+        toolCalls: [{ id: "call_abc", toolName: "get_price", rawArguments: '{"asset":"BTC"}' }],
+        assistantMessage: {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_abc", type: "function", function: { name: "get_price", arguments: '{"asset":"BTC"}' } }],
+        },
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 80,
+        confidence: 85,
+        signals: [{ name: "price", strength: 80, direction: "bullish" }],
+        reasoning: "Price looks good",
+        conclusion: "Go long",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "Analyze BTC",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are a technical analyst.",
+    })
+
+    expect(executeSpy).toHaveBeenCalledWith({ asset: "BTC" })
+    expect(report.score).toBe(80)
+    expect(report.iterations).toBe(2)
+    expect(report.dataSources).toContain("hyperliquid")
+
+    const secondCallMessages = mockThink.mock.calls[1][0] as Array<Record<string, unknown>>
+    const echoMsg = secondCallMessages.find((m) => m.role === "assistant" && m.tool_calls)
+    expect(echoMsg).toBeDefined()
+    const toolMsg = secondCallMessages.find((m) => m.role === "tool")
+    expect(toolMsg).toBeDefined()
+    expect(toolMsg?.tool_call_id).toBe("call_abc")
+    expect(String(toolMsg?.content)).toContain("65000")
+  })
+
+  it("executes every native tool_call in a single response", async () => {
+    const firstSpy = vi.fn(async () => ({ success: true, data: { price: 100 }, metadata: { source: "test", latencyMs: 0 } }))
+    const secondSpy = vi.fn(async () => ({ success: true, data: { trend: "up" }, metadata: { source: "test", latencyMs: 0 } }))
+    const tools: ToolRegistry = {
+      get_price: makeTool("get_price", firstSpy),
+      get_trend: makeTool("get_trend", secondSpy),
+    }
+
+    const mockThink = vi
+      .fn()
+      .mockResolvedValueOnce({
+        action: "native_tool_call",
+        toolCalls: [
+          { id: "call_1", toolName: "get_price", rawArguments: '{"asset":"BTC"}' },
+          { id: "call_2", toolName: "get_trend", rawArguments: "{}" },
+        ],
+        assistantMessage: { role: "assistant", content: null, tool_calls: [] },
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 60,
+        confidence: 60,
+        signals: [],
+        reasoning: "Enough data",
+        conclusion: "Done",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "Analyze",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are an analyst.",
+    })
+
+    expect(firstSpy).toHaveBeenCalledTimes(1)
+    expect(secondSpy).toHaveBeenCalledTimes(1)
+    expect(report.errors).toHaveLength(0)
+    const secondCallMessages = mockThink.mock.calls[1][0] as Array<Record<string, unknown>>
+    expect(secondCallMessages.filter((m) => m.role === "tool")).toHaveLength(2)
+  })
+
+  it("passes OpenAI tools to llmThink when the registry is non-empty", async () => {
+    const tools: ToolRegistry = { get_price: makeTool("get_price") }
+    const mockThink = vi.fn().mockResolvedValue({
+      action: "return",
+      score: 50,
+      confidence: 50,
+      signals: [],
+      reasoning: "No tools needed",
+      conclusion: "Done",
+    })
+
+    await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "Analyze",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are an analyst.",
+    })
+
+    const options = mockThink.mock.calls[0][1] as { tools?: Array<{ function: { name: string } }> } | undefined
+    expect(options).toBeDefined()
+    expect(options?.tools).toHaveLength(1)
+    expect(options?.tools?.[0].function.name).toBe("get_price")
+  })
+
+  it("passes no tools option to llmThink when the registry is empty", async () => {
+    const mockThink = vi.fn().mockResolvedValue({
+      action: "return",
+      score: 50,
+      confidence: 50,
+      signals: [],
+      reasoning: "No tools needed",
+      conclusion: "Done",
+    })
+
+    await runSubagent({
+      factor: "technical",
+      tools: {},
+      instruction: "Analyze",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are an analyst.",
+    })
+
+    expect(mockThink.mock.calls[0][1]).toBeUndefined()
+  })
+
+  it("records a malformed native tool argument as an error and continues", async () => {
+    const tools: ToolRegistry = {
+      strict_tool: {
+        name: "strict_tool",
+        description: "Needs a required field",
+        parameters: z.object({ required_field: z.string() }),
+        execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
+      },
+    }
+
+    const mockThink = vi
+      .fn()
+      .mockResolvedValueOnce({
+        action: "native_tool_call",
+        toolCalls: [{ id: "call_x", toolName: "strict_tool", rawArguments: "not json" }],
+        assistantMessage: { role: "assistant", content: null, tool_calls: [] },
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 40,
+        confidence: 40,
+        signals: [],
+        reasoning: "Recovered",
+        conclusion: "Done",
+      })
+
+    const report = await runSubagent({
+      factor: "fundamental",
+      tools,
+      instruction: "Analyze",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "You are an analyst.",
+    })
+
+    expect(report.errors.length).toBeGreaterThanOrEqual(1)
+    const toolMsg = (mockThink.mock.calls[1][0] as Array<Record<string, unknown>>).find((m) => m.role === "tool")
+    expect(String(toolMsg?.content)).toContain("Invalid params")
+  })
+
   // ponytail: wall-clock timeout tested implicitly via maxLoops.
   // Real Date.now mocking adds complexity without covering new ground.
 })

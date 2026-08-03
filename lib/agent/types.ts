@@ -51,6 +51,9 @@ export const DDReportSchema = z.object({
   iterations: z.number().int().min(0).optional(),
   status: z.enum(["complete", "partial", "failed"]).optional(),
   processingTimeMs: z.number().min(0).optional(),
+  // reason: optional for backward compatibility with reports produced before
+  // this field existed (quality gate falls back to counting scored sections).
+  usableFactorCount: z.number().int().min(0).optional(),
 })
 
 export type SectionResult = z.infer<typeof SectionResultSchema>

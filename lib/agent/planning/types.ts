@@ -129,7 +129,10 @@ export interface PlanningAgentOutput {
     totalMs: number
   }
   iterations: number
-  status: "complete" | "no_trade" | "partial" | "failed"
+  // reason: approval_required = penalized (partial DD) run whose plan needs
+  // human approval; distinct from "partial" (loop exhaustion) and the
+  // per-plan autonomy_decision "approve" (which can also occur on full DD).
+  status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
 }
 
 /**

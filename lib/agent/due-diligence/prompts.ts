@@ -1,4 +1,11 @@
 /**
+ * @file due-diligence/prompts.ts
+ * @description System prompts, JSON schema summaries, and schema descriptions for the due-diligence LLM layer.
+ * @module due-diligence
+ * @layer service
+ */
+
+/**
  * @function describeZodSchema
  * @description Converts a Zod schema to a human-readable parameter string for LLM prompts.
  *   Handles ZodObject by extracting shape keys. Returns "{}" for unknown types.
@@ -14,6 +21,27 @@ export function describeZodSchema(schema: unknown): string {
   }
   return "{}"
 }
+
+/**
+ * @constant THINK_JSON_INSTRUCTION
+ * @description Explicit JSON-only output instruction appended to the THINK step's user message.
+ *   DeepSeek json_object mode requires the prompt to explicitly demand JSON; the codeblock
+ *   summarizes every field of the SubAgentThought discriminated union so the model reproduces it.
+ */
+export const THINK_JSON_INSTRUCTION = `Respond ONLY with valid JSON. No markdown, no code fences.
+Output MUST match this schema:
+\`\`\`json
+{
+  "action": "return" | "tool_call",
+  "score": 0-100,
+  "confidence": 0-100,
+  "signals": [...],
+  "reasoning": "...",
+  "conclusion": "...",
+  "toolName": "...", // tool_call only
+  "params": { ... }  // tool_call only
+}
+\`\`\``
 
 /**
  * @function REACT_SYSTEM_PROMPT
@@ -40,9 +68,22 @@ INSTRUCTION: ${instruction}
 Available tools:
 ${toolDescriptions}
 
-You MUST respond in JSON format. Choose one:
-1. To call a tool: {"action":"tool_call","toolName":"...","params":{...},"reasoning":"..."}
-2. To return your analysis: {"action":"return","score":0-100,"confidence":0-100,"signals":[...],"reasoning":"...","conclusion":"..."}
+Respond ONLY with valid JSON. No markdown, no code fences. Output MUST match this schema:
+\`\`\`json
+{
+  "action": "tool_call" | "return",
+  "toolName": "...",   // required when action is "tool_call"
+  "params": { ... },   // required when action is "tool_call"
+  "score": 0-100,      // required when action is "return"
+  "confidence": 0-100, // required when action is "return"
+  "signals": [...],    // required when action is "return"
+  "reasoning": "...",
+  "conclusion": "..."  // required when action is "return"
+}
+\`\`\`
+Choose one:
+1. To call a tool: set "action" to "tool_call" with "toolName" and "params".
+2. To return your analysis: set "action" to "return" with "score", "confidence", "signals", "reasoning", "conclusion".
 
 Use tools to gather data. Return when you have enough information for a thorough analysis.
 
@@ -88,9 +129,17 @@ Return a JSON array: [{factor, instruction, priority}, ...]`
  */
 export const AGGREGATE_PROMPT = `You are a senior investment analyst. Synthesize the factor analysis reports into a unified assessment.
 
-Return JSON with:
-- thesis: comprehensive trading thesis
-- crossValidation: { pairs: [{factorA, factorB, alignment 0-100, note}], overallAlignment 0-100, contradictions: [] }
-- risks: [{factor, description, severity "low"|"medium"|"high"}]
-- catalysts: [{factor, description, impact "low"|"medium"|"high"}]
-- summary: 3-5 sentence overall summary`
+Respond ONLY with valid JSON. Output MUST match this schema:
+\`\`\`json
+{
+  "thesis": "...",
+  "crossValidation": {
+    "pairs": [{ "factorA": "...", "factorB": "...", "alignment": 0-100, "note": "..." }],
+    "overallAlignment": 0-100,
+    "contradictions": []
+  },
+  "risks": [{ "factor": "...", "description": "...", "severity": "low" | "medium" | "high" }],
+  "catalysts": [{ "factor": "...", "description": "...", "impact": "low" | "medium" | "high" }],
+  "summary": "..."
+}
+\`\`\``

@@ -12,7 +12,7 @@
 import type { DDReport } from "@/lib/agent/types"
 import type { ToolRegistry } from "@/lib/agent/tools/types"
 import type { Perspective, PerspectiveReport } from "@/lib/agent/planning/types"
-import type { SubAgentThought } from "@/lib/agent/due-diligence/subagent"
+import type { SubAgentThought, LlmThinkMessage, ThinkResult } from "@/lib/agent/due-diligence/subagent"
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { think } from "@/lib/agent/due-diligence/llm"
 import { makePlanningSystemPrompt } from "@/lib/agent/planning/prompts"
@@ -54,11 +54,13 @@ export async function runPerspectiveSubagent(params: {
   let stash: Extract<SubAgentThought, { action: "return" }> | undefined
 
   const llmThink = async (
-    messages: Array<{ role: string; content: string }>
-  ): Promise<SubAgentThought> => {
+    messages: LlmThinkMessage[]
+  ): Promise<ThinkResult> => {
     // reason: runSubagent's context message carries only factor/asset/instruction/history —
-    // the DDReport is appended here so every THINK call sees it.
-    const withReport: Array<{ role: string; content: string }> = [
+    // the DDReport is appended here so every THINK call sees it. Native tools are NOT
+    // forwarded (the 2nd options arg is intentionally dropped) — planning stays on the
+    // JSON-in-prompt convention, which T6 leaves untouched for non-DD callers.
+    const withReport: LlmThinkMessage[] = [
       ...messages,
       { role: "user", content: `[DDReport]\n${JSON.stringify(params.ddReport)}` },
     ]

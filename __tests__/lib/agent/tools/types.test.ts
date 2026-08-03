@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest"
 import { z } from "zod"
+import type OpenAI from "openai"
 import {
   type ToolDefinition,
   type ToolResult,
   type ToolRegistry,
+  toolRegistryToOpenAITools,
 } from "@/lib/agent/tools/types"
 import {
   getToolRegistry,
@@ -134,5 +136,34 @@ describe("getCrossFactorRegistry", () => {
   it("returns empty registry initially", () => {
     const registry = getCrossFactorRegistry()
     expect(registry).toEqual({})
+  })
+})
+
+describe("toolRegistryToOpenAITools", () => {
+  it("maps registry tools to OpenAI function tools with JSON-schema parameters", () => {
+    const registry: ToolRegistry = {
+      get_price: {
+        name: "get_price",
+        description: "Get the current price for an asset",
+        parameters: z.object({ asset: z.string(), timeframe: z.enum(["1h", "1d"]).optional() }),
+        execute: async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }),
+      },
+    }
+
+    const tools = toolRegistryToOpenAITools(registry)
+
+    expect(tools).toHaveLength(1)
+    expect(tools[0].type).toBe("function")
+    const fn = (tools[0] as OpenAI.Chat.Completions.ChatCompletionFunctionTool).function
+    expect(fn.name).toBe("get_price")
+    expect(fn.description).toBe("Get the current price for an asset")
+    const params = fn.parameters as Record<string, unknown>
+    expect(params.type).toBe("object")
+    const props = params.properties as Record<string, { type: string }>
+    expect(props.asset.type).toBe("string")
+  })
+
+  it("returns an empty array for an empty registry", () => {
+    expect(toolRegistryToOpenAITools({})).toEqual([])
   })
 })

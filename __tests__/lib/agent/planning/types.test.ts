@@ -153,7 +153,7 @@ describe("Planning swarm types", () => {
       }
       timing: { ddMs: number; planMs: number; executeMs: number; aggregateMs: number; evaluateMs: number; totalMs: number }
       iterations: number
-      status: "complete" | "no_trade" | "partial" | "failed"
+      status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
     }>()
   })
 

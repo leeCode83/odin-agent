@@ -138,6 +138,44 @@ describe("runPlanningPipeline", () => {
     expect((err as PlanningError).processingTimeMs).toBe(321)
   })
 
+  it("defaults errorCategory to internal", () => {
+    const err = new PlanningError("plain failure")
+
+    expect(err.errorCategory).toBe("internal")
+  })
+
+  it("preserves errorCategory from an underlying PlanningError", async () => {
+    vi.mocked(runPlanningAgent).mockRejectedValueOnce(
+      new PlanningError("PLANNING_FAILED", { phase: "dd" }, 321, "data")
+    )
+
+    const err = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+    }).catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(PlanningError)
+    expect((err as PlanningError).errorCategory).toBe("data")
+  })
+
+  it("surfaces the agent status in the pipeline result", async () => {
+    vi.mocked(runPlanningAgent).mockResolvedValueOnce({
+      report: mockTradePlan,
+      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      iterations: 1,
+      status: "approval_required",
+    })
+
+    const result = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+    })
+
+    expect(result.status).toBe("approval_required")
+  })
+
   it("wraps TradePlanSchema validation failures in PlanningError", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       // reason: deliberately schema-invalid report (entry_price undefined) to

@@ -8,8 +8,10 @@
  */
 
 import { z } from "zod"
+import type OpenAI from "openai"
 import type { FactorReport, SignalEntry } from "@/lib/agent/due-diligence/types"
 import type { ToolRegistry } from "@/lib/agent/tools/types"
+import { toolRegistryToOpenAITools } from "@/lib/agent/tools/types"
 
 /**
  * @constant SignalEntrySchema
@@ -75,6 +77,54 @@ export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
 
 /** @typedef {z.infer<typeof SubAgentThoughtSchema>} SubAgentThought */
 export type SubAgentThought = z.infer<typeof SubAgentThoughtSchema>
+
+/**
+ * @typedef LlmThinkMessage
+ * @description Message shape the ReAct loop passes to `llmThink`. Structural superset
+ *   of { role, content } so native `tool` messages and assistant tool_calls echoes
+ *   survive the loop untouched; `content` is nullable for assistant messages that
+ *   carry only tool_calls.
+ */
+export type LlmThinkMessage = {
+  role: string
+  content?: string | null
+  tool_call_id?: string
+}
+
+/**
+ * @typedef {Object} NativeToolCall
+ * @description One tool invocation the model requested via native `tool_calls`.
+ */
+export type NativeToolCall = {
+  id: string
+  toolName: string
+  rawArguments: string
+}
+
+/**
+ * @typedef {Object} NativeToolCallsResult
+ * @description Think result when the model answered with native `tool_calls` instead
+ *   of content JSON. Carries the parsed calls plus the raw assistant message so the
+ *   loop can echo it back before appending `tool` role messages (the chat API requires
+ *   each tool_call to be answered by a {role:"tool"} message).
+ */
+export type NativeToolCallsResult = {
+  action: "native_tool_call"
+  toolCalls: NativeToolCall[]
+  assistantMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam
+}
+
+/** @typedef {SubAgentThought | NativeToolCallsResult} ThinkResult - Discriminated think() output. */
+export type ThinkResult = SubAgentThought | NativeToolCallsResult
+
+/**
+ * @typedef {Object} ThinkOptions
+ * @description Optional think() request options. When `tools` is present, the API is
+ *   called with native function tools; empty registries must omit it entirely.
+ */
+export type ThinkOptions = {
+  tools?: OpenAI.Chat.Completions.ChatCompletionTool[]
+}
 
 /** @typedef {Object} HistoryEntry - One tool invocation recorded during the ReAct loop. */
 type HistoryEntry = {
@@ -144,16 +194,79 @@ function summarizeHistory(history: HistoryEntry[]) {
 }
 
 /**
+ * @function executeToolCall
+ * @description Validates params against the tool's Zod schema, executes the tool, and
+ *   records the outcome (success or error) into the loop history. Never throws —
+ *   unknown tools, invalid params, and execution failures become error history entries.
+ * @param {string} toolName - Tool name to invoke.
+ * @param {unknown} params - Raw parameters (validated before execution).
+ * @param {ToolRegistry} tools - Tool registry to resolve the tool from.
+ * @param {string[]} toolNames - Available tool names (for the unknown-tool error).
+ * @param {HistoryEntry[]} history - Loop history to append the outcome to.
+ * @returns {Promise<HistoryEntry["result"]>} The recorded tool result.
+ */
+async function executeToolCall(
+  toolName: string,
+  params: unknown,
+  tools: ToolRegistry,
+  toolNames: string[],
+  history: HistoryEntry[]
+): Promise<HistoryEntry["result"]> {
+  const tool = tools[toolName]
+  if (!tool) {
+    const result = {
+      success: false,
+      error: `Unknown tool: ${toolName}. Available: ${toolNames.join(", ")}`,
+      metadata: { source: "system", latencyMs: 0 },
+    }
+    history.push({ toolName, result })
+    return result
+  }
+
+  try {
+    const parsed = tool.parameters.safeParse(params)
+    if (!parsed.success) {
+      const result = {
+        success: false,
+        error: `Invalid params: ${parsed.error.message}`,
+        metadata: { source: "system", latencyMs: 0 },
+      }
+      history.push({ toolName, result })
+      return result
+    }
+    const toolResult = await tool.execute(parsed.data)
+    const result = {
+      success: toolResult.success,
+      error: toolResult.error,
+      metadata: toolResult.metadata,
+      data: toolResult.data,
+    }
+    history.push({ toolName, result })
+    return result
+  } catch (err) {
+    const result = {
+      success: false,
+      error: `Execution error: ${String(err)}`,
+      metadata: { source: "system", latencyMs: 0 },
+    }
+    history.push({ toolName, result })
+    return result
+  }
+}
+
+/**
  * @function runSubagent
  * @description Executes the generic ReAct loop for a single factor subagent.
  *
  * The loop:
  *   1. Builds a context message (system prompt + current state + history).
- *   2. Calls `llmThink` to get a `SubAgentThought`.
+ *   2. Calls `llmThink` to get a `ThinkResult` (native tool_calls or SubAgentThought).
  *   3. If `action === "return"`, assembles and returns a `FactorReport`.
- *   4. If `action === "tool_call"`, validates params, executes the tool, pushes
- *      the result into conversation history, and loops.
- *   5. If the loop budget (`maxLoops`) or wall-clock budget (`timeoutMs`) is
+ *   4. If `action === "native_tool_call"`, executes each tool, echoes the assistant
+ *      message, appends {role:"tool"} results, and loops.
+ *   5. If `action === "tool_call"` (backward-compat JSON convention), validates params,
+ *      executes the tool, pushes the result into conversation history, and loops.
+ *   6. If the loop budget (`maxLoops`) or wall-clock budget (`timeoutMs`) is
  *      exhausted, force-returns with whatever history was collected.
  *
  * @param {Object} params - Configuration for the subagent run.
@@ -163,8 +276,9 @@ function summarizeHistory(history: HistoryEntry[]) {
  * @param {string} params.asset - Asset ticker or identifier.
  * @param {number} [params.maxLoops=3] - Maximum THINK→ACT iterations.
  * @param {number} [params.timeoutMs=60000] - Wall-clock timeout in milliseconds.
- * @param {(messages: Array<{ role: string; content: string }>) => Promise<SubAgentThought>} params.llmThink
- *   Function that sends a message array to the LLM and returns a parsed SubAgentThought.
+ * @param {(messages: Array<LlmThinkMessage>, options?: ThinkOptions) => Promise<ThinkResult>} params.llmThink
+ *   Function that sends a message array to the LLM and returns a ThinkResult. Receives
+ *   an optional options object carrying native tools when the registry is non-empty.
  * @param {(factor: string, tools: ToolRegistry, instruction: string) => string} params.getSystemPrompt
  *   Factory that returns the system prompt for a given factor, toolset, and instruction.
  * @returns {Promise<FactorReport>} The subagent's final report.
@@ -176,13 +290,23 @@ export async function runSubagent(params: {
   asset: string
   maxLoops?: number
   timeoutMs?: number
-  llmThink: (messages: Array<{ role: string; content: string }>) => Promise<SubAgentThought>
+  llmThink: (messages: LlmThinkMessage[], options?: ThinkOptions) => Promise<ThinkResult>
   getSystemPrompt: (factor: string, tools: ToolRegistry, instruction: string) => string
 }): Promise<FactorReport> {
   const maxLoops = params.maxLoops ?? 3
   const timeoutMs = params.timeoutMs ?? 60000
   const history: HistoryEntry[] = []
   const toolNames = Object.keys(params.tools)
+
+  // reason: an empty registry (e.g. technical without a candleMap) must not send a
+  // `tools` field — pass no options so think() stays on the JSON-in-prompt convention.
+  const openaiTools = toolRegistryToOpenAITools(params.tools)
+  const thinkOptions: ThinkOptions | undefined = openaiTools.length > 0 ? { tools: openaiTools } : undefined
+
+  // reason: native tool calls must be answered with {role:"tool"} messages; the
+  // assistant tool_call message is echoed so the chat API sees a complete turn.
+  // Cast only at this boundary — the API-shaped message is otherwise opaque to the loop.
+  const toolMessages: LlmThinkMessage[] = []
 
   const startTime = Date.now()
 
@@ -191,7 +315,7 @@ export async function runSubagent(params: {
     if (loopStart - startTime > timeoutMs) break
 
     const systemPrompt = params.getSystemPrompt(params.factor, params.tools, params.instruction)
-    const contextMessages: Array<{ role: string; content: string }> = [
+    const contextMessages: LlmThinkMessage[] = [
       { role: "system", content: systemPrompt },
       {
         role: "user",
@@ -207,7 +331,7 @@ export async function runSubagent(params: {
     ]
 
     // THINK
-    const thought = await params.llmThink(contextMessages)
+    const thought = await params.llmThink([...contextMessages, ...toolMessages], thinkOptions)
 
     if (thought.action === "return") {
       const factor = params.factor as FactorReport["factor"]
@@ -224,59 +348,40 @@ export async function runSubagent(params: {
       }
     }
 
-    // ACT — execute the chosen tool (even on last iteration — data can inform forced return)
-    const tool = params.tools[thought.toolName]
-    if (!tool) {
-      history.push({
-        toolName: thought.toolName,
-        result: {
-          success: false,
-          error: `Unknown tool: ${thought.toolName}. Available: ${toolNames.join(", ")}`,
-          metadata: { source: "system", latencyMs: 0 },
-        },
-      })
+    // ACT — native tool_calls: execute each call, feed results back as API-level tool messages
+    if (thought.action === "native_tool_call") {
+      toolMessages.push(thought.assistantMessage as unknown as LlmThinkMessage)
+      for (const tc of thought.toolCalls) {
+        let args: Record<string, unknown> = {}
+        try {
+          const parsed = JSON.parse(tc.rawArguments)
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            args = parsed as Record<string, unknown>
+          }
+        } catch {
+          // reason: malformed arguments — keep {} so zod's safeParse reports the
+          // failure back to the model via the tool message error below.
+        }
+        const result = await executeToolCall(tc.toolName, args, params.tools, toolNames, history)
+        toolMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify({ success: result.success, error: result.error, data: summarizeData(result.data) }),
+        })
+      }
       continue
     }
 
-    try {
-      const parsed = tool.parameters.safeParse(thought.params)
-      if (!parsed.success) {
-        history.push({
-          toolName: thought.toolName,
-          result: {
-            success: false,
-            error: `Invalid params: ${parsed.error.message}`,
-            metadata: { source: "system", latencyMs: 0 },
-          },
-        })
-        continue
-      }
-      const toolResult = await tool.execute(parsed.data)
-      history.push({
-        toolName: thought.toolName,
-        result: {
-          success: toolResult.success,
-          error: toolResult.error,
-          metadata: toolResult.metadata,
-          data: toolResult.data,
-        },
-      })
-    } catch (err) {
-      history.push({
-        toolName: thought.toolName,
-        result: {
-          success: false,
-          error: `Execution error: ${String(err)}`,
-          metadata: { source: "system", latencyMs: 0 },
-        },
-      })
-    }
+    // ACT — backward-compat JSON-convention tool_call (no native tools passed)
+    await executeToolCall(thought.toolName, thought.params, params.tools, toolNames, history)
   }
 
   // Force return on last loop or timeout — ask LLM one final time for a conclusion
   try {
     const systemPrompt = params.getSystemPrompt(params.factor, params.tools, params.instruction)
-    const forceReturnMessages: Array<{ role: string; content: string }> = [
+    // reason: no tools and no toolMessages on the force-return call — the model is
+    // asked to conclude, not to invoke more tools, so a content JSON return is forced.
+    const forceReturnMessages: LlmThinkMessage[] = [
       { role: "system", content: systemPrompt },
       {
         role: "user",

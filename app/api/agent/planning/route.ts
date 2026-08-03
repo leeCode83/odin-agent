@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
+import type { PlanningErrorCategory } from "@/lib/agent/planning/pipeline"
 import { planningCircuitBreaker } from "@/lib/agent/planning/circuit-breaker"
 import { TradePlanSchema } from "@/lib/agent/types"
 
@@ -47,13 +48,36 @@ const DD_BREAKER_RETRY_SECONDS = 60
 const LLM_BREAKER_RETRY_SECONDS = 120
 
 /**
+ * @constant CATEGORY_TO_HTTP_STATUS
+ * @description Error taxonomy → HTTP code mapping (spec §9.6 extension):
+ *   - "dd"       (422) — DD report unusable in a recoverable way (status
+ *                        failed, zero usable factors, DD agent threw).
+ *   - "llm"      (422) — DeepSeek API errors (401/429/5xx), LLM JSON parse
+ *                        failures, empty LLM responses.
+ *   - "data"     (502) — upstream provider failures (market data fetches:
+ *                        candles, equity, other external data sources).
+ *   - "internal" (500) — unexpected bugs, our own schema validation, or
+ *                        consensus collapse (phase "evaluate").
+ *   Circuit-breaker tripped → 503 (checked before the pipeline runs).
+ */
+const CATEGORY_TO_HTTP_STATUS: Record<PlanningErrorCategory, number> = {
+  dd: 422,
+  llm: 422,
+  data: 502,
+  internal: 500,
+}
+
+/**
  * @function POST
  * @description Runs the planning pipeline for an asset and returns the trade
  *   plan. Validates the body (400), rejects while the circuit breaker is
- *   tripped (503), and maps pipeline failures to §9.6 shapes (500).
+ *   tripped (503), and maps pipeline failures to §9.6 shapes with taxonomy
+ *   HTTP codes (422 dd/llm, 502 data, 500 internal, CONSENSUS_FAILED for
+ *   phase evaluate). A partial DD with usable factors returns 200 with
+ *   status "approval_required" so the plan flows to the approval path.
  * @param {NextRequest} req - Request with { asset, userId, walletAddress, targetProfitPercent? }.
  * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status },
- *   400 on invalid input, 503 PLANNING_UNAVAILABLE, 500 PLANNING_FAILED/CONSENSUS_FAILED.
+ *   400 on invalid input, 503 PLANNING_UNAVAILABLE, 422/502/500 per taxonomy.
  */
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -106,24 +130,27 @@ export async function POST(req: NextRequest) {
       report: validated,
       timing: output.timing,
       iterations: validated.iterations,
-      // reason: the pipeline drops the agent's complete/partial status, so the
-      // only status signal at the route layer is the NO_TRADE action.
-      status: validated.action === "NO_TRADE" ? "no_trade" : "complete",
+      // reason: the pipeline now carries the agent-level status; fall back to
+      // the NO_TRADE-derived mapping for mocks/older pipeline results.
+      status: output.status ?? (validated.action === "NO_TRADE" ? "no_trade" : "complete"),
     })
   } catch (err) {
     console.error("Planning pipeline error:", err)
     if (err instanceof PlanningError) {
       // reason: feed the breakers (spec §9.7); recording must never mask the
       // real error, so each record call is guarded.
-      if (err.detail?.phase === "dd") {
+      if (err.detail?.phase === "evaluate") {
+        // reason: consensus collapse is a swarm-internal outcome — no breaker
+        // feed (existing behavior preserved).
+      } else if (err.errorCategory === "dd") {
         try {
           planningCircuitBreaker.recordDDFailure()
         } catch {
           /* ignore */
         }
-      } else if (err.detail?.phase !== "evaluate") {
-        // reason: generic and unknown-phase failures are LLM-layer or
-        // equivalent — count them against the LLM breaker.
+      } else {
+        // reason: llm/data/internal failures all count against the LLM breaker
+        // (the catch-all dependency breaker, existing behavior preserved).
         try {
           planningCircuitBreaker.recordLLMFailure()
         } catch {
@@ -137,7 +164,7 @@ export async function POST(req: NextRequest) {
           details: err.detail ?? {},
           ...(err.processingTimeMs !== undefined ? { processingTimeMs: err.processingTimeMs } : {}),
         },
-        { status: 500 }
+        { status: CATEGORY_TO_HTTP_STATUS[err.errorCategory] ?? 500 }
       )
     }
     // reason: non-PlanningError (raw LLM-layer rejection escaping the

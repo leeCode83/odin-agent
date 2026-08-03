@@ -218,19 +218,34 @@ describe("POST /api/agent/planning", () => {
     expect(mockRunPlanningPipeline).not.toHaveBeenCalled()
   })
 
-  it("returns 500 PLANNING_FAILED with phase dd detail and records a DD failure", async () => {
+  it("returns 200 with status approval_required when the pipeline reports it", async () => {
+    mockRunPlanningPipeline.mockResolvedValue({
+      report: VALID_PLAN,
+      timing: VALID_TIMING,
+      status: "approval_required",
+    })
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data.status).toBe("approval_required")
+  })
+
+  it("returns 422 PLANNING_FAILED for a dd-category error and records a DD failure", async () => {
     mockRunPlanningPipeline.mockRejectedValue(
       new PlanningError(
         "Planning pipeline failed for BTC: PLANNING_FAILED",
         { phase: "dd", reports: [], aggregation: null, ddReport: null, message: "DD agent down" },
-        321
+        321,
+        "dd"
       )
     )
 
     const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
     const data = await res.json()
 
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(422)
     expect(data.error).toBe("PLANNING_FAILED")
     expect(data.message).toContain("Planning pipeline failed for BTC")
     expect(data.details.phase).toBe("dd")
@@ -238,6 +253,45 @@ describe("POST /api/agent/planning", () => {
     expect(data.processingTimeMs).toBe(321)
     expect(mockRecordDDFailure).toHaveBeenCalledTimes(1)
     expect(mockRecordLLMFailure).not.toHaveBeenCalled()
+  })
+
+  it("returns 422 PLANNING_FAILED for an llm-category error and records an LLM failure", async () => {
+    mockRunPlanningPipeline.mockRejectedValue(
+      new PlanningError(
+        "Planning pipeline failed for BTC: LLM JSON parse failed",
+        { phase: "aggregate" },
+        100,
+        "llm"
+      )
+    )
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(422)
+    expect(data.error).toBe("PLANNING_FAILED")
+    expect(data.details.phase).toBe("aggregate")
+    expect(mockRecordDDFailure).not.toHaveBeenCalled()
+    expect(mockRecordLLMFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns 502 PLANNING_FAILED for a data-category error and records an LLM failure", async () => {
+    mockRunPlanningPipeline.mockRejectedValue(
+      new PlanningError(
+        "Planning pipeline failed for BTC: market data provider unreachable",
+        { phase: "execute" },
+        200,
+        "data"
+      )
+    )
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(502)
+    expect(data.error).toBe("PLANNING_FAILED")
+    expect(data.details.phase).toBe("execute")
+    expect(mockRecordLLMFailure).toHaveBeenCalledTimes(1)
   })
 
   it("returns 500 CONSENSUS_FAILED for phase evaluate with detail spread through", async () => {

@@ -36,9 +36,17 @@ import type {
 
 /**
  * @constant MAX_LOOPS
- * @description Maximum Plan-Execute-Reflect iterations (spec §6.2).
+ * @description Maximum Plan-Execute-Reflect iterations (spec §6.2, fail fast: was 5).
  */
-const MAX_LOOPS = 5
+const MAX_LOOPS = 3
+
+/**
+ * @constant PLANNING_LOOP_TIMEOUT_MS
+ * @description Wall-clock budget for the planning loop; each iteration start
+ *   checks the deadline and breaks with a partial best-effort plan (fail fast).
+ *   Overridable via PLANNING_LOOP_TIMEOUT_MS (testability knob, not documented).
+ */
+const PLANNING_LOOP_TIMEOUT_MS = 300_000
 
 /**
  * @constant MAX_RE_DEPLOYS_PER_PERSPECTIVE
@@ -207,7 +215,9 @@ function persistDecision(plan: TradePlan, params: PlanningAgentInput): void {
  * @function runPlanningAgent
  * @description Main planning swarm orchestrator (spec §6.2). Step 0
  *   auto-calls the DD agent and pre-fetches equity once (spec §16.4), then
- *   runs up to 5 Plan-Execute-Reflect iterations:
+ *   runs up to 3 Plan-Execute-Reflect iterations (fail fast: a loop deadline
+ *   checked at each iteration start breaks out with a partial best-effort
+ *   plan):
  *   1. PLAN — llm plan (first iteration) or rePlan (low-consensus only).
  *   2. EXECUTE — all planned perspective subagents in parallel, sharing one
  *      tool registry bound to the pre-fetched equity.
@@ -243,25 +253,32 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       walletAddress: params.walletAddress,
     })
   } catch (e) {
-    // reason: planning cannot proceed without a DDReport (spec §9.4).
+    // reason: planning cannot proceed without a DDReport (spec §9.4); the DD
+    // agent threw before producing one → category "dd" (report unusable).
     throw new PlanningError(
       "PLANNING_FAILED",
       { phase: "dd", reports: [], aggregation: null, ddReport: null, message: String(e) },
-      Date.now() - t0
+      Date.now() - t0,
+      "dd"
     )
   }
   timing.ddMs = Date.now() - ddT0
 
   // --- Step 0b: DD report quality gate (user-requested) ---
   // reason: a "successful" DD run can still return a broken report (all factor
-  // sections null-scored, or status failed/partial). Planning on garbage input
-  // wastes minutes of LLM calls and always ends in a meaningless NO_TRADE, so
-  // break out early — the route maps phase "dd" to recordDDFailure() and the
+  // sections null-scored, or status failed). Planning on garbage input wastes
+  // minutes of LLM calls and always ends in a meaningless NO_TRADE, so break
+  // out early — the route maps category "dd" to recordDDFailure() and the
   // circuit breaker rejects subsequent requests for the cooldown window.
-  const usableScores = Object.values(ddReport.sections ?? {}).filter(
-    (s) => typeof s.score === "number"
-  ).length
-  if (ddReport.status === "failed" || ddReport.status === "partial" || usableScores === 0) {
+  // Graceful degradation rule: ONLY status "failed" or zero usable factors is
+  // fatal. A "partial" report with usable factors continues — confidence is
+  // penalized later (multiplier = usable/expected, see below) so degraded
+  // input flows to the approval path instead of a 500.
+  const usableFactorCount =
+    ddReport.usableFactorCount ??
+    Object.values(ddReport.sections ?? {}).filter((s) => typeof s.score === "number").length
+  const expectedFactorCount = category.activeFactors.length
+  if (ddReport.status === "failed" || usableFactorCount === 0) {
     throw new PlanningError(
       "PLANNING_FAILED",
       {
@@ -269,9 +286,10 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
         reports: [],
         aggregation: null,
         ddReport,
-        message: `DD report insufficient quality — status: ${ddReport.status ?? "unknown"}, usable factor scores: ${usableScores}`,
+        message: `DD report insufficient quality — status: ${ddReport.status ?? "unknown"}, usable factor scores: ${usableFactorCount}`,
       },
-      Date.now() - t0
+      Date.now() - t0,
+      "dd"
     )
   }
 
@@ -291,6 +309,14 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   let finalIterations = MAX_LOOPS
 
   for (let iteration = 0; iteration < MAX_LOOPS; iteration++) {
+    // reason: fail fast — break out of the loop once the planning budget is
+    // exhausted; the shared tail builds a partial best-effort plan.
+    if (Date.now() - t0 > (Number(process.env.PLANNING_LOOP_TIMEOUT_MS) || PLANNING_LOOP_TIMEOUT_MS)) {
+      log("warn", "planning.timeout", { iteration, elapsedMs: Date.now() - t0 })
+      finalIterations = iteration
+      break
+    }
+
     // --- PLAN ---
     const planT0 = Date.now()
     let subagentPlans: PlanningSubagentPlan[]
@@ -424,19 +450,33 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // reason: NO_TRADE skips the gate — nothing is at risk; a zero-size
   // position would trivially satisfy it anyway, so "auto" is forced.
   const thresholds = await getRiskThresholds(params.userId).catch(() => envDefaults())
+  // reason: confidence penalty (graceful degradation of partial DD, spec
+  // §9.x). A report with usable < expected factors discounts the swarm's
+  // confidence BEFORE the autonomy gate, so degraded input flows to the human
+  // approval path instead of failing. Formula:
+  //   multiplier = usableFactorCount / expectedFactorCount
+  //   (3/4 → 0.75, 2/4 → 0.5, 2/3 meme → 0.67); full reports → 1.0 (no-op).
+  const ddConfidenceMultiplier = Math.min(1, usableFactorCount / expectedFactorCount)
   const finalAggregation = aggregation ?? fallbackAggregation(allReports)
+  const effectiveAggregation: PlanningAggregationResult =
+    ddConfidenceMultiplier < 1
+      ? {
+          ...finalAggregation,
+          confidence_score: Math.round(finalAggregation.confidence_score * ddConfidenceMultiplier),
+        }
+      : finalAggregation
   const autonomyDecision: AutonomyDecision =
     outcome === "no_trade"
       ? "auto"
       : autonomyGate(
-          finalAggregation.confidence_score,
-          finalAggregation.position_size_usdc,
+          effectiveAggregation.confidence_score,
+          effectiveAggregation.position_size_usdc,
           thresholds
         )
 
   const tradePlan = buildTradePlan({
     asset: params.asset,
-    aggregation: finalAggregation,
+    aggregation: effectiveAggregation,
     equity,
     thresholds,
     autonomyDecision,
@@ -444,8 +484,17 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     totalMs,
   })
 
+  // reason: approval_required = penalized (partial DD) run that still needs
+  // human approval — distinct from "partial" (loop exhaustion) and from
+  // complete runs that happen to carry autonomy_decision "approve".
   const status: PlanningAgentOutput["status"] =
-    outcome === "no_trade" ? "no_trade" : outcome === "accepted" ? "complete" : "partial"
+    outcome === "no_trade"
+      ? "no_trade"
+      : ddConfidenceMultiplier < 1 && autonomyDecision === "approve"
+        ? "approval_required"
+        : outcome === "accepted"
+          ? "complete"
+          : "partial"
 
   if (outcome === "accepted" || outcome === "forced") {
     persistDecision(tradePlan, params)

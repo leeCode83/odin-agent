@@ -1,7 +1,14 @@
+/**
+ * @file due-diligence/llm.ts
+ * @description DeepSeek-backed LLM calls for the due-diligence agent: THINK, PLAN, RE-PLAN, and AGGREGATE steps.
+ * @module due-diligence
+ * @layer service
+ */
+
 import OpenAI from "openai"
-import { PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT } from "@/lib/agent/due-diligence/prompts"
+import { PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT, THINK_JSON_INSTRUCTION } from "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
-import type { SubAgentThought } from "@/lib/agent/due-diligence/subagent"
+import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
 import { FACTOR_KEYS, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
@@ -65,13 +72,20 @@ function normalizeThought(raw: unknown): unknown {
 /**
  * @function think
  * @description LLM call for the subagent THINK step. Sends a message array (system prompt + context)
- *   and returns a parsed SubAgentThought (tool_call or return). Falls back to a safe default on failure.
- * @param {Array<{ role: string; content: string }>} messages - System prompt and context messages.
- * @returns {Promise<SubAgentThought>} Parsed SubAgentThought with action, tool params, or return values.
+ *   and returns a ThinkResult: a parsed SubAgentThought (tool_call or return), or the raw native
+ *   tool_calls when `options.tools` was provided and the model answered with tool_calls.
+ *   Falls back to a safe default on failure. On JSON parse failure, retries once with the parse
+ *   error fed back to the model, then repairJSON, then fallback.
+ *   json_schema not supported by DeepSeek — using json_object + schema prompt.
+ * @param {Array<LlmThinkMessage>} messages - System prompt and context messages (may include
+ *   native `tool` role messages from a previous loop iteration).
+ * @param {ThinkOptions} [options] - Optional request options; `tools` enables native function calling.
+ * @returns {Promise<ThinkResult>} Native tool_calls, or a parsed SubAgentThought, or a fallback return thought.
  */
 export async function think(
-  messages: Array<{ role: string; content: string }>
-): Promise<SubAgentThought> {
+  messages: Array<LlmThinkMessage>,
+  options?: ThinkOptions
+): Promise<ThinkResult> {
   const c = getClient()
   if (!c) return { action: "return", score: 0, confidence: 0, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
 
@@ -80,13 +94,39 @@ export async function think(
   const userMsg = messages.find((m) => m.role === "user")
   let factor = "unknown"
   try {
-    const parsed = userMsg ? JSON.parse(userMsg.content) : null
+    const parsed = userMsg?.content ? JSON.parse(userMsg.content) : null
     if (parsed && typeof parsed.factor === "string") factor = parsed.factor
   } catch { /* non-JSON user message — keep "unknown" */ }
 
   const fallback = { action: "return" as const, score: 0, confidence: 0, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
 
-  const callLLM = async (): Promise<string | null> => {
+  // reason: DeepSeek json_object mode only guarantees valid JSON when the prompt
+  // explicitly demands it — append the instruction to the user message (new array,
+  // caller's messages are never mutated; factor extraction above reads the originals).
+  const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = messages.map((m) =>
+    m.role === "user" ? { ...m, content: `${m.content ?? ""}\n\n${THINK_JSON_INSTRUCTION}` } : { ...m }
+  ) as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+
+  // reason: native tool_calls are returned raw so the ReAct loop can execute them
+  // and feed back {role:"tool"} messages; the assistant message is echoed alongside.
+  const toNativeResult = (msg: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam): NativeToolCallsResult => ({
+    action: "native_tool_call",
+    toolCalls: (msg.tool_calls ?? []).map((tc) => {
+      // reason: the SDK unions custom tool calls into the same array — only the
+      // function variant carries name/arguments; default to "{}" for anything else.
+      const fn = (tc as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall).function
+      return {
+        id: tc.id,
+        toolName: fn?.name ?? "",
+        rawArguments: fn?.arguments ?? "{}",
+      }
+    }),
+    assistantMessage: msg,
+  })
+
+  const callLLM = async (
+    msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = requestMessages
+  ): Promise<OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam | null> => {
     try {
       const response = await c.chat.completions.create(
         {
@@ -94,38 +134,67 @@ export async function think(
           temperature: 0.3,
           max_tokens: 4096,
           response_format: { type: "json_object" },
-          messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+          ...(options?.tools ? { tools: options.tools } : {}),
+          messages: msgs,
         },
         { timeout: 45_000, maxRetries: 1 }
       )
-    const content = response.choices?.[0]?.message?.content || ""
-    if (!content.trim()) {
-      console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
+      const message = response.choices?.[0]?.message
+      if (!message) {
+        console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
         return null
       }
-      return content
+      return message as unknown as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam
     } catch (err) {
       console.error("[DD:think] API error. factor=%s:", factor, err instanceof Error ? err.message : String(err))
       return null
     }
   }
 
-  let content = await callLLM()
-  if (content === null) return fallback
+  const message = await callLLM()
+  if (message === null) return fallback
+
+  if (options?.tools && message.tool_calls && message.tool_calls.length > 0) {
+    return toNativeResult(message)
+  }
+
+  // reason: the SDK types assistant content as string | content-part array — only the
+  // string form is JSON-parsable; any array form falls through to the empty response path.
+  let content = typeof message.content === "string" ? message.content : ""
+  if (!content.trim()) {
+    console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
+    return fallback
+  }
 
   let parsed: unknown
   try {
     parsed = JSON.parse(content)
-  } catch {
-    console.error("[DD:think] JSON parse failed. factor=%s. Raw (first 500 chars):", factor, content?.slice(0, 500))
-    // Truncated responses are usually transient — retry once before falling back.
-    await new Promise((r) => setTimeout(r, 500))
-    content = await callLLM()
-    if (content === null) return fallback
+  } catch (err) {
+    console.error("[DD:think] JSON parse failed — retrying with error feedback. factor=%s", factor)
+    // reason: a blind re-call replays the same failure — feed the parse error and the
+    // truncated raw output back so the model can correct the malformed JSON.
+    const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
+
+Your previous response was not valid JSON.
+error: "Invalid JSON: ${err instanceof Error ? err.message : String(err)}"
+
+rawPrefix: ${content.slice(0, 500)}`
+    const retryMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      ...requestMessages,
+      { role: "user", content: retryContent },
+    ]
+    const retryMessage = await callLLM(retryMessages)
+    if (retryMessage === null) return fallback
+    // reason: the model may answer the retry with native tool_calls — honor them
+    // instead of discarding a valid turn into the JSON fallback.
+    if (options?.tools && retryMessage.tool_calls && retryMessage.tool_calls.length > 0) {
+      return toNativeResult(retryMessage)
+    }
+    content = typeof retryMessage.content === "string" ? retryMessage.content : ""
     try {
       parsed = JSON.parse(content)
     } catch {
-      // Retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
+      // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
       const repaired = repairJSON(content)
       if (!repaired) {
         console.error("[DD:think] JSON repair failed. factor=%s", factor)
@@ -235,6 +304,8 @@ export async function rePlan(params: {
  * @function aggregate
  * @description LLM call for the Main Agent's AGGREGATE step. Merges FactorReports into a
  *   consolidated thesis with cross-validation, risks, catalysts, and summary.
+ *   On JSON parse failure, retries once with the parse error fed back to the model, then repairJSON, then null.
+ *   json_schema not supported by DeepSeek — using json_object + schema prompt.
  * @param {Object} params - Aggregate parameters.
  * @param {string} params.asset - The asset ticker or identifier.
  * @param {string} params.category - The asset category.
@@ -298,51 +369,74 @@ export async function aggregate(params: {
   const c = getClient()
   if (!c) return null
 
-  let content: string
-  try {
-    const response = await c.chat.completions.create(
-      {
-        model: DEEPSEEK_MODEL,
-        temperature: 0.3,
-        max_tokens: 8192,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: AGGREGATE_PROMPT },
-          {
-            role: "user",
-            content: JSON.stringify({
-              asset: params.asset,
-              category: params.category,
-              factorReports: params.factorReports.map((fr) => {
-                // Strip reasoning — aggregate only needs structured data
-                const { reasoning: _reasoning, ...rest } = fr
-                void _reasoning
-                return rest
-              }),
-            }),
-          },
-        ],
-      },
-      { timeout: 45_000, maxRetries: 1 }
-    )
-    content = response.choices?.[0]?.message?.content || "{}"
-  } catch (err) {
-    console.error("[DD:aggregate] API error:", err instanceof Error ? err.message : String(err))
-    return null
+  const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: AGGREGATE_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        asset: params.asset,
+        category: params.category,
+        factorReports: params.factorReports.map((fr) => {
+          // Strip reasoning — aggregate only needs structured data
+          const { reasoning: _reasoning, ...rest } = fr
+          void _reasoning
+          return rest
+        }),
+      }),
+    },
+  ]
+
+  const callLLM = async (msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = requestMessages): Promise<string | null> => {
+    try {
+      const response = await c.chat.completions.create(
+        {
+          model: DEEPSEEK_MODEL,
+          temperature: 0.3,
+          max_tokens: 8192,
+          response_format: { type: "json_object" },
+          messages: msgs,
+        },
+        { timeout: 45_000, maxRetries: 1 }
+      )
+      return response.choices?.[0]?.message?.content || "{}"
+    } catch (err) {
+      console.error("[DD:aggregate] API error:", err instanceof Error ? err.message : String(err))
+      return null
+    }
   }
 
-  // Try strict parse first, then JSON repair for truncated output
+  let content = await callLLM()
+  if (content === null) return null
+
+  // Try strict parse first, then error-feedback retry, then JSON repair for truncated output
   let parsed: unknown
   try {
     parsed = JSON.parse(content)
-  } catch {
-    console.error("[DD:aggregate] JSON parse failed, attempting repair. Raw length:", content.length)
-    const repaired = repairJSON(content)
-    if (!repaired) {
-      console.error("[DD:aggregate] JSON repair also failed")
-      return null
+  } catch (err) {
+    console.error("[DD:aggregate] JSON parse failed — retrying with error feedback. Raw length:", content.length)
+    const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
+
+Your previous response was not valid JSON.
+error: "Invalid JSON: ${err instanceof Error ? err.message : String(err)}"
+
+rawPrefix: ${content.slice(0, 500)}`
+    const retryMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      ...requestMessages,
+      { role: "user", content: retryContent },
+    ]
+    content = await callLLM(retryMessages)
+    if (content === null) return null
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
+      const repaired = repairJSON(content)
+      if (!repaired) {
+        console.error("[DD:aggregate] JSON repair also failed")
+        return null
+      }
+      parsed = repaired
     }
-    parsed = repaired
   }
 
   if (typeof parsed !== "object" || parsed === null) return null
