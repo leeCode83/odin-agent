@@ -11,6 +11,10 @@ import {
   type RiskEntry,
   type CatalystEntry,
 } from "@/lib/agent/due-diligence/types"
+import {
+  FactorReportSchema,
+  SubagentPlanSchema,
+} from "@/lib/agent/due-diligence/types"
 
 describe("Factor", () => {
   it("accepts all four factor values", () => {
@@ -47,6 +51,62 @@ describe("SignalEntry", () => {
       direction: "neutral",
     }
     expect(signal.direction).toBe("neutral")
+  })
+})
+
+describe("FactorReportSchema", () => {
+  it("validates a correct factor report", () => {
+    const validData = {
+      factor: "technical",
+      score: 75,
+      confidence: 80,
+      signals: [{ name: "RSI", strength: 70, direction: "bullish" }],
+      dataSources: ["binance", "coinbase"],
+      reasoning: "Bullish divergence",
+      iterations: 2,
+      conclusion: "Strong buy",
+      errors: [],
+      stopReason: "llm_return"
+    }
+
+    const result = FactorReportSchema.safeParse(validData)
+    expect(result.success).toBe(true)
+  })
+
+  it("fails on invalid factor", () => {
+    const invalidData = {
+      factor: "astrology",
+      score: 75,
+      confidence: 80,
+      signals: [],
+      dataSources: [],
+      reasoning: "Test",
+      iterations: 1,
+      conclusion: "Test",
+      errors: [],
+      stopReason: "llm_return"
+    }
+
+    const result = FactorReportSchema.safeParse(invalidData)
+    expect(result.success).toBe(false)
+  })
+
+  it("fails on invalid stopReason", () => {
+    const invalidData = {
+      factor: "technical",
+      score: 75,
+      confidence: 80,
+      signals: [],
+      dataSources: [],
+      reasoning: "Test",
+      iterations: 1,
+      conclusion: "Test",
+      errors: [],
+      stopReason: "unknown_reason"
+    }
+
+    const result = FactorReportSchema.safeParse(invalidData)
+    expect(result.success).toBe(false)
   })
 })
 
@@ -116,6 +176,22 @@ describe("SubagentPlan & AgentPlan", () => {
     }
     expect(plan.factor).toBe("technical")
     expect(plan.priority).toBe(1)
+  })
+
+  it("validates subagent plan schema", () => {
+    const result = SubagentPlanSchema.safeParse({
+      factor: "onchain",
+      instruction: "Check whale wallets",
+      priority: 2,
+    })
+    expect(result.success).toBe(true)
+
+    const invalid = SubagentPlanSchema.safeParse({
+      factor: "invalid",
+      instruction: "",
+      priority: 5,
+    })
+    expect(invalid.success).toBe(false)
   })
 
   it("creates agent plan with deployment history", () => {

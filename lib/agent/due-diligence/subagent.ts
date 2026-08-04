@@ -281,6 +281,7 @@ async function executeToolCall(
  * @param {string} params.asset - Asset ticker or identifier.
  * @param {number} [params.maxLoops=3] - Maximum THINK→ACT iterations.
  * @param {number} [params.timeoutMs=60000] - Wall-clock timeout in milliseconds.
+ * @param {number} [params.circuitBreakerThreshold=3] - Max consecutive errors for a single tool before circuit opens.
  * @param {(messages: Array<LlmThinkMessage>, options?: ThinkOptions) => Promise<ThinkResult>} params.llmThink
  *   Function that sends a message array to the LLM and returns a ThinkResult. Receives
  *   an optional options object carrying native tools when the registry is non-empty.
@@ -295,11 +296,13 @@ export async function runSubagent(params: {
   asset: string
   maxLoops?: number
   timeoutMs?: number
+  circuitBreakerThreshold?: number
   llmThink: (messages: LlmThinkMessage[], options?: ThinkOptions) => Promise<ThinkResult>
   getSystemPrompt: (factor: string, tools: ToolRegistry, instruction: string) => string
 }): Promise<FactorReport> {
   const maxLoops = params.maxLoops ?? 3
   const timeoutMs = params.timeoutMs ?? 60000
+  const circuitBreakerThreshold = params.circuitBreakerThreshold ?? 3
   const history: HistoryEntry[] = []
   const toolNames = Object.keys(params.tools)
 
@@ -315,10 +318,15 @@ export async function runSubagent(params: {
 
   const startTime = Date.now()
   const lastCallFingerprint = new Map<string, string>()
+  const consecutiveToolErrors = new Map<string, number>()
+  let stopReason: FactorReport["stopReason"] = "max_loops"
 
   reactLoop: for (let i = 0; i < maxLoops; i++) {
     const loopStart = Date.now()
-    if (loopStart - startTime > timeoutMs) break
+    if (loopStart - startTime > timeoutMs) {
+      stopReason = "timeout"
+      break
+    }
 
     const systemPrompt = params.getSystemPrompt(params.factor, params.tools, params.instruction)
     const contextMessages: LlmThinkMessage[] = [
@@ -354,6 +362,7 @@ export async function runSubagent(params: {
           const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
           return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
         }),
+        stopReason: "llm_return",
       }
     }
 
@@ -388,6 +397,18 @@ export async function runSubagent(params: {
         lastCallFingerprint.set(tc.toolName, fingerprint)
 
         const result = await executeToolCall(tc.toolName, args, params.tools, toolNames, history)
+        
+        if (result.success) {
+          consecutiveToolErrors.set(tc.toolName, 0)
+        } else {
+          const fails = (consecutiveToolErrors.get(tc.toolName) || 0) + 1
+          consecutiveToolErrors.set(tc.toolName, fails)
+          if (fails >= circuitBreakerThreshold) {
+            stopReason = "circuit_open"
+            break reactLoop
+          }
+        }
+
         toolMessages.push({
           role: "tool",
           tool_call_id: tc.id,
@@ -413,7 +434,18 @@ export async function runSubagent(params: {
     }
     lastCallFingerprint.set(thought.toolName, fingerprint)
 
-    await executeToolCall(thought.toolName, thought.params, params.tools, toolNames, history)
+    const result = await executeToolCall(thought.toolName, thought.params, params.tools, toolNames, history)
+    
+    if (result.success) {
+      consecutiveToolErrors.set(thought.toolName, 0)
+    } else {
+      const fails = (consecutiveToolErrors.get(thought.toolName) || 0) + 1
+      consecutiveToolErrors.set(thought.toolName, fails)
+      if (fails >= circuitBreakerThreshold) {
+        stopReason = "circuit_open"
+        break reactLoop
+      }
+    }
   }
 
   // Force return on last loop or timeout — ask LLM one final time for a conclusion
@@ -456,6 +488,7 @@ export async function runSubagent(params: {
           const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
           return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
         }),
+        stopReason: "llm_return",
       }
     }
   } catch {
@@ -476,5 +509,6 @@ export async function runSubagent(params: {
       const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
       return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
     }),
+    stopReason,
   }
 }

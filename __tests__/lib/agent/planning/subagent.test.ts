@@ -15,7 +15,7 @@ function makeTool(name: string, execute?: ToolDefinition["execute"]): ToolDefini
   return {
     name,
     description: `Tool ${name}`,
-    parameters: z.object({ asset: z.string() }),
+    parameters: z.object({ asset: z.string(), iter: z.number().optional() }),
     execute: execute ?? (async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 5 } })),
   }
 }
@@ -189,7 +189,7 @@ describe("runPerspectiveSubagent", () => {
       return Promise.resolve({
         action: "tool_call",
         toolName: "compute_atr",
-        params: { iter: callCount },
+        params: { asset: "BTC", iter: callCount },
         reasoning: "Looping",
       })
     })

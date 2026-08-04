@@ -767,3 +767,63 @@ describe("Error Taxonomy & Duplicate Detection", () => {
     expect(report.iterations).toBe(3)
   })
 })
+
+describe("Circuit Breaker", () => {
+  it("breaks the loop and returns stopReason circuit_open if consecutive tool errors exceed threshold", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => ({ success: false, error: "API Failure", metadata: { source: "test", latencyMs: 0 } }))
+    }
+    
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 1 }, reasoning: "Fail 1" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 2 }, reasoning: "Fail 2" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 3 }, reasoning: "Fail 3" })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      circuitBreakerThreshold: 2,
+      maxLoops: 5,
+    })
+
+    expect(report.stopReason).toBe("circuit_open")
+    expect(mockThink).toHaveBeenCalledTimes(3) // 1st try (fails) -> 2nd try (fails) -> circuit opens -> break -> force return
+  })
+  
+  it("resets consecutive errors on success", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }))
+    }
+    
+    let calls = 0
+    tools.test_tool.execute = async () => {
+      calls++
+      if (calls === 1 || calls === 3) return { success: false, error: "Fail", metadata: { source: "test", latencyMs: 0 } }
+      return { success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: {}, reasoning: "Fail 1" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { arg: 1 }, reasoning: "Success" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { arg: 2 }, reasoning: "Fail 2" })
+      .mockResolvedValueOnce({ action: "return", score: 50, confidence: 50, signals: [], reasoning: "Done", conclusion: "Done" })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      circuitBreakerThreshold: 2,
+      maxLoops: 5,
+    })
+
+    expect(report.stopReason).toBe("llm_return")
+    expect(mockThink).toHaveBeenCalledTimes(4)
+  })
+})

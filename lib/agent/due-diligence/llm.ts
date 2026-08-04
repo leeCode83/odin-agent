@@ -9,7 +9,7 @@ import OpenAI from "openai"
 import { PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT, THINK_JSON_INSTRUCTION } from "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
-import { FACTOR_KEYS, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
+import { FACTOR_KEYS, SubagentPlanSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
@@ -250,7 +250,18 @@ export async function plan(params: {
     )
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    
+    const validPlans: SubagentPlan[] = []
+    for (const item of parsed) {
+      const result = SubagentPlanSchema.safeParse(item)
+      if (result.success) {
+        validPlans.push(result.data)
+      } else {
+        console.warn(`[DD:plan] Dropping invalid plan item for factor ${item?.factor}:`, result.error.message)
+      }
+    }
+    return validPlans
   } catch (err) {
     console.error("[DD:plan] LLM call failed:", err instanceof Error ? err.message : String(err))
     return []
@@ -293,7 +304,18 @@ export async function rePlan(params: {
     )
     const content = response.choices?.[0]?.message?.content || "[]"
     const parsed = JSON.parse(content)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+
+    const validPlans: SubagentPlan[] = []
+    for (const item of parsed) {
+      const result = SubagentPlanSchema.safeParse(item)
+      if (result.success) {
+        validPlans.push(result.data)
+      } else {
+        console.warn(`[DD:rePlan] Dropping invalid plan item for factor ${item?.factor}:`, result.error.message)
+      }
+    }
+    return validPlans
   } catch (err) {
     console.error("[DD:rePlan] LLM call failed:", err instanceof Error ? err.message : String(err))
     return []

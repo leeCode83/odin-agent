@@ -79,18 +79,21 @@ const defaultAggregationResult = {
 // ----- computeDeterministicScore -----
 
 describe("computeDeterministicScore", () => {
-  it("averages scores and averages confidence", () => {
+  it("calculates weighted average for score and minimum for confidence", () => {
     const reports: FactorReport[] = [
-      makeFactorReport({ factor: "technical", score: 80, confidence: 90 }),
-      makeFactorReport({ factor: "onchain", score: 60, confidence: 70 }),
-      makeFactorReport({ factor: "sentiment", score: 70, confidence: 80 }),
+      makeFactorReport({ factor: "technical", score: 80, confidence: 90 }), // weight = 90
+      makeFactorReport({ factor: "onchain", score: 60, confidence: 20 }), // weight = 20
+      makeFactorReport({ factor: "sentiment", score: 70, confidence: 80 }), // weight = 80
     ]
 
     const result = computeDeterministicScore(reports)
 
-    expect(result.overallScore).toBe(70)
-    // average of [90, 70, 80] = 80
-    expect(result.overallConfidence).toBe(80)
+    // Expected weighted average score: (80*90 + 60*20 + 70*80) / (90 + 20 + 80)
+    // = (7200 + 1200 + 5600) / 190
+    // = 14000 / 190 = 73.68... rounded to 74
+    expect(result.overallScore).toBe(74)
+    // Minimum confidence among [90, 20, 80] = 20
+    expect(result.overallConfidence).toBe(20)
   })
 
   it("returns 0,0 when all scores null", () => {
@@ -111,16 +114,29 @@ describe("computeDeterministicScore", () => {
     expect(result.overallConfidence).toBe(0)
   })
 
+  it("handles all zero confidence", () => {
+    const reports: FactorReport[] = [
+      makeFactorReport({ factor: "technical", score: 80, confidence: 0 }),
+      makeFactorReport({ factor: "onchain", score: 60, confidence: 0 }),
+    ]
+    const result = computeDeterministicScore(reports)
+    expect(result.overallScore).toBe(0) // total weight 0 falls back to 0
+    expect(result.overallConfidence).toBe(0)
+  })
+
   it("rounds the average score", () => {
     const reports: FactorReport[] = [
-      makeFactorReport({ factor: "technical", score: 85, confidence: 90 }),
-      makeFactorReport({ factor: "onchain", score: 62, confidence: 70 }),
-      makeFactorReport({ factor: "sentiment", score: 71, confidence: 80 }),
+      makeFactorReport({ factor: "technical", score: 85, confidence: 90 }), // weight = 90
+      makeFactorReport({ factor: "onchain", score: 62, confidence: 70 }), // weight = 70
+      makeFactorReport({ factor: "sentiment", score: 71, confidence: 80 }), // weight = 80
     ]
 
     const result = computeDeterministicScore(reports)
 
-    expect(result.overallScore).toBe(73)
+    // Expected weighted average score: (85*90 + 62*70 + 71*80) / 240
+    // = (7650 + 4340 + 5680) / 240
+    // = 17670 / 240 = 73.625... rounded to 74
+    expect(result.overallScore).toBe(74)
   })
 
   it("single factor: confidence equals that factor's confidence", () => {

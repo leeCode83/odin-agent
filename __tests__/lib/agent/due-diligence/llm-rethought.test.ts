@@ -301,6 +301,38 @@ describe("plan()", () => {
     })
     expect(result).toEqual([])
   })
+
+  it("filters out items with invalid factor", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify([
+        { factor: "technical", instruction: "Valid instruction", priority: 1 },
+        { factor: "invalid_factor", instruction: "Invalid instruction", priority: 2 },
+      ]) } }],
+    })
+
+    const result = await plan({
+      asset: "BTC",
+      category: { name: "major", activeFactors: ["technical", "onchain"] },
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0].factor).toBe("technical")
+  })
+
+  it("filters out items with empty instruction", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify([
+        { factor: "technical", instruction: "Valid instruction", priority: 1 },
+        { factor: "onchain", instruction: "", priority: 2 },
+      ]) } }],
+    })
+
+    const result = await plan({
+      asset: "BTC",
+      category: { name: "major", activeFactors: ["technical", "onchain"] },
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0].factor).toBe("technical")
+  })
 })
 
 describe("rePlan()", () => {
@@ -348,6 +380,42 @@ describe("rePlan()", () => {
       previousReports: [],
     })
     expect(result).toEqual([])
+  })
+
+  it("filters out items with invalid factor", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify([
+        { factor: "technical", instruction: "Valid instruction", priority: 1 },
+        { factor: "invalid_factor", instruction: "Invalid instruction", priority: 2 },
+      ]) } }],
+    })
+
+    const result = await rePlan({
+      asset: "BTC",
+      category: "major",
+      lowConfidenceFactors: ["technical"],
+      previousReports: [],
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0].factor).toBe("technical")
+  })
+
+  it("filters out items with empty instruction", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify([
+        { factor: "technical", instruction: "Valid instruction", priority: 1 },
+        { factor: "onchain", instruction: "", priority: 2 },
+      ]) } }],
+    })
+
+    const result = await rePlan({
+      asset: "BTC",
+      category: "major",
+      lowConfidenceFactors: ["technical", "onchain"],
+      previousReports: [],
+    })
+    expect(result).toHaveLength(1)
+    expect(result[0].factor).toBe("technical")
   })
 })
 

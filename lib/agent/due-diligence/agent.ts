@@ -16,7 +16,7 @@ import { REACT_SYSTEM_PROMPT } from "@/lib/agent/due-diligence/prompts"
 import { getToolRegistry } from "@/lib/agent/tools/registry"
 import { fetchCandleMap } from "@/lib/agent/tools/technical/candles"
 import { recordDDReport } from "@/lib/db/graph-memory"
-import type { FactorReport, SubagentPlan, CrossValidation } from "@/lib/agent/due-diligence/types"
+import type { FactorReport, SubagentPlan, CrossValidation, AggregationResult } from "@/lib/agent/due-diligence/types"
 import type { DDReport } from "@/lib/agent/types"
 
 /**
@@ -39,18 +39,6 @@ const PER_FACTOR_TIMEOUT_MS = 120_000
  */
 const DEFAULT_PIPELINE_TIMEOUT_MS = 300_000
 
-interface AggregationResult {
-  thesis: string
-  crossValidation: {
-    pairs: Array<{ factorA: string; factorB: string; alignment: number; note: string }>
-    overallAlignment: number
-    contradictions: string[]
-  }
-  risks: Array<{ factor: string; description: string; severity: string }>
-  catalysts: Array<{ factor: string; description: string; impact: string }>
-  summary: string
-}
-
 /**
  * @interface DDAgentParams
  * @description Parameters for a full DD Agent run.
@@ -72,7 +60,7 @@ export interface DDAgentParams {
 
 /**
  * @function computeDeterministicScore
- * @description Computes an overall score (average of non-null scores) and overall
+ * @description Computes an overall score (weighted average of non-null scores by confidence) and overall
  *   confidence (minimum confidence among active reports).
  * @param {FactorReport[]} factorReports - Completed factor analyses.
  * @returns {{ overallScore: number; overallConfidence: number }} Aggregated deterministic scores.
@@ -83,12 +71,14 @@ export function computeDeterministicScore(
   const active = factorReports.filter((r) => r.score !== null)
   if (active.length === 0) return { overallScore: 0, overallConfidence: 0 }
 
-  const overallScore = Math.round(
-    active.reduce((sum, r) => sum + (r.score ?? 0), 0) / active.length
-  )
-  const overallConfidence = Math.round(
-    active.reduce((sum, r) => sum + (r.confidence ?? 0), 0) / active.length
-  )
+  const totalWeight = active.reduce((sum, r) => sum + (r.confidence ?? 0), 0)
+  
+  const overallScore = totalWeight === 0 ? 0 
+    : Math.round(
+        active.reduce((sum, r) => sum + (r.score ?? 0) * (r.confidence ?? 0), 0) / totalWeight
+      )
+
+  const overallConfidence = Math.min(...active.map(r => r.confidence ?? 0))
 
   return { overallScore, overallConfidence }
 }

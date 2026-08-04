@@ -61,7 +61,26 @@ export function REACT_SYSTEM_PROMPT(
     .map(([name, tool]) => `- ${name}: ${tool.description}`)
     .join("\n")
 
+  let factorContext = ""
+  switch (factor) {
+    case "technical":
+      factorContext = "Focus on price action, volume, momentum indicators (RSI, MACD), support/resistance levels, and chart patterns."
+      break
+    case "onchain":
+      factorContext = "Focus on network activity, wallet balances, transaction volumes, miner behavior, exchange inflows/outflows, and holder distribution."
+      break
+    case "sentiment":
+      factorContext = "Focus on social media trends, news sentiment, search volume, funding rates, and fear/greed indicators."
+      break
+    case "fundamental":
+      factorContext = "Focus on tokenomics, protocol revenue, team activity, github commits, partnerships, and market positioning."
+      break
+    default:
+      factorContext = "Analyze relevant data points for this factor."
+  }
+
   return `You are a ${factor} analysis agent. Analyze the asset using the available tools.
+Context: ${factorContext}
 
 INSTRUCTION: ${instruction}
 

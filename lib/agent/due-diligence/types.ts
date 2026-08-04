@@ -27,6 +27,12 @@ export interface SignalEntry {
 }
 
 /**
+ * @typedef SubagentStopReason
+ * @description Reason why a factor subagent completed its execution.
+ */
+export type SubagentStopReason = "llm_return" | "timeout" | "max_loops" | "circuit_open"
+
+/**
  * @interface FactorReport
  * @description Result from a single factor subagent analysis.
  */
@@ -40,6 +46,7 @@ export interface FactorReport {
   iterations: number
   conclusion: string
   errors: string[]
+  stopReason?: SubagentStopReason
 }
 
 /**
@@ -151,7 +158,34 @@ export const FactorReportSchema = z.object({
   iterations: z.number().int().min(0),
   conclusion: z.string(),
   errors: z.array(z.string()),
+  stopReason: z.enum(["llm_return", "timeout", "max_loops", "circuit_open"]).optional(),
 })
+
+/**
+ * @constant SubagentPlanSchema
+ * @description Zod schema for SubagentPlan.
+ */
+export const SubagentPlanSchema = z.object({
+  factor: z.enum(FACTOR_KEYS),
+  instruction: z.string().min(1),
+  priority: z.number().int().min(1).max(4),
+})
+
+/**
+ * @interface AggregationResult
+ * @description Result of the Main Agent's AGGREGATE step.
+ */
+export interface AggregationResult {
+  thesis: string
+  crossValidation: {
+    pairs: Array<{ factorA: string; factorB: string; alignment: number; note: string }>
+    overallAlignment: number
+    contradictions: string[]
+  }
+  risks: Array<{ factor: string; description: string; severity: string }>
+  catalysts: Array<{ factor: string; description: string; impact: string }>
+  summary: string
+}
 
 /**
  * @constant ValidationPairSchema
