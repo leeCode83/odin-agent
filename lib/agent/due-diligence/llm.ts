@@ -10,8 +10,9 @@ import { getPrompt } from "@/lib/agent/due-diligence/prompt-registry"
 import "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
-import { FACTOR_KEYS, SubagentPlanSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
+import { SubagentPlanSchema, AggregationResultSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 import { createDdLogger } from "@/lib/agent/due-diligence/logger"
+import { z } from "zod"
 
 const log = createDdLogger({ module: "llm" })
 
@@ -50,12 +51,13 @@ function getClient(): OpenAI | null {
  * @param {unknown} raw - The parsed (but unvalidated) LLM output.
  * @returns {unknown} The normalized output, ready for SubAgentThoughtSchema.
  */
-function normalizeThought(raw: unknown): unknown {
+export function normalizeThought(raw: unknown): unknown {
   if (typeof raw !== "object" || raw === null) return raw
   const p = raw as Record<string, unknown>
   const action = typeof p.action === "string" ? p.action.toLowerCase() : ""
   if (action === "tool_call" || ["call_tool", "use_tool", "execute_tool", "tool"].includes(action)) {
     p.action = "tool_call"
+    if (typeof p.reasoning !== "string") p.reasoning = ""
   } else {
     // reason: unknown/null/missing action cannot be a tool call — defaulting
     // to "return" keeps the analysis instead of failing into the fallback.
@@ -72,6 +74,35 @@ function normalizeThought(raw: unknown): unknown {
   }
   return raw
 }
+
+/**
+ * @function formatZodErrors
+ * @description Converts an array of Zod issues into a human-readable string for the LLM.
+ * @param {z.ZodIssue[]} issues - The array of validation issues from Zod.
+ * @returns {string} The formatted error string.
+ * @example
+ * formatZodErrors(issues) // "Your previous response had 1 validation error:\n1. Field "reasoning" Required. ..."
+ */
+export function formatZodErrors(issues: z.ZodIssue[]): string {
+  if (!issues || issues.length === 0) return ""
+  
+  const count = issues.length
+  const header = `Your previous response had ${count} validation error${count > 1 ? 's' : ''}:`
+  
+  const formatted = issues.map((issue, index) => {
+    const path = issue.path.reduce<string>((acc, part) => {
+      if (typeof part === 'number') {
+        return `${acc}[${part}]`
+      }
+      return acc ? `${acc}.${String(part)}` : String(part)
+    }, "")
+    
+    return `${index + 1}. Field "${path}" ${issue.message}.`
+  })
+  
+  return `${header}\n${formatted.join('\n')}\nPlease return corrected JSON only.`
+}
+
 
 /**
  * @function think
@@ -213,12 +244,64 @@ rawPrefix: ${content.slice(0, 500)}`
     return fallback
   }
 
-  try {
-    return SubAgentThoughtSchema.parse(normalizeThought(parsed))
-  } catch (err) {
-    log("error", "think_schema_validation_failed", { factor, error: err instanceof Error ? err.message : String(err), rawOutputPrefix: content?.slice(0, 300) })
-    return fallback
+  const MAX_SCHEMA_CORRECTIONS = 2
+  let currentParsed = parsed
+  let currentContent = content
+
+  for (let attempt = 0; attempt <= MAX_SCHEMA_CORRECTIONS; attempt++) {
+    try {
+      const result = SubAgentThoughtSchema.parse(normalizeThought(currentParsed))
+      if (attempt > 0) {
+        log("info", "think_schema_corrected", { factor, attempt })
+      }
+      return result
+    } catch (err) {
+      if (attempt === MAX_SCHEMA_CORRECTIONS) {
+        log("error", "think_schema_correction_failed", { factor, attempts: MAX_SCHEMA_CORRECTIONS, error: err instanceof Error ? err.message : String(err), rawOutputPrefix: currentContent?.slice(0, 300) })
+        return fallback
+      }
+
+      let zodIssues: z.ZodIssue[] = []
+      if (err instanceof z.ZodError) {
+        zodIssues = err.issues
+      }
+
+      const errorFeedback = formatZodErrors(zodIssues)
+      const correctionMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        ...requestMessages,
+        { role: "assistant", content: currentContent },
+        { role: "user", content: errorFeedback || "Your previous response failed schema validation. Please return corrected JSON only." }
+      ]
+
+      const retryMessage = await callLLM(correctionMessages)
+      if (retryMessage === null) return fallback
+
+      if (options?.tools && retryMessage.tool_calls && retryMessage.tool_calls.length > 0) {
+        log("info", "think_schema_corrected", { factor, attempt: attempt + 1, type: "native_tool_call" })
+        return toNativeResult(retryMessage)
+      }
+
+      currentContent = typeof retryMessage.content === "string" ? retryMessage.content : ""
+      if (!currentContent.trim()) return fallback
+
+      try {
+        currentParsed = JSON.parse(currentContent)
+      } catch {
+        const repaired = repairJSON(currentContent)
+        if (!repaired) {
+          log("error", "think_json_repair_failed_in_correction", { factor })
+          return fallback
+        }
+        currentParsed = repaired
+      }
+
+      if (currentParsed && typeof currentParsed === "object" && !Array.isArray(currentParsed) && Object.keys(currentParsed as Record<string, unknown>).length === 0) {
+        return fallback
+      }
+    }
   }
+
+  return fallback
 }
 
 /**
@@ -430,65 +513,78 @@ export async function aggregate(params: {
     }
   }
 
-  let content = await callLLM()
-  if (content === null) return null
+  let currentMessages = requestMessages
+  let attempts = 0
 
-  // Try strict parse first, then error-feedback retry, then JSON repair for truncated output
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(content)
-  } catch (err) {
-    log("error", "aggregate_json_parse_failed", { rawLength: content.length, error: err instanceof Error ? err.message : String(err) })
-    const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
+  while (attempts < 3) {
+    attempts++
+    const content = await callLLM(currentMessages)
+    if (content === null) return null
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(content)
+    } catch (err) {
+      log("error", "aggregate_json_parse_failed", { rawLength: content.length, error: err instanceof Error ? err.message : String(err) })
+      if (attempts >= 3) {
+        const repaired = repairJSON(content)
+        if (!repaired) {
+          log("error", "aggregate_json_repair_failed", {})
+          return null
+        }
+        parsed = repaired
+      } else {
+        const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
 
 Your previous response was not valid JSON.
 error: "Invalid JSON: ${err instanceof Error ? err.message : String(err)}"
 
 rawPrefix: ${content.slice(0, 500)}`
-    const retryMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        currentMessages = [
+          ...requestMessages,
+          { role: "user", content: retryContent },
+        ]
+        continue
+      }
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      if (attempts >= 3) return null
+      currentMessages = [
+        ...requestMessages,
+        { role: "user", content: "Your previous response was not a JSON object." },
+      ]
+      continue
+    }
+
+    const result = AggregationResultSchema.safeParse(parsed)
+    if (result.success) {
+      if (attempts > 1) {
+        log("info", "aggregate_schema_corrected", { attempt: attempts })
+      }
+      return result.data
+    }
+
+    if (attempts >= 3) {
+      log("error", "aggregate_schema_correction_failed", {
+        attempts,
+        error: formatZodErrors(result.error.issues),
+        rawOutputPrefix: content.slice(0, 500)
+      })
+      return null
+    }
+
+    const issuesMsg = formatZodErrors(result.error.issues)
+    const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
+
+Your previous response was invalid against the required schema. Fix these issues:
+${issuesMsg}`
+
+    currentMessages = [
       ...requestMessages,
       { role: "user", content: retryContent },
     ]
-    content = await callLLM(retryMessages)
-    if (content === null) return null
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
-      const repaired = repairJSON(content)
-      if (!repaired) {
-        log("error", "aggregate_json_repair_failed", {})
-        return null
-      }
-      parsed = repaired
-    }
   }
 
-  if (typeof parsed !== "object" || parsed === null) return null
-
-  const validFactors = new Set<string>(FACTOR_KEYS)
-
-  if (Array.isArray((parsed as Record<string, unknown>).risks)) {
-    (parsed as Record<string, unknown>).risks = (
-      (parsed as Record<string, unknown>).risks as Array<{ factor?: unknown }>
-    ).filter((r) => r && typeof r.factor === "string" && validFactors.has(r.factor))
-  }
-
-  if (Array.isArray((parsed as Record<string, unknown>).catalysts)) {
-    (parsed as Record<string, unknown>).catalysts = (
-      (parsed as Record<string, unknown>).catalysts as Array<{ factor?: unknown }>
-    ).filter((c) => c && typeof c.factor === "string" && validFactors.has(c.factor))
-  }
-
-  const cv = (parsed as Record<string, unknown>).crossValidation as Record<string, unknown> | undefined
-  if (cv && Array.isArray(cv.pairs)) {
-    cv.pairs = (cv.pairs as Array<{ factorA?: unknown; factorB?: unknown }>).filter(
-      (p) =>
-        p &&
-        typeof p.factorA === "string" && validFactors.has(p.factorA) &&
-        typeof p.factorB === "string" && validFactors.has(p.factorB)
-    )
-  }
-
-  return parsed as AggregateResult
+  return null
 }

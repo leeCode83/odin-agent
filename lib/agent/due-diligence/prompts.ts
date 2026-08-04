@@ -35,13 +35,13 @@ Output MUST match this schema:
 \`\`\`json
 {
   "action": "return" | "tool_call",
-  "score": 0-100,
-  "confidence": 0-100,
-  "signals": [...],
-  "reasoning": "...",
-  "conclusion": "...",
-  "toolName": "...", // tool_call only
-  "params": { ... }  // tool_call only
+  "reasoning": "...",  // ALWAYS REQUIRED (mandatory explanation of this step)
+  "score": 0-100,      // required when action is "return"
+  "confidence": 0-100, // required when action is "return"
+  "signals": [...],    // required when action is "return"
+  "conclusion": "...", // required when action is "return"
+  "toolName": "...",   // required when action is "tool_call"
+  "params": { ... }    // required when action is "tool_call"
 }
 \`\`\``
 
@@ -95,18 +95,18 @@ Respond ONLY with valid JSON. No markdown, no code fences. Output MUST match thi
 \`\`\`json
 {
   "action": "tool_call" | "return",
+  "reasoning": "...",  // ALWAYS REQUIRED for BOTH actions
   "toolName": "...",   // required when action is "tool_call"
   "params": { ... },   // required when action is "tool_call"
   "score": 0-100,      // required when action is "return"
   "confidence": 0-100, // required when action is "return"
   "signals": [...],    // required when action is "return"
-  "reasoning": "...",
   "conclusion": "..."  // required when action is "return"
 }
 \`\`\`
 Choose one:
-1. To call a tool: set "action" to "tool_call" with "toolName" and "params".
-2. To return your analysis: set "action" to "return" with "score", "confidence", "signals", "reasoning", "conclusion".
+1. To call a tool: set "action" to "tool_call" with "reasoning", "toolName" and "params".
+2. To return your analysis: set "action" to "return" with "reasoning", "score", "confidence", "signals", and "conclusion".
 
 Use tools to gather data. Return when you have enough information for a thorough analysis.
 

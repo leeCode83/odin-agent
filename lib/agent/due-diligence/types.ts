@@ -229,6 +229,18 @@ export const CatalystEntrySchema = z.object({
 })
 
 /**
+ * @constant AggregationResultSchema
+ * @description Zod schema for AggregationResult.
+ */
+export const AggregationResultSchema = z.object({
+  thesis: z.string(),
+  crossValidation: CrossValidationSchema,
+  risks: z.array(RiskEntrySchema),
+  catalysts: z.array(CatalystEntrySchema),
+  summary: z.string(),
+})
+
+/**
  * @class TransientToolError
  * @description Thrown when a tool call fails due to a temporary, retryable condition
  *   (e.g. network timeout, rate limit, upstream API flakiness).

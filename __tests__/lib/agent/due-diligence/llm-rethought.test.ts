@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { think, plan, rePlan, aggregate } from "@/lib/agent/due-diligence/llm"
+import { think, plan, rePlan, aggregate, normalizeThought, formatZodErrors } from "@/lib/agent/due-diligence/llm"
 import { REACT_SYSTEM_PROMPT, PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT } from "@/lib/agent/due-diligence/prompts"
 import { z } from "zod"
 
@@ -129,6 +129,53 @@ describe("think()", () => {
     expect(retryContent).toContain("Your previous response was not valid JSON")
     expect(retryContent).toContain("Invalid JSON:")
     expect(retryContent).toContain("rawPrefix: not valid json")
+  })
+
+  it("retries with Zod error feedback when schema validation fails", async () => {
+    // First attempt: missing required fields for tool_call
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "tool_call",
+        // Missing toolName and params
+      }) } }],
+    })
+    // Second attempt: corrected JSON
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "tool_call",
+        toolName: "get_price",
+        params: { asset: "BTC" },
+        reasoning: "Need price",
+      }) } }],
+    })
+
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("tool_call")
+    expect(mockCreate).toHaveBeenCalledTimes(2)
+    const retryMessages = mockCreate.mock.calls[1][0].messages
+    const retryContent = retryMessages[retryMessages.length - 1].content
+    expect(retryContent).toContain("validation error")
+    expect(retryContent).toContain("Please return corrected JSON only.")
+  })
+
+  it("returns fallback after max schema correction retries exhausted", async () => {
+    // All attempts: invalid schema
+    for (let i = 0; i < 3; i++) {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: JSON.stringify({
+          action: "tool_call"
+          // Missing toolName, etc.
+        }) } }],
+      })
+    }
+    
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("return")
+    // Fallback has score 0
+    if (result.action === "return") {
+      expect(result.score).toBe(0)
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
   })
 
   it("salvages a return thought when the LLM emits action 'conclude'", async () => {
@@ -256,6 +303,86 @@ describe("think()", () => {
 
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("tool_call")
+  })
+})
+
+describe("normalizeThought()", () => {
+  it("normalizes tool_call with missing reasoning to empty string", () => {
+    const raw = {
+      action: "tool_call",
+      toolName: "get_price",
+      params: { asset: "BTC" }
+    }
+    const result = normalizeThought(raw) as Record<string, unknown>
+    expect(result.action).toBe("tool_call")
+    expect(result.reasoning).toBe("")
+  })
+
+  it("does not overwrite existing reasoning in tool_call", () => {
+    const raw = {
+      action: "tool_call",
+      toolName: "get_price",
+      params: { asset: "BTC" },
+      reasoning: "I need to check the price."
+    }
+    const result = normalizeThought(raw) as Record<string, unknown>
+    expect(result.reasoning).toBe("I need to check the price.")
+  })
+
+  it("normalizes missing action to return", () => {
+    const raw = { score: 50 }
+    const result = normalizeThought(raw) as Record<string, unknown>
+    expect(result.action).toBe("return")
+    expect(result.reasoning).toBe("No reasoning provided — LLM returned incomplete response")
+  })
+})
+
+describe("formatZodErrors()", () => {
+  it("returns empty string for empty issues array", () => {
+    expect(formatZodErrors([])).toBe("")
+  })
+
+  it("formats standard field requirement error", () => {
+    const issues: z.ZodIssue[] = [
+      {
+        code: z.ZodIssueCode.invalid_type,
+        expected: "string",
+        received: "undefined",
+        path: ["reasoning"],
+        message: "Required",
+      } as z.ZodIssue
+    ]
+    const result = formatZodErrors(issues)
+    expect(result).toContain('Your previous response had 1 validation error')
+    expect(result).toContain('1. Field "reasoning"')
+    expect(result).toContain('Required')
+  })
+
+  it("formats nested array field error nicely", () => {
+    const issues: z.ZodIssue[] = [
+      {
+        code: z.ZodIssueCode.invalid_type,
+        expected: "number",
+        received: "string",
+        path: ["signals", 0, "strength"],
+        message: "Expected number, received string",
+      } as z.ZodIssue
+    ]
+    const result = formatZodErrors(issues)
+    expect(result).toContain('1. Field "signals[0].strength"')
+    expect(result).toContain('Expected number, received string')
+  })
+
+  it("handles multiple errors", () => {
+    const issues: z.ZodIssue[] = [
+      { code: z.ZodIssueCode.invalid_type, expected: "string", received: "undefined", path: ["toolName"], message: "Required" } as z.ZodIssue,
+      { code: z.ZodIssueCode.invalid_type, expected: "string", received: "undefined", path: ["reasoning"], message: "Required" } as z.ZodIssue
+    ]
+    const result = formatZodErrors(issues)
+    expect(result).toContain('Your previous response had 2 validation errors:')
+    expect(result).toContain('1. Field "toolName"')
+    expect(result).toContain('2. Field "reasoning"')
+    expect(result).toContain('Please return corrected JSON only.')
   })
 })
 
@@ -516,13 +643,66 @@ describe("aggregate()", () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: "still not valid json" } }],
     })
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "still not valid json 3" } }],
+    })
     const result = await aggregate({
       asset: "BTC",
       category: "major",
       factorReports: [],
     })
     expect(result).toBeNull()
+    expect(mockCreate).toHaveBeenCalledTimes(3)
+  })
+
+  it("retries with Zod error feedback when schema validation fails", async () => {
+    // Attempt 1: returns object missing required fields
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({ thesis: "missing stuff" }) } }],
+    })
+    // Attempt 2: returns valid AggregationResult
+    mockCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              thesis: "BTC is bullish",
+              crossValidation: { pairs: [], overallAlignment: 50, contradictions: [] },
+              risks: [],
+              catalysts: [],
+              summary: "A summary",
+            }),
+          },
+        },
+      ],
+    })
+
+    const result = await aggregate({
+      asset: "BTC",
+      category: "major",
+      factorReports: [],
+    })
+    expect(result?.thesis).toBe("BTC is bullish")
     expect(mockCreate).toHaveBeenCalledTimes(2)
+    const retryMessages = mockCreate.mock.calls[1][0].messages
+    const retryContent = retryMessages[retryMessages.length - 1].content
+    expect(retryContent).toContain("Your previous response was invalid against the required schema")
+    expect(retryContent).toContain("crossValidation")
+  })
+
+  it("returns null after max aggregate schema correction retries exhausted", async () => {
+    // Attempt 1, 2, 3: returns missing fields
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ thesis: "missing stuff" }) } }],
+    })
+
+    const result = await aggregate({
+      asset: "BTC",
+      category: "major",
+      factorReports: [],
+    })
+    expect(result).toBeNull()
+    expect(mockCreate).toHaveBeenCalledTimes(3)
   })
 })
 
