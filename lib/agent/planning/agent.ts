@@ -97,6 +97,27 @@ function median(values: number[]): number {
  * @returns {PlanningAggregationResult} Synthesized aggregation.
  */
 function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationResult {
+  // Guard: no reports → cannot compute meaningful prices, force NO_TRADE
+  if (reports.length === 0) {
+    return {
+      side: "no_trade",
+      thesis: "No subagent data — planning timed out before reports were available",
+      reasoning: "Planning loop exhausted before any perspective subagent completed",
+      confidence_score: 0,
+      confidence_breakdown: { factor_alignment: 0, historical_match: 0, signal_strength: 0 },
+      leverage_suggested: 1, // minimum valid for schema, NO_TRADE ignores leverage
+      risk_flags: ["planning_timeout", "no_subagent_data"],
+      consensus_alignment: 0,
+      contradictions: [],
+      profit_feasible: false,
+      no_trade_reason: "Planning timed out — no subagent reports available",
+      entry_price: 0,
+      stop_loss: 0,
+      take_profit: 0,
+      position_size_usdc: 0,
+    }
+  }
+
   const longs = reports.filter((r) => r.side === "long").length
   const shorts = reports.filter((r) => r.side === "short").length
   return {
@@ -146,13 +167,31 @@ interface BuildTradePlanParams {
  */
 function buildTradePlan(params: BuildTradePlanParams): TradePlan {
   const { asset, aggregation, equity, thresholds, autonomyDecision, iterations, totalMs } = params
-  const noTrade = aggregation.side === "no_trade"
-  const action = noTrade ? "NO_TRADE" : aggregation.side === "short" ? "SHORT" : "LONG"
+
+  // Guard: invalid prices for a live trade → force NO_TRADE
+  const hasInvalidPrices =
+    aggregation.side !== "no_trade" &&
+    (aggregation.entry_price <= 0 ||
+      aggregation.stop_loss <= 0 ||
+      aggregation.take_profit <= 0 ||
+      aggregation.leverage_suggested <= 0)
+
+  const safeAggregation: PlanningAggregationResult = hasInvalidPrices
+    ? {
+        ...aggregation,
+        side: "no_trade",
+        no_trade_reason: "Invalid price data (zero or negative values) — forcing NO_TRADE",
+        risk_flags: [...aggregation.risk_flags, "invalid_price_data"],
+      }
+    : aggregation
+
+  const noTrade = safeAggregation.side === "no_trade"
+  const action = noTrade ? "NO_TRADE" : safeAggregation.side === "short" ? "SHORT" : "LONG"
   // reason: schema requires a positive entry — a NO_TRADE with no market
   // reference uses placeholder 1 so SL/TP stay schema-valid.
-  const entry = aggregation.entry_price > 0 ? aggregation.entry_price : 1
-  const stopLoss = noTrade ? entry * 0.99 : aggregation.stop_loss
-  const takeProfit = noTrade ? entry * 1.01 : aggregation.take_profit
+  const entry = safeAggregation.entry_price > 0 ? safeAggregation.entry_price : 1
+  const stopLoss = noTrade ? entry * 0.99 : safeAggregation.stop_loss
+  const takeProfit = noTrade ? entry * 1.01 : safeAggregation.take_profit
   const { positionSizeContracts } = computePositionSize(
     equity,
     entry,
@@ -164,22 +203,22 @@ function buildTradePlan(params: BuildTradePlanParams): TradePlan {
     asset,
     // reason: TradePlanSchema.side only allows long|short — NO_TRADE falls
     // back to "long" (the position is zero-sized, side is decorative).
-    side: noTrade ? "long" : aggregation.side,
+    side: noTrade ? "long" : safeAggregation.side,
     action,
     entry_price: entry,
-    position_size_usdc: noTrade ? 0 : aggregation.position_size_usdc,
+    position_size_usdc: noTrade ? 0 : safeAggregation.position_size_usdc,
     position_size_contracts: noTrade ? 0 : positionSizeContracts,
     stop_loss: stopLoss,
     take_profit: takeProfit,
-    leverage: noTrade ? 1 : capLeverage(aggregation.leverage_suggested, thresholds.max_leverage),
-    confidence_score: aggregation.confidence_score,
-    confidence_breakdown: aggregation.confidence_breakdown,
-    thesis: aggregation.thesis,
-    reasoning: aggregation.reasoning,
+    leverage: noTrade ? 1 : capLeverage(safeAggregation.leverage_suggested, thresholds.max_leverage),
+    confidence_score: safeAggregation.confidence_score,
+    confidence_breakdown: safeAggregation.confidence_breakdown,
+    thesis: safeAggregation.thesis,
+    reasoning: safeAggregation.reasoning,
     autonomy_decision: autonomyDecision,
-    risk_flags: aggregation.risk_flags,
+    risk_flags: safeAggregation.risk_flags,
     graph_patterns_used: [],
-    consensus_alignment: aggregation.consensus_alignment,
+    consensus_alignment: safeAggregation.consensus_alignment,
     processingTimeMs: totalMs,
     iterations,
     timestamp: new Date().toISOString(),
@@ -446,6 +485,14 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
 
   const totalMs = Date.now() - t0
 
+  if (outcome === "exhausted" && allReports.length === 0) {
+    log("warn", "planning.no_trade_forced", {
+      reason: "no_subagent_reports_after_timeout",
+      elapsedMs: totalMs,
+    })
+    outcome = "no_trade"
+  }
+
   // --- Layer 2 (ACCEPT / forced / exhausted paths) ---
   // reason: NO_TRADE skips the gate — nothing is at risk; a zero-size
   // position would trivially satisfy it anyway, so "auto" is forced.
@@ -488,7 +535,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // human approval — distinct from "partial" (loop exhaustion) and from
   // complete runs that happen to carry autonomy_decision "approve".
   const status: PlanningAgentOutput["status"] =
-    outcome === "no_trade"
+    tradePlan.action === "NO_TRADE" || outcome === "no_trade"
       ? "no_trade"
       : ddConfidenceMultiplier < 1 && autonomyDecision === "approve"
         ? "approval_required"

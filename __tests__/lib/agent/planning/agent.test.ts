@@ -559,6 +559,43 @@ describe("runPlanningAgent", () => {
     })
   })
 
+  describe("Error 2 & 3: Planning timeout crash", () => {
+    it("TASK 1: fallbackAggregation with empty array forces NO_TRADE instead of throwing on zero prices", async () => {
+      // Simulate DD agent taking longer than the loop budget.
+      // This will cause the loop to break at iteration 0, leaving allReports empty.
+      vi.stubEnv("PLANNING_LOOP_TIMEOUT_MS", "50")
+      try {
+        runDDAgentMock.mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 60))
+          return DD_REPORT
+        })
+
+        // Currently this throws a ZodError (PlanningError) because fallbackAggregation([]) produces 0 prices.
+        // We expect it to gracefully return a NO_TRADE plan.
+        const out = await runPlanningAgent(INPUT)
+
+        expect(out.status).toBe("no_trade")
+        expect(out.report.action).toBe("NO_TRADE")
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
+
+    it("TASK 2: buildTradePlan with zero prices forces NO_TRADE instead of throwing", async () => {
+      // Simulate aggregate returning 0 for prices but NOT side="no_trade"
+      aggregateMock.mockResolvedValue(
+        makeAggregation({ entry_price: 0, stop_loss: 0, take_profit: 0 })
+      )
+
+      // Currently throws ZodError because zero prices fail validation.
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("no_trade")
+      expect(out.report.action).toBe("NO_TRADE")
+      expect(out.report.risk_flags).toContain("invalid_price_data")
+    })
+  })
+
   describe("fail fast — MAX_LOOPS and loop deadline", () => {
     it("exhausts the loop at MAX_LOOPS 3 (fail fast, was 5) when re-deploys never force accept", async () => {
       // aggregation null + high-confidence same-side reports → rule 6 RE-DEPLOY
