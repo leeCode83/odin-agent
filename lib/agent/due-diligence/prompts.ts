@@ -5,6 +5,8 @@
  * @layer service
  */
 
+import { registerPrompt } from "@/lib/agent/due-diligence/prompt-registry"
+
 /**
  * @function describeZodSchema
  * @description Converts a Zod schema to a human-readable parameter string for LLM prompts.
@@ -42,6 +44,8 @@ Output MUST match this schema:
   "params": { ... }  // tool_call only
 }
 \`\`\``
+
+registerPrompt("DD_THINK_JSON_INSTRUCTION", THINK_JSON_INSTRUCTION)
 
 /**
  * @function REACT_SYSTEM_PROMPT
@@ -132,6 +136,8 @@ IMPORTANT: If the category is "meme", skip the fundamental factor — memecoins 
 
 Return a JSON array: [{factor, instruction, priority}, ...]`
 
+registerPrompt("DD_PLAN", PLAN_PROMPT)
+
 /**
  * @constant REPLAN_PROMPT
  * @description System prompt for the Main Agent's EVALUATE→RE-DEPLOY step. Instructs the
@@ -139,7 +145,14 @@ Return a JSON array: [{factor, instruction, priority}, ...]`
  */
 export const REPLAN_PROMPT = `You are re-deploying subagents that returned low-confidence results. Given the previous reports, provide new targeted instructions for each low-confidence factor.
 
+For each active factor, provide:
+- factor: the factor name
+- instruction: specific analysis instructions for that factor
+- priority: 1-4 (1 highest)
+
 Return a JSON array: [{factor, instruction, priority}, ...]`
+
+registerPrompt("DD_REPLAN", REPLAN_PROMPT)
 
 /**
  * @constant AGGREGATE_PROMPT
@@ -162,3 +175,5 @@ Respond ONLY with valid JSON. Output MUST match this schema:
   "summary": "..."
 }
 \`\`\``
+
+registerPrompt("DD_AGGREGATE", AGGREGATE_PROMPT)

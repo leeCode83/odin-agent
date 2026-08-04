@@ -6,10 +6,14 @@
  */
 
 import OpenAI from "openai"
-import { PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT, THINK_JSON_INSTRUCTION } from "@/lib/agent/due-diligence/prompts"
+import { getPrompt } from "@/lib/agent/due-diligence/prompt-registry"
+import "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
 import { FACTOR_KEYS, SubagentPlanSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
+import { createDdLogger } from "@/lib/agent/due-diligence/logger"
+
+const log = createDdLogger({ module: "llm" })
 
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash"
@@ -104,7 +108,7 @@ export async function think(
   // explicitly demands it — append the instruction to the user message (new array,
   // caller's messages are never mutated; factor extraction above reads the originals).
   const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = messages.map((m) =>
-    m.role === "user" ? { ...m, content: `${m.content ?? ""}\n\n${THINK_JSON_INSTRUCTION}` } : { ...m }
+    m.role === "user" ? { ...m, content: `${m.content ?? ""}\n\n${getPrompt("DD_THINK_JSON_INSTRUCTION")}` } : { ...m }
   ) as OpenAI.Chat.Completions.ChatCompletionMessageParam[]
 
   // reason: native tool_calls are returned raw so the ReAct loop can execute them
@@ -141,12 +145,12 @@ export async function think(
       )
       const message = response.choices?.[0]?.message
       if (!message) {
-        console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
+        log("error", "think_empty_response", { factor, model: DEEPSEEK_THINK_MODEL, reason: "Check API key, rate limits" })
         return null
       }
       return message as unknown as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam
     } catch (err) {
-      console.error("[DD:think] API error. factor=%s:", factor, err instanceof Error ? err.message : String(err))
+      log("error", "think_api_error", { factor, error: err instanceof Error ? err.message : String(err) })
       return null
     }
   }
@@ -162,7 +166,7 @@ export async function think(
   // string form is JSON-parsable; any array form falls through to the empty response path.
   let content = typeof message.content === "string" ? message.content : ""
   if (!content.trim()) {
-    console.error("[DD:think] Empty LLM response. factor=%s model=%s. Check API key, rate limits.", factor, DEEPSEEK_THINK_MODEL)
+    log("error", "think_empty_response", { factor, model: DEEPSEEK_THINK_MODEL, reason: "Check API key, rate limits" })
     return fallback
   }
 
@@ -170,7 +174,7 @@ export async function think(
   try {
     parsed = JSON.parse(content)
   } catch (err) {
-    console.error("[DD:think] JSON parse failed — retrying with error feedback. factor=%s", factor)
+    log("error", "think_json_parse_failed", { factor, error: err instanceof Error ? err.message : String(err) })
     // reason: a blind re-call replays the same failure — feed the parse error and the
     // truncated raw output back so the model can correct the malformed JSON.
     const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
@@ -197,7 +201,7 @@ rawPrefix: ${content.slice(0, 500)}`
       // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
       const repaired = repairJSON(content)
       if (!repaired) {
-        console.error("[DD:think] JSON repair failed. factor=%s", factor)
+        log("error", "think_json_repair_failed", { factor })
         return fallback
       }
       parsed = repaired
@@ -205,15 +209,14 @@ rawPrefix: ${content.slice(0, 500)}`
   }
 
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed as Record<string, unknown>).length === 0) {
-    console.error("[DD:think] LLM returned empty object {}. factor=%s — treating as failed response.", factor)
+    log("error", "think_empty_object", { factor })
     return fallback
   }
 
   try {
     return SubAgentThoughtSchema.parse(normalizeThought(parsed))
   } catch (err) {
-    console.error("[DD:think] Schema validation failed. factor=%s:", factor, err)
-    console.error("[DD:think] Raw LLM output (first 300 chars):", content?.slice(0, 300))
+    log("error", "think_schema_validation_failed", { factor, error: err instanceof Error ? err.message : String(err), rawOutputPrefix: content?.slice(0, 300) })
     return fallback
   }
 }
@@ -242,7 +245,7 @@ export async function plan(params: {
         max_tokens: 4096,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: PLAN_PROMPT },
+          { role: "system", content: getPrompt("DD_PLAN") },
           { role: "user", content: JSON.stringify({ asset: params.asset, category: params.category }) },
         ],
       },
@@ -258,12 +261,12 @@ export async function plan(params: {
       if (result.success) {
         validPlans.push(result.data)
       } else {
-        console.warn(`[DD:plan] Dropping invalid plan item for factor ${item?.factor}:`, result.error.message)
+        log("warn", "plan_invalid_item_dropped", { factor: item?.factor, error: result.error.message })
       }
     }
     return validPlans
   } catch (err) {
-    console.error("[DD:plan] LLM call failed:", err instanceof Error ? err.message : String(err))
+    log("error", "plan_api_error", { error: err instanceof Error ? err.message : String(err) })
     return []
   }
 }
@@ -296,7 +299,7 @@ export async function rePlan(params: {
         max_tokens: 4096,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: REPLAN_PROMPT },
+          { role: "system", content: getPrompt("DD_REPLAN") },
           { role: "user", content: JSON.stringify(params) },
         ],
       },
@@ -312,12 +315,12 @@ export async function rePlan(params: {
       if (result.success) {
         validPlans.push(result.data)
       } else {
-        console.warn(`[DD:rePlan] Dropping invalid plan item for factor ${item?.factor}:`, result.error.message)
+        log("warn", "replan_invalid_item_dropped", { factor: item?.factor, error: result.error.message })
       }
     }
     return validPlans
   } catch (err) {
-    console.error("[DD:rePlan] LLM call failed:", err instanceof Error ? err.message : String(err))
+    log("error", "replan_api_error", { error: err instanceof Error ? err.message : String(err) })
     return []
   }
 }
@@ -392,7 +395,7 @@ export async function aggregate(params: {
   if (!c) return null
 
   const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: AGGREGATE_PROMPT },
+    { role: "system", content: getPrompt("DD_AGGREGATE") },
     {
       role: "user",
       content: JSON.stringify({
@@ -422,7 +425,7 @@ export async function aggregate(params: {
       )
       return response.choices?.[0]?.message?.content || "{}"
     } catch (err) {
-      console.error("[DD:aggregate] API error:", err instanceof Error ? err.message : String(err))
+      log("error", "aggregate_api_error", { error: err instanceof Error ? err.message : String(err) })
       return null
     }
   }
@@ -435,7 +438,7 @@ export async function aggregate(params: {
   try {
     parsed = JSON.parse(content)
   } catch (err) {
-    console.error("[DD:aggregate] JSON parse failed — retrying with error feedback. Raw length:", content.length)
+    log("error", "aggregate_json_parse_failed", { rawLength: content.length, error: err instanceof Error ? err.message : String(err) })
     const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
 
 Your previous response was not valid JSON.
@@ -454,7 +457,7 @@ rawPrefix: ${content.slice(0, 500)}`
       // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
       const repaired = repairJSON(content)
       if (!repaired) {
-        console.error("[DD:aggregate] JSON repair also failed")
+        log("error", "aggregate_json_repair_failed", {})
         return null
       }
       parsed = repaired

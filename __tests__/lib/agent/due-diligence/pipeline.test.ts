@@ -59,9 +59,8 @@ describe("runDDPipeline", () => {
       userId: "user-1",
     })
     expect(result.report).toEqual(mockDDReport)
-    expect(result.timing.fetchMs).toBe(0)
-    expect(result.timing.llmMs).toBe(0)
     expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
+    expect(result.timing.agentMs).toBe(1500)
     expect(result.timing.agentMs).toBe(1500)
   })
 

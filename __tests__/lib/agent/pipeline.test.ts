@@ -72,8 +72,6 @@ describe("runDDPipeline", () => {
 
     const output = await runDDPipeline({ asset: "BTC", userId: "user1" })
 
-    expect(output.timing.fetchMs).toBe(0)
-    expect(output.timing.llmMs).toBe(0)
     expect(output.timing.totalMs).toBeGreaterThanOrEqual(0)
     expect(output.timing.agentMs).toBe(1200)
   })

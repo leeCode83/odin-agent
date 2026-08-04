@@ -40,8 +40,6 @@ export async function runDDPipeline(input: DDPipelineInput): Promise<DDPipelineO
     return {
       report: report as DDReport,
       timing: {
-        fetchMs: 0,
-        llmMs: 0,
         totalMs: Date.now() - t0,
         agentMs: report.processingTimeMs ?? Date.now() - t0,
       },

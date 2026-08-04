@@ -18,6 +18,9 @@ import { fetchCandleMap } from "@/lib/agent/tools/technical/candles"
 import { recordDDReport } from "@/lib/db/graph-memory"
 import type { FactorReport, SubagentPlan, CrossValidation, AggregationResult } from "@/lib/agent/due-diligence/types"
 import type { DDReport } from "@/lib/agent/types"
+import { createDdLogger } from "@/lib/agent/due-diligence/logger"
+
+const log = createDdLogger({ module: "agent" })
 
 /**
  * @constant DEFAULT_MAX_LOOPS
@@ -276,7 +279,7 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
           report as unknown as Record<string, unknown>,
           params.userId,
           params.walletAddress
-        ).catch((e) => console.warn("[DDAgent] Failed to persist DD report:", e))
+        ).catch((e) => log("warn", "db_persist_failed", { error: e instanceof Error ? e.message : String(e) }))
       }
 
       return report

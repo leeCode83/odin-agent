@@ -69,8 +69,6 @@ export interface DDPipelineInput {
 export interface DDPipelineOutput {
   report: DDReport
   timing: {
-    fetchMs: number
-    llmMs: number
     totalMs: number
     agentMs: number
   }
