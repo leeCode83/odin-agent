@@ -183,11 +183,15 @@ describe("runPerspectiveSubagent", () => {
 
   it("maps defaults when the LLM never returns (loop exhausted)", async () => {
     const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
-    thinkMock.mockResolvedValue({
-      action: "tool_call",
-      toolName: "compute_atr",
-      params: { asset: "BTC" },
-      reasoning: "Looping",
+    let callCount = 0
+    thinkMock.mockImplementation(() => {
+      callCount++
+      return Promise.resolve({
+        action: "tool_call",
+        toolName: "compute_atr",
+        params: { iter: callCount },
+        reasoning: "Looping",
+      })
     })
 
     const report = await runPerspectiveSubagent({

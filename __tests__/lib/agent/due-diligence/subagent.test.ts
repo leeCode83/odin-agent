@@ -323,11 +323,15 @@ describe("runSubagent", () => {
   it("force returns after maxLoops when LLM never returns", async () => {
     const tools: ToolRegistry = { dummy: makeTool("dummy") }
 
-    const mockThink = vi.fn().mockResolvedValue({
-      action: "tool_call",
-      toolName: "dummy",
-      params: {},
-      reasoning: "Looping",
+    let callCount = 0
+    const mockThink = vi.fn().mockImplementation(() => {
+      callCount++
+      return Promise.resolve({
+        action: "tool_call",
+        toolName: "dummy",
+        params: { iter: callCount },
+        reasoning: "Looping",
+      })
     })
 
     const report = await runSubagent({
@@ -539,4 +543,227 @@ describe("runSubagent", () => {
 
   // ponytail: wall-clock timeout tested implicitly via maxLoops.
   // Real Date.now mocking adds complexity without covering new ground.
+})
+
+describe("Error Taxonomy & Duplicate Detection", () => {
+  it("surfaces [permanent] error prefix for unknown tool", async () => {
+    const tools: ToolRegistry = {}
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "unknown_tool",
+        params: {},
+        reasoning: "Trying something new",
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 50,
+        confidence: 50,
+        signals: [],
+        reasoning: "Done",
+        conclusion: "Finished",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+    })
+
+    expect(report.errors.some(e => e.includes("[permanent] unknown_tool: Unknown tool"))).toBe(true)
+  })
+
+  it("surfaces [permanent] error prefix for Zod validation failure", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => ({ success: true, data: {}, metadata: { source: "test", latencyMs: 0 } }))
+    }
+    // Override params to require a specific field
+    tools.test_tool.parameters = z.object({ req: z.string() })
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "test_tool",
+        params: {}, // Missing required field
+        reasoning: "Invalid params",
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 50,
+        confidence: 50,
+        signals: [],
+        reasoning: "Done",
+        conclusion: "Finished",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+    })
+
+    expect(report.errors.some(e => e.includes("[permanent] test_tool: Invalid params"))).toBe(true)
+  })
+
+  it("surfaces [transient] error prefix for runtime execution error", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => { throw new Error("API Timeout") })
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "test_tool",
+        params: {},
+        reasoning: "Call api",
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 50,
+        confidence: 50,
+        signals: [],
+        reasoning: "Done",
+        conclusion: "Finished",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+    })
+
+    expect(report.errors.some(e => e.includes("[transient] test_tool: Execution error: Error: API Timeout"))).toBe(true)
+  })
+
+  it("detects duplicate action and forces early stop (JSON convention)", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool")
+    }
+
+    const duplicateCall = {
+      action: "tool_call",
+      toolName: "test_tool",
+      params: { foo: "bar" },
+      reasoning: "Stuck in a loop",
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce(duplicateCall)
+      .mockResolvedValueOnce(duplicateCall)
+      .mockResolvedValueOnce({
+        action: "return", // the force return fallback
+        score: 10,
+        confidence: 10,
+        signals: [],
+        reasoning: "Force returned",
+        conclusion: "Force returned",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      maxLoops: 10, // Normally would run 10 times, but we expect it to break after 2
+    })
+
+    // 1 normal, 1 duplicate break, 1 force return = 3 total calls
+    expect(mockThink).toHaveBeenCalledTimes(3)
+    expect(report.errors.some(e => e.includes("[permanent] test_tool: Duplicate tool call detected"))).toBe(true)
+  })
+
+  it("detects duplicate action and forces early stop (native tool calls)", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool")
+    }
+
+    const duplicateCall1 = {
+      action: "native_tool_call",
+      toolCalls: [{ id: "call_1", toolName: "test_tool", rawArguments: '{"foo":"bar"}' }],
+      assistantMessage: { role: "assistant", tool_calls: [] }
+    }
+    const duplicateCall2 = {
+      action: "native_tool_call",
+      toolCalls: [{ id: "call_2", toolName: "test_tool", rawArguments: '{"foo":"bar"}' }],
+      assistantMessage: { role: "assistant", tool_calls: [] }
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce(duplicateCall1)
+      .mockResolvedValueOnce(duplicateCall2)
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 10,
+        confidence: 10,
+        signals: [],
+        reasoning: "Force returned",
+        conclusion: "Force returned",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      maxLoops: 10,
+    })
+
+    expect(mockThink).toHaveBeenCalledTimes(3)
+    expect(report.errors.some(e => e.includes("[permanent] test_tool: Duplicate tool call detected"))).toBe(true)
+  })
+
+  it("does not trigger duplicate detection for different params", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool")
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "test_tool",
+        params: { foo: "bar1" },
+        reasoning: "Call 1",
+      })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "test_tool",
+        params: { foo: "bar2" },
+        reasoning: "Call 2 (different params)",
+      })
+      .mockResolvedValueOnce({
+        action: "return",
+        score: 50,
+        confidence: 50,
+        signals: [],
+        reasoning: "Done",
+        conclusion: "Finished",
+      })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      maxLoops: 10,
+    })
+
+    expect(mockThink).toHaveBeenCalledTimes(3)
+    expect(report.errors.some(e => e.includes("Duplicate tool call detected"))).toBe(false)
+    expect(report.iterations).toBe(3)
+  })
 })

@@ -129,7 +129,7 @@ export type ThinkOptions = {
 /** @typedef {Object} HistoryEntry - One tool invocation recorded during the ReAct loop. */
 type HistoryEntry = {
   toolName: string
-  result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; data?: unknown }
+  result: { success: boolean; error?: string; errorKind?: "transient" | "permanent"; metadata: { source: string; latencyMs: number }; data?: unknown }
 }
 
 /**
@@ -176,7 +176,7 @@ function summarizeData(data: unknown): unknown {
  *   replaced by a compact `dataSummary`. The original history is NOT mutated — raw data
  *   stays in memory for dataSources/error reporting in the final FactorReport.
  * @param {HistoryEntry[]} history - Full internal tool history.
- * @returns {Array<{ toolName: string; result: { success: boolean; error?: string; metadata: { source: string; latencyMs: number }; dataSummary?: unknown } }>}
+ * @returns {Array<{ toolName: string; result: { success: boolean; error?: string; errorKind?: "transient" | "permanent"; metadata: { source: string; latencyMs: number }; dataSummary?: unknown } }>}
  */
 function summarizeHistory(history: HistoryEntry[]) {
   return history.map((h) => {
@@ -186,6 +186,7 @@ function summarizeHistory(history: HistoryEntry[]) {
       result: {
         success: h.result.success,
         error: h.result.error,
+        ...(h.result.errorKind ? { errorKind: h.result.errorKind } : {}),
         metadata: h.result.metadata,
         ...(dataSummary === undefined ? {} : { dataSummary }),
       },
@@ -217,6 +218,7 @@ async function executeToolCall(
     const result = {
       success: false,
       error: `Unknown tool: ${toolName}. Available: ${toolNames.join(", ")}`,
+      errorKind: "permanent" as const,
       metadata: { source: "system", latencyMs: 0 },
     }
     history.push({ toolName, result })
@@ -229,6 +231,7 @@ async function executeToolCall(
       const result = {
         success: false,
         error: `Invalid params: ${parsed.error.message}`,
+        errorKind: "permanent" as const,
         metadata: { source: "system", latencyMs: 0 },
       }
       history.push({ toolName, result })
@@ -247,6 +250,7 @@ async function executeToolCall(
     const result = {
       success: false,
       error: `Execution error: ${String(err)}`,
+      errorKind: "transient" as const,
       metadata: { source: "system", latencyMs: 0 },
     }
     history.push({ toolName, result })
@@ -268,6 +272,7 @@ async function executeToolCall(
  *      executes the tool, pushes the result into conversation history, and loops.
  *   6. If the loop budget (`maxLoops`) or wall-clock budget (`timeoutMs`) is
  *      exhausted, force-returns with whatever history was collected.
+ *   7. Duplicate-action detection forces early stop if the same tool+params is repeated.
  *
  * @param {Object} params - Configuration for the subagent run.
  * @param {string} params.factor - The factor name (e.g. "technical").
@@ -309,8 +314,9 @@ export async function runSubagent(params: {
   const toolMessages: LlmThinkMessage[] = []
 
   const startTime = Date.now()
+  const lastCallFingerprint = new Map<string, string>()
 
-  for (let i = 0; i < maxLoops; i++) {
+  reactLoop: for (let i = 0; i < maxLoops; i++) {
     const loopStart = Date.now()
     if (loopStart - startTime > timeoutMs) break
 
@@ -344,7 +350,10 @@ export async function runSubagent(params: {
         reasoning: thought.reasoning,
         iterations: i + 1,
         conclusion: thought.conclusion,
-        errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
+        errors: history.filter((h) => !h.result.success).map((h) => {
+          const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
+          return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
+        }),
       }
     }
 
@@ -362,6 +371,22 @@ export async function runSubagent(params: {
           // reason: malformed arguments — keep {} so zod's safeParse reports the
           // failure back to the model via the tool message error below.
         }
+
+        const fingerprint = `${tc.toolName}::${JSON.stringify(args)}`
+        if (lastCallFingerprint.get(tc.toolName) === fingerprint) {
+          history.push({
+            toolName: tc.toolName,
+            result: {
+              success: false,
+              error: "Duplicate tool call detected — agent stuck in loop. Forcing stop.",
+              errorKind: "permanent",
+              metadata: { source: "system", latencyMs: 0 },
+            },
+          })
+          break reactLoop
+        }
+        lastCallFingerprint.set(tc.toolName, fingerprint)
+
         const result = await executeToolCall(tc.toolName, args, params.tools, toolNames, history)
         toolMessages.push({
           role: "tool",
@@ -373,6 +398,21 @@ export async function runSubagent(params: {
     }
 
     // ACT — backward-compat JSON-convention tool_call (no native tools passed)
+    const fingerprint = `${thought.toolName}::${JSON.stringify(thought.params)}`
+    if (lastCallFingerprint.get(thought.toolName) === fingerprint) {
+      history.push({
+        toolName: thought.toolName,
+        result: {
+          success: false,
+          error: "Duplicate tool call detected — agent stuck in loop. Forcing stop.",
+          errorKind: "permanent",
+          metadata: { source: "system", latencyMs: 0 },
+        },
+      })
+      break reactLoop
+    }
+    lastCallFingerprint.set(thought.toolName, fingerprint)
+
     await executeToolCall(thought.toolName, thought.params, params.tools, toolNames, history)
   }
 
@@ -412,7 +452,10 @@ export async function runSubagent(params: {
         reasoning: finalThought.reasoning,
         iterations: maxLoops,
         conclusion: finalThought.conclusion,
-        errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
+        errors: history.filter((h) => !h.result.success).map((h) => {
+          const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
+          return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
+        }),
       }
     }
   } catch {
@@ -429,6 +472,9 @@ export async function runSubagent(params: {
     reasoning: `Completed ${history.length} tool calls across ${maxLoops} iterations without returning.`,
     iterations: maxLoops,
     conclusion: "Subagent did not return a conclusion — force returned after max loops.",
-    errors: history.filter((h) => !h.result.success).map((h) => `${h.toolName}: ${h.result.error || "unknown error"}`),
+    errors: history.filter((h) => !h.result.success).map((h) => {
+      const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
+      return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
+    }),
   }
 }

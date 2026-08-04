@@ -193,3 +193,29 @@ export const CatalystEntrySchema = z.object({
   description: z.string(),
   impact: z.enum(["low", "medium", "high"]),
 })
+
+/**
+ * @class TransientToolError
+ * @description Thrown when a tool call fails due to a temporary, retryable condition
+ *   (e.g. network timeout, rate limit, upstream API flakiness).
+ *   The ReAct loop MAY retry when this error is caught.
+ */
+export class TransientToolError extends Error {
+  readonly name = "TransientToolError"
+  constructor(message: string) {
+    super(message)
+  }
+}
+
+/**
+ * @class PermanentToolError
+ * @description Thrown when a tool call fails due to a non-recoverable condition
+ *   (e.g. unknown tool name, invalid Zod-validated params, logic error).
+ *   The ReAct loop MUST NOT retry when this error is caught.
+ */
+export class PermanentToolError extends Error {
+  readonly name = "PermanentToolError"
+  constructor(message: string) {
+    super(message)
+  }
+}
