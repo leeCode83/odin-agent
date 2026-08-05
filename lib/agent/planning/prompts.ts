@@ -17,6 +17,7 @@ import { describeZodSchema } from "@/lib/agent/due-diligence/prompts"
  *   `runSubagent`'s `getSystemPrompt(factor, tools, instruction)` signature.
  *   Mirrors the DD `REACT_SYSTEM_PROMPT` house style but adds the perspective
  *   persona, the DDReport validation role, and the planning return fields.
+ * @note Uses CoT ordering — reasoning field is first in JSON schema to enforce step-by-step thinking before action selection.
  * @param {Object} options - Prompt options.
  * @param {number} options.targetProfitPercent - User's profit target (e.g. 100 = 100%).
  * @returns {(factor: string, tools: Record<string, { description: string; parameters: unknown }>, instruction: string) => string}
@@ -50,9 +51,31 @@ INSTRUCTION: ${instruction}
 Available tools:
 ${toolDescriptions}
 
-You MUST respond in JSON format. Choose one:
-1. To call a tool: {"action": "tool_call", "toolName": "...", "params": {...}, "reasoning": "..."}
-2. To return your analysis: {"action": "return", "score": <0-100>, "confidence": <0-100>, "side": "long" | "short" | "no_trade", "entry_price": <number>, "signals": [...], "suggested_stop_loss": <number>, "suggested_take_profit": <number>, "suggested_leverage": <number>, "suggested_position_size_usdc": <number>, "reasoning": "...", "conclusion": "...", "risk_flags": [...]}
+You MUST respond in JSON format. Output MUST match this schema:
+\`\`\`json
+{
+  "reasoning": "...", // ALWAYS REQUIRED
+  "action": "tool_call" | "return",
+  "toolName": "...", // required when action is "tool_call"
+  "params": {...}, // required when action is "tool_call"
+  "score": <0-100>, // required when action is "return"
+  "confidence": <0-100>, // required when action is "return"
+  "side": "long" | "short" | "no_trade", // required when action is "return"
+  "entry_price": <number>, // required when action is "return"
+  "signals": [...], // required when action is "return"
+  "suggested_stop_loss": <number>, // required when action is "return"
+  "suggested_take_profit": <number>, // required when action is "return"
+  "suggested_leverage": <number>, // required when action is "return"
+  "suggested_position_size_usdc": <number>, // required when action is "return"
+  "conclusion": "...", // required when action is "return"
+  "risk_flags": [...] // required when action is "return"
+}
+\`\`\`
+Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels. If market data is unavailable, set entry_price to 0 and side to no_trade.
+
+Choose one:
+1. To call a tool: set "action" to "tool_call" with "reasoning", "toolName" and "params".
+2. To return your analysis: set "action" to "return" with all return fields.
 
 Use at least 2 tools before returning. Only return when you have validated the DDReport against current data.
 
@@ -71,6 +94,7 @@ If you cannot provide full signal objects, fall back to plain strings like ["sig
  *   Decides which perspectives to deploy, their specific instructions, and
  *   priority order. The DDReport and targetProfitPercent arrive in the user
  *   message payload.
+ * @note Includes few-shot examples to guide the model toward specific, actionable subagent instructions.
  */
 export const PLAN_PROMPT = `You are a trade planning orchestrator. You manage 3 perspective subagents (conservative, balance, aggressive).
 
@@ -86,6 +110,9 @@ For each perspective, write an instruction that tells the subagent:
 - What tools to prioritize (risk calc, funding check, liquidation zones, web search)
 - Whether to be skeptical or trusting of the DDReport's conclusions
 
+Example for conservative: "Validate DDReport's SL levels, use compute_atr to confirm stop distance is safe, check funding regime."
+Example for aggressive: "Confirm upside momentum with current order book, use liquidation zone tool to find entry."
+
 You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
 
@@ -94,6 +121,7 @@ Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", 
  * @description System prompt for the aggregator LLM (spec §7.4). Merges the
  *   three PerspectiveReports into one final trade plan with consensus metrics,
  *   profit feasibility, and an optional no-trade reason.
+ * @note Includes CoT reasoning steps and a negative constraint against omitting contradictions.
  */
 export const AGGREGATE_PROMPT = `You are a trade plan aggregator. Merge 3 perspective reports into one final trade plan.
 
@@ -108,6 +136,8 @@ Tasks:
 3. Set final parameters: entry, SL, TP, leverage, position size (prefer median across perspectives)
 4. Check profit feasibility: does expected profit (based on take_profit - entry) meet the user's target profit?
 5. Flag contradictions: if perspectives disagree, note what they disagree on
+
+Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side or leverage, list the disagreement explicitly.
 
 If 2+ perspectives conclude no_trade, final action is no_trade.
 
@@ -133,6 +163,7 @@ Return JSON with:
  * @description System prompt for the orchestrator's RE-PLAN step. Generates
  *   targeted new instructions for low-consensus perspectives, informed by the
  *   previous perspective reports.
+ * @note Instructs the model to name a specific tool, what threshold must be met, and provides a few-shot example.
  */
 export const REPLAN_PROMPT = `You are re-deploying perspective subagents that produced low-consensus results.
 
@@ -140,6 +171,10 @@ Given the list of low-consensus perspectives and the previous reports from all p
 - Point out what the previous analysis missed or over-weighted
 - Suggest specific tools to re-check (risk calc, funding regime, liquidation zones, web search)
 - Set a clear expectation for what a good analysis must confirm before returning
+- Specify which tool the perspective must call first and what threshold must be met before returning
+
+Example instruction:
+"Previous report ignored high funding rates. Use funding_rate_check tool first. You must confirm funding rate is below 0.05% before entering long."
 
 You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`

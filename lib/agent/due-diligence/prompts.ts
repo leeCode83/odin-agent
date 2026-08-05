@@ -29,13 +29,14 @@ export function describeZodSchema(schema: unknown): string {
  * @description Explicit JSON-only output instruction appended to the THINK step's user message.
  *   DeepSeek json_object mode requires the prompt to explicitly demand JSON; the codeblock
  *   summarizes every field of the SubAgentThought discriminated union so the model reproduces it.
+ * @note Uses CoT ordering — reasoning field is first in JSON schema to enforce step-by-step thinking before action selection.
  */
 export const THINK_JSON_INSTRUCTION = `Respond ONLY with valid JSON. No markdown, no code fences.
 Output MUST match this schema:
 \`\`\`json
 {
-  "action": "return" | "tool_call",
   "reasoning": "...",  // ALWAYS REQUIRED (mandatory explanation of this step)
+  "action": "return" | "tool_call",
   "score": 0-100,      // required when action is "return"
   "confidence": 0-100, // required when action is "return"
   "signals": [...],    // required when action is "return"
@@ -43,7 +44,8 @@ Output MUST match this schema:
   "toolName": "...",   // required when action is "tool_call"
   "params": { ... }    // required when action is "tool_call"
 }
-\`\`\``
+\`\`\`
+Think step by step in the reasoning field before deciding on an action. Do NOT fabricate data. If a tool returns no data, state it explicitly in reasoning.`
 
 registerPrompt("DD_THINK_JSON_INSTRUCTION", THINK_JSON_INSTRUCTION)
 
@@ -51,6 +53,7 @@ registerPrompt("DD_THINK_JSON_INSTRUCTION", THINK_JSON_INSTRUCTION)
  * @function REACT_SYSTEM_PROMPT
  * @description Builds a system prompt for a factor subagent's THINK step. Describes the
  *   factor role, the analysis instruction, and all available tools with their parameter schemas.
+ * @note Uses CoT ordering — reasoning field is first in JSON schema to enforce step-by-step thinking before action selection.
  * @param {string} factor - The due diligence factor name (e.g. "technical", "onchain").
  * @param {Record<string, { description: string; parameters: unknown }>} tools - Map of tool names to their definitions with description and parameters.
  * @param {string} instruction - Natural-language instruction scoping the analysis.
@@ -94,8 +97,8 @@ ${toolDescriptions}
 Respond ONLY with valid JSON. No markdown, no code fences. Output MUST match this schema:
 \`\`\`json
 {
-  "action": "tool_call" | "return",
   "reasoning": "...",  // ALWAYS REQUIRED for BOTH actions
+  "action": "tool_call" | "return",
   "toolName": "...",   // required when action is "tool_call"
   "params": { ... },   // required when action is "tool_call"
   "score": 0-100,      // required when action is "return"
@@ -104,6 +107,8 @@ Respond ONLY with valid JSON. No markdown, no code fences. Output MUST match thi
   "conclusion": "..."  // required when action is "return"
 }
 \`\`\`
+Think step by step in the reasoning field before deciding on an action. Do NOT fabricate data. If a tool returns no data, state it explicitly in reasoning.
+
 Choose one:
 1. To call a tool: set "action" to "tool_call" with "reasoning", "toolName" and "params".
 2. To return your analysis: set "action" to "return" with "reasoning", "score", "confidence", "signals", and "conclusion".
@@ -124,6 +129,7 @@ If you cannot provide full signal objects, fall back to plain strings like ["sig
  * @constant PLAN_PROMPT
  * @description System prompt for the Main Agent's PLAN step. Instructs the LLM to
  *   determine which subagents to deploy and their instructions based on asset and category.
+ * @note Includes two few-shot examples to guide the model toward specific, actionable subagent instructions.
  */
 export const PLAN_PROMPT = `You are a senior analyst coordinating a due diligence analysis. Given an asset and its category, determine which subagents to deploy.
 
@@ -131,6 +137,11 @@ For each active factor, provide:
 - factor: the factor name
 - instruction: specific analysis instructions for that factor
 - priority: 1-4 (1 highest)
+
+Example instruction for technical factor:
+"Use compute_atr to verify current volatility and check RSI divergence on 4h chart."
+Example instruction for onchain factor:
+"Check whale wallet movements in the last 24h using the onchain tool, then verify exchange inflows."
 
 IMPORTANT: If the category is "meme", skip the fundamental factor — memecoins have no relevant fundamental data.
 
@@ -142,13 +153,19 @@ registerPrompt("DD_PLAN", PLAN_PROMPT)
  * @constant REPLAN_PROMPT
  * @description System prompt for the Main Agent's EVALUATE→RE-DEPLOY step. Instructs the
  *   LLM to generate targeted instructions for low-confidence factors.
+ * @note Instructs the model to name a specific tool, explains why previous analysis was insufficient, and provides a few-shot example.
  */
 export const REPLAN_PROMPT = `You are re-deploying subagents that returned low-confidence results. Given the previous reports, provide new targeted instructions for each low-confidence factor.
+
+Your new instruction must explicitly name which tool to call first and why the previous analysis was insufficient.
 
 For each active factor, provide:
 - factor: the factor name
 - instruction: specific analysis instructions for that factor
 - priority: 1-4 (1 highest)
+
+Example instruction:
+"Previous sentiment score lacked twitter data. Use social_sentiment_tool to analyze mentions from the last 24h."
 
 Return a JSON array: [{factor, instruction, priority}, ...]`
 
@@ -158,8 +175,11 @@ registerPrompt("DD_REPLAN", REPLAN_PROMPT)
  * @constant AGGREGATE_PROMPT
  * @description System prompt for the Main Agent's AGGREGATE step. Instructs the LLM to
  *   merge FactorReports into a consolidated thesis with cross-validation, risks, and catalysts.
+ * @note Includes explicit negative constraint against ignoring contradictions between factors.
  */
 export const AGGREGATE_PROMPT = `You are a senior investment analyst. Synthesize the factor analysis reports into a unified assessment.
+
+If factors show contradictory signals, you MUST list them in the contradictions array. Do NOT ignore contradictions.
 
 Respond ONLY with valid JSON. Output MUST match this schema:
 \`\`\`json

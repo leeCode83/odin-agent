@@ -59,7 +59,7 @@ describe("makePlanningSystemPrompt", () => {
 
   it("describes the return format with planning fields", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
-    expect(prompt).toContain('"action": "return"')
+    expect(prompt).toContain('set "action" to "return"')
     expect(prompt).toContain('"side": "long" | "short" | "no_trade"')
     expect(prompt).toContain('"entry_price"')
     expect(prompt).toContain('"suggested_stop_loss"')
@@ -80,6 +80,13 @@ describe("makePlanningSystemPrompt", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Focus on funding regime")
     expect(prompt).toContain("Focus on funding regime")
   })
+
+  it("includes CoT ordering and negative constraints", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain('"reasoning": "...", // ALWAYS REQUIRED')
+    expect(prompt).toContain('Think step by step in the reasoning field before deciding on an action.')
+    expect(prompt).toContain('Do NOT invent price levels.')
+  })
 })
 
 describe("PLAN_PROMPT", () => {
@@ -94,6 +101,11 @@ describe("PLAN_PROMPT", () => {
 
   it("returns a JSON object with a subagents array", () => {
     expect(PLAN_PROMPT).toContain("subagents")
+  })
+
+  it("includes few-shot examples for perspectives", () => {
+    expect(PLAN_PROMPT).toContain("Example for conservative:")
+    expect(PLAN_PROMPT).toContain("Example for aggressive:")
   })
 })
 
@@ -119,6 +131,11 @@ describe("AGGREGATE_PROMPT", () => {
     expect(AGGREGATE_PROMPT).toContain("position_size_usdc")
     expect(AGGREGATE_PROMPT).toContain("leverage_suggested")
   })
+
+  it("includes CoT instructions and negative constraints", () => {
+    expect(AGGREGATE_PROMPT).toContain("Work through each step below before writing the final JSON.")
+    expect(AGGREGATE_PROMPT).toContain("Do NOT omit contradictions.")
+  })
 })
 
 describe("REPLAN_PROMPT", () => {
@@ -131,6 +148,11 @@ describe("REPLAN_PROMPT", () => {
     expect(REPLAN_PROMPT).toContain("instruction")
     expect(REPLAN_PROMPT).toContain("priority")
     expect(REPLAN_PROMPT).toContain("perspective")
+  })
+
+  it("includes specific instruction for tool and example", () => {
+    expect(REPLAN_PROMPT).toContain("Specify which tool the perspective must call first")
+    expect(REPLAN_PROMPT).toContain("Example instruction:")
   })
 })
 

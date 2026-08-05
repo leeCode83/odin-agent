@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { REACT_SYSTEM_PROMPT } from "@/lib/agent/due-diligence/prompts"
+import { REACT_SYSTEM_PROMPT, PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "@/lib/agent/due-diligence/prompts"
 
 describe("REACT_SYSTEM_PROMPT", () => {
   it("includes specific context for technical factor", () => {
@@ -25,5 +25,33 @@ describe("REACT_SYSTEM_PROMPT", () => {
   it("includes default context for unknown factor", () => {
     const prompt = REACT_SYSTEM_PROMPT("unknown_factor", {}, "Analyze this.")
     expect(prompt).toContain("Analyze relevant data points for this factor.")
+  })
+
+  it("includes CoT ordering and negative constraints", () => {
+    const prompt = REACT_SYSTEM_PROMPT("technical", {}, "Analyze this.")
+    expect(prompt).toContain('"reasoning": "...",  // ALWAYS REQUIRED for BOTH actions')
+    expect(prompt).toContain('Think step by step in the reasoning field before deciding on an action.')
+    expect(prompt).toContain('Do NOT fabricate data.')
+  })
+})
+
+describe("PLAN_PROMPT", () => {
+  it("includes few-shot examples", () => {
+    expect(PLAN_PROMPT).toContain('Example instruction for technical factor:')
+    expect(PLAN_PROMPT).toContain('Example instruction for onchain factor:')
+  })
+})
+
+describe("REPLAN_PROMPT", () => {
+  it("includes specific instruction for tool and example", () => {
+    expect(REPLAN_PROMPT).toContain('Your new instruction must explicitly name which tool to call first')
+    expect(REPLAN_PROMPT).toContain('Example instruction:')
+  })
+})
+
+describe("AGGREGATE_PROMPT", () => {
+  it("includes negative constraint for contradictions", () => {
+    expect(AGGREGATE_PROMPT).toContain('If factors show contradictory signals, you MUST list them in the contradictions array.')
+    expect(AGGREGATE_PROMPT).toContain('Do NOT ignore contradictions.')
   })
 })
