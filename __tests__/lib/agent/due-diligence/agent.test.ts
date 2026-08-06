@@ -476,7 +476,7 @@ describe("runDDAgent", () => {
     expect(result.errors!.some((e: string) => e.includes("Re-plan failed"))).toBe(true)
   })
 
-  it("exhausts max loops without accepting", async () => {
+  it("accepts despite cross-validation contradictions (documented as findings)", async () => {
     const plans: SubagentPlan[] = [
       { factor: "technical", instruction: "Analyze", priority: 1 },
       { factor: "onchain", instruction: "Analyze", priority: 2 },
@@ -487,8 +487,9 @@ describe("runDDAgent", () => {
     vi.mocked(plan).mockResolvedValueOnce(plans)
     vi.mocked(rePlan).mockResolvedValue(plans)
 
-    vi.mocked(runSubagent)
-      .mockResolvedValue(makeFactorReport({ factor: "technical", score: 80, confidence: 85 }))
+    vi.mocked(runSubagent).mockImplementation(async ({ factor }) =>
+      makeFactorReport({ factor: factor as string, score: 80, confidence: 85 })
+    )
 
     vi.mocked(aggregate).mockResolvedValue({
       ...defaultAggregationResult,
@@ -505,12 +506,15 @@ describe("runDDAgent", () => {
       maxLoops: 2,
     })
 
-    expect(result.status).toBe("partial")
-    expect(result.iterations).toBe(2)
-    expect(result.errors!.some((e: string) => e.includes("Exhausted max loops"))).toBe(true)
+    // reason: contradictions are findings, not a RE-DEPLOY trigger — the
+    // report completes in one iteration with the contradictions documented.
+    expect(result.status).toBe("complete")
+    expect(result.iterations).toBe(1)
+    expect(rePlan).not.toHaveBeenCalled()
+    expect(result.crossValidation!.contradictions).toContain("Contradiction detected")
   })
 
-  it("default maxLoops caps the run at 3 iterations (fail fast, was 5)", async () => {
+  it("caps re-deploy at 1 round: persistent low confidence returns partial after 2 iterations", async () => {
     const plans: SubagentPlan[] = [
       { factor: "technical", instruction: "Analyze", priority: 1 },
       { factor: "onchain", instruction: "Analyze", priority: 2 },
@@ -521,9 +525,9 @@ describe("runDDAgent", () => {
     vi.mocked(plan).mockResolvedValueOnce(plans)
     vi.mocked(rePlan).mockResolvedValue(plans)
 
-    // 2 high-confidence + 2 low-confidence factors → RE-DEPLOY every iteration,
-    // no factor fails → the early-exit must NOT trigger, so the loop runs to
-    // the default maxLoops cap.
+    // 2 high-confidence + 2 low-confidence factors → RE-DEPLOY every iteration;
+    // no factor fails → the early-exit must NOT trigger, but the 1-round
+    // re-deploy cap must stop the loop after the second iteration.
     vi.mocked(runSubagent).mockImplementation(async ({ factor }) =>
       ["sentiment", "fundamental"].includes(factor as string)
         ? makeFactorReport({ factor: factor as string, score: 40, confidence: 35 })
@@ -537,9 +541,9 @@ describe("runDDAgent", () => {
     })
 
     expect(result.status).toBe("partial")
-    expect(result.iterations).toBe(3)
-    expect(runSubagent).toHaveBeenCalledTimes(12)
-    expect(result.errors!.some((e: string) => e.includes("Exhausted max loops"))).toBe(true)
+    expect(result.iterations).toBe(2)
+    expect(runSubagent).toHaveBeenCalledTimes(8)
+    expect(result.errors!.some((e: string) => e.includes("Re-deploy budget exhausted"))).toBe(true)
   })
 
   it("passes the 120s per-factor timeout budget to every subagent run", async () => {

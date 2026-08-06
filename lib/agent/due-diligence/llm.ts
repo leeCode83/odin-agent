@@ -12,6 +12,7 @@ import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
 import { SubagentPlanSchema, AggregationResultSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 import { createDdLogger } from "@/lib/agent/due-diligence/logger"
+import { parseLlmJson } from "@/lib/agent/due-diligence/json"
 import { z } from "zod"
 
 const log = createDdLogger({ module: "llm" })
@@ -122,7 +123,7 @@ export async function think(
   options?: ThinkOptions
 ): Promise<ThinkResult> {
   const c = getClient()
-  if (!c) return { action: "return", score: 0, confidence: 0, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
+  if (!c) return { action: "return", score: null, confidence: null, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
 
   // reason: the user message always carries {"factor": "...", ...} — extract it
   // so failure logs identify which subagent the LLM call belonged to.
@@ -133,7 +134,10 @@ export async function think(
     if (parsed && typeof parsed.factor === "string") factor = parsed.factor
   } catch { /* non-JSON user message — keep "unknown" */ }
 
-  const fallback = { action: "return" as const, score: 0, confidence: 0, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
+  // reason: score/confidence must be null, not 0 — a fake 0 looks like a valid
+  // bearish analysis and pollutes overallScore/overallConfidence downstream
+  // (evaluate.ts filters on score !== null to count usable factors).
+  const fallback = { action: "return" as const, score: null, confidence: null, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
 
   // reason: DeepSeek json_object mode only guarantees valid JSON when the prompt
   // explicitly demands it — append the instruction to the user message (new array,
@@ -167,7 +171,7 @@ export async function think(
         {
           model: DEEPSEEK_THINK_MODEL,
           temperature: 0.3,
-          max_tokens: 4096,
+          max_tokens: 8192,
           response_format: { type: "json_object" },
           ...(options?.tools ? { tools: options.tools } : {}),
           messages: msgs,
@@ -202,16 +206,17 @@ export async function think(
   }
 
   let parsed: unknown
-  try {
-    parsed = JSON.parse(content)
-  } catch (err) {
-    log("error", "think_json_parse_failed", { factor, error: err instanceof Error ? err.message : String(err) })
+  parsed = parseLlmJson(content)
+  if (parsed === null) {
+    // reason: DeepSeek reasoning models emit valid JSON followed by trailing
+    // prose — parseLlmJson already strips fences and extracts the first
+    // balanced object; only truly unparseable output reaches this retry.
+    log("error", "think_json_parse_failed", { factor, rawPrefix: content.slice(0, 300) })
     // reason: a blind re-call replays the same failure — feed the parse error and the
     // truncated raw output back so the model can correct the malformed JSON.
     const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
 
 Your previous response was not valid JSON.
-error: "Invalid JSON: ${err instanceof Error ? err.message : String(err)}"
 
 rawPrefix: ${content.slice(0, 500)}`
     const retryMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -226,16 +231,10 @@ rawPrefix: ${content.slice(0, 500)}`
       return toNativeResult(retryMessage)
     }
     content = typeof retryMessage.content === "string" ? retryMessage.content : ""
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      // reason: retry failed too — salvage truncated JSON (unterminated string / unclosed braces).
-      const repaired = repairJSON(content)
-      if (!repaired) {
-        log("error", "think_json_repair_failed", { factor })
-        return fallback
-      }
-      parsed = repaired
+    parsed = parseLlmJson(content)
+    if (parsed === null) {
+      log("error", "think_json_repair_failed", { factor, rawPrefix: content.slice(0, 300) })
+      return fallback
     }
   }
 
@@ -245,7 +244,9 @@ rawPrefix: ${content.slice(0, 500)}`
   }
 
   const MAX_SCHEMA_CORRECTIONS = 2
-  let currentParsed = parsed
+  // reason: explicit unknown — control-flow narrowing of `parsed` (falsy after
+  // the empty-object guard) would otherwise widen this to `{} | undefined`.
+  let currentParsed: unknown = parsed
   let currentContent = content
 
   for (let attempt = 0; attempt <= MAX_SCHEMA_CORRECTIONS; attempt++) {
@@ -284,15 +285,10 @@ rawPrefix: ${content.slice(0, 500)}`
       currentContent = typeof retryMessage.content === "string" ? retryMessage.content : ""
       if (!currentContent.trim()) return fallback
 
-      try {
-        currentParsed = JSON.parse(currentContent)
-      } catch {
-        const repaired = repairJSON(currentContent)
-        if (!repaired) {
-          log("error", "think_json_repair_failed_in_correction", { factor })
-          return fallback
-        }
-        currentParsed = repaired
+      currentParsed = parseLlmJson(currentContent)
+      if (currentParsed === null) {
+        log("error", "think_json_repair_failed_in_correction", { factor, rawPrefix: currentContent.slice(0, 300) })
+        return fallback
       }
 
       if (currentParsed && typeof currentParsed === "object" && !Array.isArray(currentParsed) && Object.keys(currentParsed as Record<string, unknown>).length === 0) {
@@ -335,8 +331,11 @@ export async function plan(params: {
       { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
-    const parsed = JSON.parse(content)
-    if (!Array.isArray(parsed)) return []
+    const parsed = parseLlmJson(content)
+    if (parsed === null || !Array.isArray(parsed)) {
+      log("warn", "plan_json_unparseable", { rawPrefix: content.slice(0, 300) })
+      return []
+    }
     
     const validPlans: SubagentPlan[] = []
     for (const item of parsed) {
@@ -389,8 +388,11 @@ export async function rePlan(params: {
       { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
-    const parsed = JSON.parse(content)
-    if (!Array.isArray(parsed)) return []
+    const parsed = parseLlmJson(content)
+    if (parsed === null || !Array.isArray(parsed)) {
+      log("warn", "replan_json_unparseable", { rawPrefix: content.slice(0, 300) })
+      return []
+    }
 
     const validPlans: SubagentPlan[] = []
     for (const item of parsed) {
@@ -431,42 +433,6 @@ interface AggregateResult {
   risks: Array<{ factor: string; description: string; severity: string }>
   catalysts: Array<{ factor: string; description: string; impact: string }>
   summary: string
-}
-
-/**
- * @function repairJSON
- * @description Attempts to salvage truncated JSON by closing unclosed braces and brackets.
- *   Falls back to null if the input is irreparable.
- * @param {string} raw - The potentially truncated JSON string.
- * @returns {object | null} Repaired parsed object, or null if beyond repair.
- */
-function repairJSON(raw: string): object | null {
-  try { return JSON.parse(raw) } catch { /* parse failed, attempt repair */ }
-
-  let fixed = raw
-  const stack: string[] = []
-  let inString = false
-  let escaped = false
-  for (const ch of raw) {
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === "\\") escaped = true
-      else if (ch === '"') inString = false
-    } else if (ch === '"') {
-      inString = true
-    } else if (ch === "{" || ch === "[") {
-      stack.push(ch === "{" ? "}" : "]")
-    } else if (ch === "}" || ch === "]") {
-      stack.pop()
-    }
-  }
-  // Unterminated string (truncated mid-value) — close it before closing structure.
-  if (inString) fixed += '"'
-  // Close any unclosed braces/brackets in reverse order
-  while (stack.length > 0) fixed += stack.pop()
-
-  try { return JSON.parse(fixed) } catch { /* repair failed */ }
-  return null
 }
 
 export async function aggregate(params: {
@@ -521,23 +487,16 @@ export async function aggregate(params: {
     const content = await callLLM(currentMessages)
     if (content === null) return null
 
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(content)
-    } catch (err) {
-      log("error", "aggregate_json_parse_failed", { rawLength: content.length, error: err instanceof Error ? err.message : String(err) })
+    const parsed: unknown = parseLlmJson(content)
+    if (parsed === null) {
+      log("error", "aggregate_json_parse_failed", { rawLength: content.length, rawPrefix: content.slice(0, 300) })
       if (attempts >= 3) {
-        const repaired = repairJSON(content)
-        if (!repaired) {
-          log("error", "aggregate_json_repair_failed", {})
-          return null
-        }
-        parsed = repaired
+        log("error", "aggregate_json_repair_failed", {})
+        return null
       } else {
         const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}
 
 Your previous response was not valid JSON.
-error: "Invalid JSON: ${err instanceof Error ? err.message : String(err)}"
 
 rawPrefix: ${content.slice(0, 500)}`
         currentMessages = [

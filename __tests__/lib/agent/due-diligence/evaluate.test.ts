@@ -73,7 +73,7 @@ describe("evaluateResults", () => {
     expect(result.decision).toBe("FAILED")
   })
 
-  it("RE-DEPLOY (contradictions) — contradictions found in cross-validation", () => {
+  it("ACCEPT with contradictions — documented as findings, not a RE-DEPLOY trigger", () => {
     const reports: FactorReport[] = [
       makeReport({ factor: "technical", score: 80, confidence: 85 }),
       makeReport({ factor: "onchain", score: 75, confidence: 70 }),
@@ -89,7 +89,9 @@ describe("evaluateResults", () => {
     }
 
     const result = evaluateResults(reports, cv)
-    expect(result.decision).toBe("RE-DEPLOY")
+    expect(result.decision).toBe("ACCEPT")
+    // reason: contradictions are legitimate market findings — identical data
+    // between iterations regenerates them, so they must not force RE-DEPLOY.
     expect(result.contradictions).toHaveLength(1)
   })
 

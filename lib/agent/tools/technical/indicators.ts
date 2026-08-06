@@ -63,7 +63,7 @@ export function buildIndicators(candleMap: CandleMap): ToolDefinition[] {
 function createRsiTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_rsi",
-    description: "Relative Strength Index (0-100). Period default 14. Use for overbought (>70) / oversold (<30) / divergence detection.",
+    description: "Relative Strength Index (0-100). Period default 14. Use for overbought (>70) / oversold (<30) / divergence detection. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ period: z.number().default(14), timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -79,7 +79,7 @@ function createRsiTool(candleMap: CandleMap): ToolDefinition {
 function createMacdTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_macd",
-    description: "Moving Average Convergence Divergence. Fast default 12, slow 26, signal 9. Returns MACD/signal/histogram per bar.",
+    description: "Moving Average Convergence Divergence. Fast default 12, slow 26, signal 9. Returns MACD/signal/histogram per bar. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       fast: z.number().default(12),
       slow: z.number().default(26),
@@ -107,7 +107,7 @@ function createMacdTool(candleMap: CandleMap): ToolDefinition {
 function createEmaTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_ema",
-    description: "Exponential Moving Average. Period default 20. Use for trend direction and dynamic support/resistance.",
+    description: "Exponential Moving Average. Period default 20. Use for trend direction and dynamic support/resistance. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ period: z.number().default(20), timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -123,7 +123,7 @@ function createEmaTool(candleMap: CandleMap): ToolDefinition {
 function createSmaTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_sma",
-    description: "Simple Moving Average. Period default 20. Use for trend smoothing and crossovers.",
+    description: "Simple Moving Average. Period default 20. Use for trend smoothing and crossovers. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ period: z.number().default(20), timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -139,7 +139,7 @@ function createSmaTool(candleMap: CandleMap): ToolDefinition {
 function createBbTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_bb",
-    description: "Bollinger Bands. Period default 20, stdDev default 2. Returns upper/middle/lower bands.",
+    description: "Bollinger Bands. Period default 20, stdDev default 2. Returns upper/middle/lower bands. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       period: z.number().default(20),
       stddev: z.number().default(2),
@@ -159,7 +159,7 @@ function createBbTool(candleMap: CandleMap): ToolDefinition {
 function createAtrTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_atr",
-    description: "Average True Range. Period default 14. Measures market volatility.",
+    description: "Average True Range. Period default 14. Measures market volatility. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ period: z.number().default(14), timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -177,7 +177,7 @@ function createAtrTool(candleMap: CandleMap): ToolDefinition {
 function createStochTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_stoch",
-    description: "Stochastic Oscillator %K/%D. K period default 14, D signal period default 3. Overbought >80, oversold <20.",
+    description: "Stochastic Oscillator %K/%D. K period default 14, D signal period default 3. Overbought >80, oversold <20. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       k: z.number().default(14),
       d: z.number().default(3),
@@ -199,7 +199,7 @@ function createStochTool(candleMap: CandleMap): ToolDefinition {
 function createObvTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_obv",
-    description: "On-Balance Volume. Measures volume flow relative to price. Rising OBV confirms uptrend.",
+    description: "On-Balance Volume. Measures volume flow relative to price. Rising OBV confirms uptrend. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -216,7 +216,7 @@ function createObvTool(candleMap: CandleMap): ToolDefinition {
 function createIchimokuTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_ichimoku",
-    description: "Ichimoku Cloud. Tenkan default 9, Kijun default 26, Senkou default 52. Returns conversion/base/spanA/spanB.",
+    description: "Ichimoku Cloud. Tenkan default 9, Kijun default 26, Senkou default 52. Returns conversion/base/spanA/spanB. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       tenkan: z.number().default(9),
       kijun: z.number().default(26),
@@ -246,7 +246,7 @@ function createIchimokuTool(candleMap: CandleMap): ToolDefinition {
 function createVolumeTool(_candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_volume",
-    description: "Volume analysis: average volume, current volume ratio, and trend direction (increasing/decreasing/neutral).",
+    description: "Volume analysis: average volume, current volume ratio, and trend direction (increasing/decreasing/neutral). Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({ timeframe: timeframeEnum.default("1h") }),
     execute: async (params) => {
       const start = Date.now()
@@ -270,7 +270,7 @@ function createVolumeTool(_candleMap: CandleMap): ToolDefinition {
 function createSupportResistanceTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_support_resistance",
-    description: "Detects swing high/low support and resistance levels from recent price action.",
+    description: "Detects swing high/low support and resistance levels from recent price action. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       lookback: z.number().default(20),
       timeframe: timeframeEnum.default("1h"),
@@ -304,7 +304,7 @@ function createSupportResistanceTool(candleMap: CandleMap): ToolDefinition {
 function createFibonacciTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_fibonacci",
-    description: "Fibonacci retracement levels (0.236/0.382/0.5/0.618/0.786) from the most recent swing high and low.",
+    description: "Fibonacci retracement levels (0.236/0.382/0.5/0.618/0.786) from the most recent swing high and low. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       lookback: z.number().default(50),
       timeframe: timeframeEnum.default("1d"),
@@ -333,7 +333,7 @@ function createFibonacciTool(candleMap: CandleMap): ToolDefinition {
 function createDivergenceTool(candleMap: CandleMap): ToolDefinition {
   return {
     name: "get_divergence",
-    description: "Detects regular and hidden divergence between price and RSI/MACD. Regular bearish: price makes higher high, indicator makes lower high.",
+    description: "Detects regular and hidden divergence between price and RSI/MACD. Regular bearish: price makes higher high, indicator makes lower high. Valid timeframes: 1h, 15m, 1d.",
     parameters: z.object({
       timeframe: timeframeEnum.default("1h"),
       indicator: z.enum(["rsi", "macd"]).default("rsi"),

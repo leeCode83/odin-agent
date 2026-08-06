@@ -139,7 +139,7 @@ For each active factor, provide:
 - priority: 1-4 (1 highest)
 
 Example instruction for technical factor:
-"Use compute_atr to verify current volatility and check RSI divergence on 4h chart."
+"Use compute_atr to verify current volatility and check RSI divergence on 1h chart."
 Example instruction for onchain factor:
 "Check whale wallet movements in the last 24h using the onchain tool, then verify exchange inflows."
 

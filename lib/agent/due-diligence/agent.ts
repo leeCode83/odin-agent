@@ -320,6 +320,25 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       })
     }
 
+    // RE-DEPLOY — cap at 1 re-deploy round. reason: market data is unchanged
+    // between iterations, so a second re-deploy re-runs the same analysis on
+    // the same data; returning partial is the honest outcome and avoids the
+    // 3-iteration runtime blow-up (3.4min observed).
+    if (iteration >= 1) {
+      errors.push("Re-deploy budget exhausted (max 1 round); partial report returned")
+      return buildFinalReport({
+        asset: params.asset,
+        category: params.category.name,
+        factorReports: allFactorReports,
+        aggregation,
+        deterministic: computeDeterministicScore(allFactorReports),
+        iterations: iteration + 1,
+        processingTimeMs: Date.now() - t0,
+        status: "partial",
+        errors,
+      })
+    }
+
     // RE-DEPLOY — generate new plan for low-confidence factors
     if (iteration < maxLoops - 1) {
       try {

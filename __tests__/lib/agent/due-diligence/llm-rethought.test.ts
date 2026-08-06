@@ -87,7 +87,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(0)
+      expect(result.score).toBeNull()
     }
   })
 
@@ -127,7 +127,6 @@ describe("think()", () => {
     const retryMessages = mockCreate.mock.calls[1][0].messages
     const retryContent = retryMessages[retryMessages.length - 1].content
     expect(retryContent).toContain("Your previous response was not valid JSON")
-    expect(retryContent).toContain("Invalid JSON:")
     expect(retryContent).toContain("rawPrefix: not valid json")
   })
 
@@ -171,9 +170,9 @@ describe("think()", () => {
     
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
-    // Fallback has score 0
+    // Fallback has null score (fake 0 would pollute scoring downstream)
     if (result.action === "return") {
-      expect(result.score).toBe(0)
+      expect(result.score).toBeNull()
     }
     expect(mockCreate).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
   })
@@ -632,7 +631,6 @@ describe("aggregate()", () => {
     const retryMessages = mockCreate.mock.calls[1][0].messages
     const retryContent = retryMessages[retryMessages.length - 1].content
     expect(retryContent).toContain("Your previous response was not valid JSON")
-    expect(retryContent).toContain("Invalid JSON:")
     expect(retryContent).toContain("rawPrefix: not valid json")
   })
 
