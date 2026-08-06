@@ -20,17 +20,27 @@ import { describeZodSchema } from "@/lib/agent/due-diligence/prompts"
  * @note Uses CoT ordering — reasoning field is first in JSON schema to enforce step-by-step thinking before action selection.
  * @param {Object} options - Prompt options.
  * @param {number} options.targetProfitPercent - User's profit target (e.g. 100 = 100%).
+ * @param {string[]} [options.degradedFactors] - Names of DD factors that failed
+ *   (score null or missing). When non-empty, the prompt appends a degraded-DD
+ *   note telling the perspective to account for missing data explicitly (F3).
  * @returns {(factor: string, tools: Record<string, { description: string; parameters: unknown }>, instruction: string) => string}
  *   System prompt builder for one perspective subagent run.
  */
 export function makePlanningSystemPrompt(options: {
   targetProfitPercent: number
+  degradedFactors?: string[]
 }): (
   factor: string,
   tools: Record<string, { description: string; parameters: unknown }>,
   instruction: string
 ) => string {
   return (factor, tools, instruction) => {
+    // reason: degraded-DD note (F3) — appended only when factors actually
+    // failed so complete reports keep the exact pre-F3 prompt.
+    const degradedNote =
+      options.degradedFactors && options.degradedFactors.length > 0
+        ? `\n\nNote: DD analysis incomplete — factors ${options.degradedFactors.join(", ")} failed. Account for missing data explicitly.`
+        : ""
     const toolDescriptions = Object.entries(tools)
       .map(([name, tool]) => {
         const params = tool.parameters ? describeZodSchema(tool.parameters) : "{}"
@@ -84,7 +94,7 @@ When returning, the "signals" field MUST be an array of objects with:
 - strength (number 0-100): signal strength
 - direction ("bullish" | "bearish" | "neutral"): signal direction
 
-If you cannot provide full signal objects, fall back to plain strings like ["signal1", "signal2"] — they will be auto-converted.`
+If you cannot provide full signal objects, fall back to plain strings like ["signal1", "signal2"] — they will be auto-converted.${degradedNote}`
   }
 }
 

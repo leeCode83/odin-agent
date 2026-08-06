@@ -1,5 +1,13 @@
+/**
+ * @file lib/db/graph-memory.ts
+ * @description ArangoDB graph memory persistence and retrieval — trading
+ *   patterns, decisions, signals, outcomes, and DD report caching.
+ * @module db
+ * @layer data
+ */
 import { createHash } from "crypto"
 import type { GraphPattern, TradePlan } from "@/lib/agent/types"
+import { DDReportSchema, type DDReport } from "@/lib/agent/types"
 import { GraphCollectionNames } from "@/lib/db/arango-types"
 import type { DecisionNode, SignalNode, OutcomeNode, DDReportNode } from "@/lib/db/arango-types"
 import { getDb } from "@/lib/db/arango-client"
@@ -240,5 +248,63 @@ export async function recordDDReport(
   } catch (err) {
     console.warn("[graph-memory] Failed to persist DD report:", err)
     return ""
+  }
+}
+
+/**
+ * @constant DEFAULT_DD_REPORT_TTL_MS
+ * @description Default maximum age (4 hours) for a cached DD report to be
+ *   considered reusable instead of re-running the DD agent.
+ */
+export const DEFAULT_DD_REPORT_TTL_MS = 4 * 60 * 60 * 1000
+
+/**
+ * @function readRecentDDReport
+ * @description Reads the most recent cached DD report for an asset and user
+ *   from the dd_reports collection, skipping the expensive DD agent run when a
+ *   fresh-enough report exists. Always resolves — never rejects.
+ * @param {string} asset - The asset the report was generated for.
+ * @param {string} userId - The user the report was generated for.
+ * @param {number} [maxAgeMs=DEFAULT_DD_REPORT_TTL_MS] - Maximum age of a
+ *   reusable report in milliseconds.
+ * @returns {Promise<DDReport | null>} The cached report if fresh and valid,
+ *   otherwise null (missing, stale, invalid, or DB unavailable).
+ */
+export async function readRecentDDReport(
+  asset: string,
+  userId: string,
+  maxAgeMs: number = DEFAULT_DD_REPORT_TTL_MS
+): Promise<DDReport | null> {
+  const db = getDb()
+  if (!db) return null
+
+  try {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString()
+    const aqlQuery = `
+      FOR doc IN dd_reports
+      FILTER doc.asset == @asset AND doc.userId == @userId AND doc.timestamp >= @cutoff
+      SORT doc.timestamp DESC
+      LIMIT 1
+      RETURN doc.report
+    `
+
+    const cursor = await db.query<unknown>(aqlQuery, { asset, userId, cutoff })
+    const docs = (await cursor.all()) as unknown[]
+    const report = docs[0]
+    if (!report) return null
+
+    // reason: validate before returning — a corrupted or schema-incompatible
+    // cached report must never reach callers as a usable DDReport.
+    const parsed = DDReportSchema.safeParse(report)
+    if (!parsed.success) {
+      console.warn("[graph-memory] dd_cache_read cached report failed validation")
+      return null
+    }
+    return parsed.data
+  } catch (err) {
+    // reason: non-fatal — cache read failure must degrade to null, never break
+    // the pipeline by rejecting.
+    console.warn("[graph-memory] dd_cache_read failed:", err)
+    return null
   }
 }

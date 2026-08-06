@@ -1,10 +1,12 @@
 /**
  * @file app/api/agent/planning/route.ts
  * @description POST /api/agent/planning — runs the planning swarm pipeline
- *   for an asset (the DD agent runs internally as step 0). Request body is
- *   { asset, userId, walletAddress, targetProfitPercent? } (spec §12); errors
- *   follow spec §9.6 shapes (PLANNING_FAILED / CONSENSUS_FAILED) and the
- *   circuit breaker (spec §9.7) rejects with 503 while tripped.
+ *   for an asset (the DD agent runs internally as step 0, unless a fresh
+ *   cached DD report exists — F2 reuse — or a valid ddReport is supplied).
+ *   Request body is { asset, userId, walletAddress, targetProfitPercent? }
+ *   (spec §12); errors follow spec §9.6 shapes (PLANNING_FAILED /
+ *   CONSENSUS_FAILED) and the circuit breaker (spec §9.7) rejects with 503
+ *   while tripped.
  * @module planning-route
  * @layer api
  */
@@ -15,9 +17,11 @@ import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import type { PlanningErrorCategory } from "@/lib/agent/planning/pipeline"
 import { planningCircuitBreaker } from "@/lib/agent/planning/circuit-breaker"
+import { log } from "@/lib/agent/planning/log"
 import { TradePlanSchema, DDReportSchema } from "@/lib/agent/types"
 import { getCategory } from "@/lib/asset-categories"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
+import { readRecentDDReport } from "@/lib/db/graph-memory"
 /**
  * @constant requiredBodySchema
  * @description Zod schema for the required request fields (spec §12).
@@ -78,9 +82,11 @@ const CATEGORY_TO_HTTP_STATUS: Record<PlanningErrorCategory, number> = {
  *   HTTP codes (422 dd/llm, 502 data, 500 internal, CONSENSUS_FAILED for
  *   phase evaluate). A partial DD with usable factors returns 200 with
  *   status "approval_required" so the plan flows to the approval path.
- *   If a valid ddReport is provided, it skips the DD execution phase.
+ *   If a valid ddReport is provided, it skips the DD execution phase; else a
+ *   fresh cached DD report (F2) is reused before falling back to running the
+ *   DD agent. When the pipeline reports ddCoverage it is echoed back.
  * @param {NextRequest} req - Request with { asset, userId, walletAddress, targetProfitPercent?, ddReport? }.
- * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status },
+ * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status, ddCoverage? },
  *   400 on invalid input, 503 PLANNING_UNAVAILABLE, 422/502/500 per taxonomy.
  */
 export async function POST(req: NextRequest) {
@@ -124,7 +130,32 @@ export async function POST(req: NextRequest) {
 
   try {
     let ddReport = required.data.ddReport
-    
+
+    if (!ddReport) {
+      // reason: F2 — reuse a fresh cached DD report (readRecentDDReport) before
+      // running the 4-9 minute DD agent. Cache read first: a hit skips the
+      // agent entirely; the read is wrapped defensively (it promises never to
+      // throw, but a cache failure must never fail the request) — any throw
+      // falls through to the runDDAgent path below.
+      try {
+        const cached = await readRecentDDReport(required.data.asset, required.data.userId)
+        if (cached) {
+          ddReport = cached
+          // reason: report age = now minus the report's ISO timestamp (required
+          // by DDReportSchema); guard NaN so the log can never throw — without a
+          // parseable timestamp, log the hit without ageMs.
+          const ageMs = Date.now() - Date.parse(cached.timestamp)
+          if (Number.isFinite(ageMs)) {
+            log("info", "planning.dd_cache_hit", { asset: required.data.asset, ageMs })
+          } else {
+            log("info", "planning.dd_cache_hit", { asset: required.data.asset })
+          }
+        }
+      } catch {
+        // reason: cache read failure falls through to the DD agent run.
+      }
+    }
+
     if (!ddReport) {
       const category = getCategory(required.data.asset)
       if (!category) {
@@ -155,6 +186,9 @@ export async function POST(req: NextRequest) {
       ddReport,
     })
     const validated = TradePlanSchema.parse(output.report)
+    // reason: ddCoverage is optional pipeline metadata (F2/F3 — usable vs
+    // failed factor counts); spread it into the response only when the
+    // pipeline actually produced it (key absent when nothing failed).
     return NextResponse.json({
       report: validated,
       timing: output.timing,
@@ -162,6 +196,7 @@ export async function POST(req: NextRequest) {
       // reason: the pipeline now carries the agent-level status; fall back to
       // the NO_TRADE-derived mapping for mocks/older pipeline results.
       status: output.status ?? (validated.action === "NO_TRADE" ? "no_trade" : "complete"),
+      ...(output.ddCoverage ? { ddCoverage: output.ddCoverage } : {}),
     })
   } catch (err) {
     console.error("Planning pipeline error:", err)

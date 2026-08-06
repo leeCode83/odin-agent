@@ -6,7 +6,7 @@
  * @layer service
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { think, plan, rePlan, aggregate, normalizeThought, formatZodErrors } from "@/lib/agent/due-diligence/llm"
 import { REACT_SYSTEM_PROMPT, PLAN_PROMPT, REPLAN_PROMPT, AGGREGATE_PROMPT } from "@/lib/agent/due-diligence/prompts"
 import { z } from "zod"
@@ -342,6 +342,78 @@ describe("think()", () => {
 
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("tool_call")
+  })
+})
+
+describe("think() empty-response retry", () => {
+  // reason: retries sleep on real timers — fake timers keep the tests fast and
+  // deterministic; scoped to this block so existing real-timer tests are untouched.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    process.env.DEEPSEEK_API_KEY = "test-key"
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it("retries empty content then succeeds", async () => {
+    mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: "" } }] })
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: JSON.stringify({
+        action: "return",
+        score: 75,
+        confidence: 80,
+        signals: [{ name: "RSI", strength: 70, direction: "bullish" }],
+        reasoning: "Analysis complete",
+        conclusion: "Bullish momentum",
+      }) } }],
+    })
+
+    // reason: the think() promise hangs on the backoff timers (1s then 2s) until
+    // fake time is advanced — flush 5s to cover both sleeps, then read the result.
+    const promise = think([{ role: "user", content: "test" }])
+    await vi.advanceTimersByTimeAsync(5000)
+    const result = await promise
+
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBe(75)
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(2)
+  })
+
+  it("returns fallback after 3 empty responses", async () => {
+    for (let i = 0; i < 3; i++) {
+      mockCreate.mockResolvedValueOnce({ choices: [{ message: { content: "" } }] })
+    }
+
+    const promise = think([{ role: "user", content: "test" }])
+    await vi.advanceTimersByTimeAsync(5000)
+    const result = await promise
+
+    expect(result.action).toBe("return")
+    // Fallback has null score (fake 0 would pollute scoring downstream)
+    if (result.action === "return") {
+      expect(result.score).toBeNull()
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(3)
+  })
+
+  it("missing message falls back after 3 attempts", async () => {
+    mockCreate.mockResolvedValue({ choices: [] })
+
+    const promise = think([{ role: "user", content: "test" }])
+    await vi.advanceTimersByTimeAsync(5000)
+    const result = await promise
+
+    expect(result.action).toBe("return")
+    if (result.action === "return") {
+      expect(result.score).toBeNull()
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(3)
   })
 })
 

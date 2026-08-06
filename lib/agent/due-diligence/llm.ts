@@ -24,6 +24,15 @@ const DEEPSEEK_THINK_MODEL = process.env.DEEPSEEK_THINK_MODEL || "deepseek-v4-pr
 let client: OpenAI | null = null
 
 /**
+ * @function sleep
+ * @description Resolves after `ms` milliseconds — used for exponential backoff
+ *   between empty-response retries in think().
+ * @param {number} ms - Delay in milliseconds.
+ * @returns {Promise<void>} Resolves once the delay elapses.
+ */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
  * @function getClient
  * @description Creates or returns cached OpenAI client configured for DeepSeek.
  * Reads DEEPSEEK_API_KEY and DEEPSEEK_BASE_URL from env.
@@ -110,7 +119,10 @@ export function formatZodErrors(issues: z.ZodIssue[]): string {
  * @description LLM call for the subagent THINK step. Sends a message array (system prompt + context)
  *   and returns a ThinkResult: a parsed SubAgentThought (tool_call or return), or the raw native
  *   tool_calls when `options.tools` was provided and the model answered with tool_calls.
- *   Falls back to a safe default on failure. On JSON parse failure, retries once with the parse
+ *   Falls back to a safe default on failure. Empty or missing responses are retried
+ *   with exponential backoff (1s then 2s, 3 calls total) before falling back; API
+ *   throws are not retried here (the SDK maxRetries handles transient network errors).
+ *   On JSON parse failure, retries once with the parse
  *   error fed back to the model, then repairJSON, then fallback.
  *   json_schema not supported by DeepSeek — using json_object + schema prompt.
  * @param {Array<LlmThinkMessage>} messages - System prompt and context messages (may include
@@ -183,31 +195,53 @@ export async function think(
     })
   }
 
+  // reason: the model intermittently returns an empty content string or no
+  // message at all (rate limits, overloaded reasoning model) — retry with
+  // exponential backoff up to 3 total calls before falling back. API throws
+  // are NOT retried here: the SDK's maxRetries already covers transient
+  // network errors, and a throw usually means a hard config failure worth
+  // surfacing immediately.
   const callLLM = async (
     msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = requestMessages
   ): Promise<OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam | null> => {
-    try {
-      const response = await c.chat.completions.create(
-        {
-          model: DEEPSEEK_THINK_MODEL,
-          temperature: 0.3,
-          max_tokens: 8192,
-          response_format: { type: "json_object" },
-          ...(options?.tools ? { tools: options.tools } : {}),
-          messages: msgs,
-        },
-        { timeout: 45_000, maxRetries: 1 }
-      )
-      const message = response.choices?.[0]?.message
-      if (!message) {
-        log("error", "think_empty_response", { factor, model: DEEPSEEK_THINK_MODEL, reason: "Check API key, rate limits" })
+    // reason: attempt is 1-based so the backoff formula `500ms * 2^attempt`
+    // yields 1s then 2s — a 0-based attempt would make the first sleep 500ms.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await c.chat.completions.create(
+          {
+            model: DEEPSEEK_THINK_MODEL,
+            temperature: 0.3,
+            max_tokens: 8192,
+            response_format: { type: "json_object" },
+            ...(options?.tools ? { tools: options.tools } : {}),
+            messages: msgs,
+          },
+          { timeout: 45_000, maxRetries: 1 }
+        )
+        const message = response.choices?.[0]?.message
+        if (
+          message &&
+          ((typeof message.content === "string" && message.content.trim().length > 0) ||
+            (message.tool_calls?.length ?? 0) > 0)
+        ) {
+          return message as unknown as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam
+        }
+        log("error", "think_empty_response_retry", {
+          factor,
+          attempt,
+          reason: message ? "empty_content" : "missing_message",
+        })
+        if (attempt < 3) {
+          await sleep(500 * 2 ** attempt)
+        }
+      } catch (err) {
+        log("error", "think_api_error", { factor, error: err instanceof Error ? err.message : String(err) })
         return null
       }
-      return message as unknown as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam
-    } catch (err) {
-      log("error", "think_api_error", { factor, error: err instanceof Error ? err.message : String(err) })
-      return null
     }
+    log("error", "think_empty_response", { factor, model: DEEPSEEK_THINK_MODEL, reason: "empty after 3 attempts" })
+    return null
   }
 
   const message = await callLLM()
@@ -218,12 +252,9 @@ export async function think(
   }
 
   // reason: the SDK types assistant content as string | content-part array — only the
-  // string form is JSON-parsable; any array form falls through to the empty response path.
+  // string form is JSON-parsable; the empty-string case is already exhausted
+  // inside callLLM's retry loop (message only returns with non-empty content or tool_calls).
   let content = typeof message.content === "string" ? message.content : ""
-  if (!content.trim()) {
-    log("error", "think_empty_response", { factor, model: DEEPSEEK_THINK_MODEL, reason: "Check API key, rate limits" })
-    return fallback
-  }
 
   let parsed: unknown
   parsed = parseLlmJson(content)

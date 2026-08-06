@@ -300,4 +300,76 @@ describe("evaluateConsensus", () => {
     expect(result.decision).toBe("ACCEPT")
     expect(result.contradictions).toEqual(["entry price disagreement"])
   })
+
+  it("DEGRADED — NO_TRADE reason suffixed with failed factors and result marked degraded", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade" }),
+      makeReport({ perspective: "balance", side: "no_trade" }),
+      makeReport({ perspective: "aggressive", side: "long" }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "no_trade", no_trade_reason: "ATR too flat" }),
+      ["technical", "sentiment"]
+    )
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReason).toBe(
+      "ATR too flat [insufficient data: failed factors: technical, sentiment]"
+    )
+    expect(result.degraded).toBe(true)
+  })
+
+  it("DEGRADED — RE-DEPLOY message labeled to distinguish retry-for-data", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "long" }),
+      makeReport({ perspective: "balance", side: "short" }),
+      makeReport({ perspective: "aggressive", side: "no_trade" }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "no_trade", confidence_score: 70 }),
+      ["fundamental"]
+    )
+
+    expect(result.decision).toBe("RE-DEPLOY")
+    expect(result.message.startsWith("[degraded DD] ")).toBe(true)
+    expect(result.degraded).toBe(true)
+  })
+
+  it("NOT degraded — NO_TRADE reason unsuffixed and result unflagged (regression)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade" }),
+      makeReport({ perspective: "balance", side: "no_trade" }),
+      makeReport({ perspective: "aggressive", side: "long" }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "no_trade", no_trade_reason: "ATR too flat" })
+    )
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReason).toBe("ATR too flat")
+    expect(result.degraded).toBeUndefined()
+  })
+
+  it("DEGRADED — rule ordering unchanged: failed reports still FAILED before NO_TRADE", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", score: null, confidence: null, side: "no_trade" }),
+      makeReport({ perspective: "balance", score: null, confidence: null, side: "no_trade" }),
+      makeReport({ perspective: "aggressive", score: null, confidence: null, side: "no_trade" }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "no_trade" }),
+      ["technical"]
+    )
+
+    expect(result.decision).toBe("FAILED")
+    expect(result.noTradeReason).toBeUndefined()
+  })
 })

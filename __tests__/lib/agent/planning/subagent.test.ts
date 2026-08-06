@@ -212,4 +212,57 @@ describe("runPerspectiveSubagent", () => {
     expect(report.iterations).toBe(5)
     expect(thinkMock).toHaveBeenCalledTimes(6)
   })
+
+  it("injects the degraded-DD note into the system prompt when factorReports are partial", async () => {
+    const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "conservative",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: {
+        ...mockDDReport,
+        factorReports: [
+          { factor: "technical", score: 70 },
+          { factor: "sentiment", score: null },
+          { factor: "fundamental", score: 80 },
+        ],
+      } as unknown as DDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    expect(thinkMock).toHaveBeenCalled()
+    const [messages] = thinkMock.mock.calls[0]
+    const systemPrompt = (messages as Array<{ role: string; content: string }>)[0].content
+    expect(systemPrompt).toContain(
+      "Note: DD analysis incomplete — factors sentiment failed. Account for missing data explicitly."
+    )
+  })
+
+  it("omits the degraded-DD note when every factorReport scored", async () => {
+    const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "conservative",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: {
+        ...mockDDReport,
+        factorReports: [
+          { factor: "technical", score: 70 },
+          { factor: "sentiment", score: 55 },
+        ],
+      } as unknown as DDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    expect(thinkMock).toHaveBeenCalled()
+    const [messages] = thinkMock.mock.calls[0]
+    const systemPrompt = (messages as Array<{ role: string; content: string }>)[0].content
+    expect(systemPrompt).not.toContain("Note: DD analysis incomplete")
+  })
 })

@@ -127,16 +127,30 @@ function lowConsensusPerspectives(
  *   5. Exactly 2/3 same side + aggregation.confidence_score ≥ 50 → ACCEPT
  *   6. No aggregation / confidence < 50 / no majority → RE-DEPLOY
  *   7. Fallback → RE-DEPLOY (message explains why nothing above matched)
+ * Degraded-DD signaling (F3): when `degradedFactors` is non-empty, every
+ * result is marked `degraded: true`, NO_TRADE reasons get the failed-factors
+ * suffix, and RE-DEPLOY messages are labeled "[degraded DD]" so retries for
+ * missing data are distinguishable from retries for low consensus. Rule
+ * ordering is unchanged.
  * @param {PerspectiveReport[]} reports - The three perspective reports.
  * @param {PlanningAggregationResult | null} aggregation - Aggregated reasoning
  *   (null when aggregation failed).
+ * @param {string[]} [degradedFactors] - Names of DD factors that failed
+ *   (score null or missing). Omit when DD was complete.
  * @returns {ConsensusResult} The evaluation outcome.
  */
 export function evaluateConsensus(
   reports: PerspectiveReport[],
-  aggregation: PlanningAggregationResult | null
+  aggregation: PlanningAggregationResult | null,
+  degradedFactors?: string[]
 ): ConsensusResult {
   const contradictions = aggregation?.contradictions ?? []
+  const degraded = degradedFactors !== undefined && degradedFactors.length > 0
+  const degradedFlag = degraded ? { degraded: true as const } : {}
+  const degradedSuffix =
+    degraded && degradedFactors && degradedFactors.length > 0
+      ? ` [insufficient data: failed factors: ${degradedFactors.join(", ")}]`
+      : ""
 
   // Rule 1 — all perspectives failed (score === null)
   if (reports.every((r) => r.score === null)) {
@@ -145,6 +159,7 @@ export function evaluateConsensus(
       lowConsensusPerspectives: reports.map((r) => r.perspective),
       contradictions,
       message: "All 3 perspective subagents failed to produce a valid plan.",
+      ...degradedFlag,
     }
   }
 
@@ -156,7 +171,12 @@ export function evaluateConsensus(
       lowConsensusPerspectives: [],
       contradictions,
       message: `${noTradeCount} of ${reports.length} perspectives returned no_trade — market not worth trading.`,
-      noTradeReason: aggregation?.no_trade_reason,
+      // reason: degraded NO_TRADE suffixes the reason with the failed factors
+      // so downstream callers see the decision was data-driven, not conviction.
+      noTradeReason: aggregation?.no_trade_reason
+        ? `${aggregation.no_trade_reason}${degradedSuffix}`
+        : undefined,
+      ...degradedFlag,
     }
   }
 
@@ -168,6 +188,7 @@ export function evaluateConsensus(
       lowConsensusPerspectives: [],
       contradictions,
       message: `${fundingFlagCount} of ${reports.length} perspectives flagged an overheated funding regime — no trade.`,
+      ...degradedFlag,
     }
   }
 
@@ -182,6 +203,7 @@ export function evaluateConsensus(
       lowConsensusPerspectives: [],
       contradictions,
       message: `All ${reports.length} perspectives aligned on ${majority}; aggregation confidence ${confidence}.`,
+      ...degradedFlag,
     }
   }
 
@@ -196,6 +218,7 @@ export function evaluateConsensus(
       lowConsensusPerspectives: [],
       contradictions,
       message: `${NO_TRADE_MAJORITY} of ${reports.length} perspectives agreed on ${majority}; aggregation confidence ${confidence}.`,
+      ...degradedFlag,
     }
   }
 
@@ -205,11 +228,15 @@ export function evaluateConsensus(
       decision: "RE-DEPLOY",
       lowConsensusPerspectives: lowConsensusPerspectives(reports, majority),
       contradictions,
-      message: aggregation === null
-        ? "Aggregation failed — no confidence source; re-deploying perspectives."
-        : majority === null
-          ? "No side majority among perspectives; re-deploying all perspectives."
-          : `Aggregation confidence ${confidence} below ${MAJORITY_CONFIDENCE}; re-deploying low-consensus perspectives.`,
+      // reason: "[degraded DD]" prefix distinguishes retries-for-missing-data
+      // from retries-for-low-consensus in logs.
+      message: (degraded ? "[degraded DD] " : "") +
+        (aggregation === null
+          ? "Aggregation failed — no confidence source; re-deploying perspectives."
+          : majority === null
+            ? "No side majority among perspectives; re-deploying all perspectives."
+            : `Aggregation confidence ${confidence} below ${MAJORITY_CONFIDENCE}; re-deploying low-consensus perspectives.`),
+      ...degradedFlag,
     }
   }
 
@@ -218,6 +245,8 @@ export function evaluateConsensus(
     decision: "RE-DEPLOY",
     lowConsensusPerspectives: lowConsensusPerspectives(reports, majority),
     contradictions,
-    message: `Consensus evaluation fell through all rules (side ${majority}, confidence ${confidence}); re-deploying.`,
+    message: (degraded ? "[degraded DD] " : "") +
+      `Consensus evaluation fell through all rules (side ${majority}, confidence ${confidence}); re-deploying.`,
+    ...degradedFlag,
   }
 }

@@ -8,6 +8,8 @@
  */
 
 import { runPlanningAgent } from "@/lib/agent/planning/agent"
+import { log } from "@/lib/agent/planning/log"
+import type { DDCoverage } from "@/lib/agent/planning/types"
 import { TradePlanSchema } from "@/lib/agent/types"
 import type { TradePlan, DDReport } from "@/lib/agent/types"
 
@@ -59,6 +61,8 @@ export class PlanningError extends Error {
  * @description Output of the planning pipeline: the validated trade plan,
  *   execution timings, and the agent-level run status (complete / no_trade /
  *   partial / approval_required) so the route layer can surface it.
+ *   `ddCoverage` is present only when the upstream DD report was partial —
+ *   omitted entirely (key absent) when every factor scored.
  */
 export interface PlanningPipelineResult {
   report: TradePlan
@@ -67,6 +71,33 @@ export interface PlanningPipelineResult {
     agentMs: number
   }
   status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
+  // reason: degraded-DD signaling (F3) — see DDCoverage; used by the route
+  // layer to tell consumers the plan was made on incomplete analysis.
+  ddCoverage?: DDCoverage
+}
+
+/**
+ * @function computeDDCoverage
+ * @description Derives the DD coverage summary from the report's factor
+ *   reports: total factor count, usable (scored) count, and the names of
+ *   failed factors (score null or missing). Returns undefined when nothing
+ *   failed, so the output key is omitted rather than present-but-empty.
+ * @param {DDReport} ddReport - The upstream due diligence report.
+ * @returns {DDCoverage | undefined} Coverage summary, or undefined when all factors scored.
+ */
+function computeDDCoverage(ddReport: DDReport): DDCoverage | undefined {
+  // reason: factorReports is optional on DDReportSchema — a report without
+  // them has zero failed factors and stays non-degraded.
+  const factorReports = ddReport.factorReports ?? []
+  const failedFactors = factorReports
+    .filter((f) => f.score === null || typeof f.score !== "number")
+    .map((f) => f.factor)
+  if (failedFactors.length === 0) return undefined
+  return {
+    usableFactorCount: factorReports.filter((f) => typeof f.score === "number").length,
+    totalFactors: factorReports.length,
+    failedFactors,
+  }
 }
 
 /**
@@ -80,6 +111,7 @@ export interface PlanningPipelineResult {
  * @param {number} [input.targetProfitPercent] - Target profit percent; defaults to 100.
  * @param {DDReport} input.ddReport - The due diligence report to base the plan on.
  * @returns {Promise<PlanningPipelineResult>} The validated trade plan and execution timings.
+ *   Includes `ddCoverage` when the DD report was partial (some factors failed).
  * @throws {PlanningError} When the agent fails or the plan fails validation.
  */
 export async function runPlanningPipeline(input: {
@@ -93,6 +125,14 @@ export async function runPlanningPipeline(input: {
   const { asset, userId, walletAddress, targetProfitPercent = 100, ddReport } = input
 
   try {
+    // reason: coverage is derived before the agent call so degraded input is
+    // signaled even if the swarm itself later throws (the error path re-throws
+    // without it, but the log line below records the degraded input).
+    const ddCoverage = computeDDCoverage(ddReport)
+    if (ddCoverage) {
+      log("info", "planning.degraded_dd", { failedFactors: ddCoverage.failedFactors })
+    }
+
     const { report, status } = await runPlanningAgent({
       asset,
       userId,
@@ -110,6 +150,9 @@ export async function runPlanningPipeline(input: {
         agentMs: report.processingTimeMs ?? Date.now() - t0,
       },
       status,
+      // reason: spread keeps the key ABSENT (not undefined) when not degraded —
+      // contract F3: "omit the field entirely when nothing failed".
+      ...(ddCoverage ? { ddCoverage } : {}),
     }
   } catch (err) {
     // reason: carry over structured detail/processingTimeMs/errorCategory from

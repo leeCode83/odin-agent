@@ -1,8 +1,9 @@
 /**
  * @file __tests__/app/api/agent/planning/route.test.ts
  * @description Route tests for POST /api/agent/planning: request validation
- *   (400), circuit breaker rejection (503, spec §9.7), success envelope, and
- *   spec §9.6 error shapes (PLANNING_FAILED / CONSENSUS_FAILED).
+ *   (400), circuit breaker rejection (503, spec §9.7), success envelope,
+ *   spec §9.6 error shapes (PLANNING_FAILED / CONSENSUS_FAILED), F2 fresh-DD
+ *   cache reuse (readRecentDDReport hit/miss/throw), and ddCoverage passthrough.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
@@ -17,6 +18,7 @@ const {
   mockRecordLLMFailure,
   mockGetCategory,
   mockRunDDAgent,
+  mockReadRecentDDReport,
 } = vi.hoisted(() => ({
   mockRunPlanningPipeline: vi.fn(),
   mockIsDDPanicked: vi.fn(),
@@ -25,6 +27,7 @@ const {
   mockRecordLLMFailure: vi.fn(),
   mockGetCategory: vi.fn(),
   mockRunDDAgent: vi.fn(),
+  mockReadRecentDDReport: vi.fn(),
 }))
 
 vi.mock("@/lib/agent/pipeline", () => ({
@@ -37,6 +40,10 @@ vi.mock("@/lib/asset-categories", () => ({
 
 vi.mock("@/lib/agent/due-diligence/agent", () => ({
   runDDAgent: mockRunDDAgent,
+}))
+
+vi.mock("@/lib/db/graph-memory", () => ({
+  readRecentDDReport: mockReadRecentDDReport,
 }))
 
 vi.mock("@/lib/agent/planning/circuit-breaker", () => ({
@@ -105,6 +112,7 @@ describe("POST /api/agent/planning", () => {
     mockIsLLMPanicked.mockReturnValue(false)
     mockGetCategory.mockReturnValue({ name: "major", activeFactors: [] })
     mockRunDDAgent.mockResolvedValue({ asset: "BTC", status: "complete", sections: {} })
+    mockReadRecentDDReport.mockResolvedValue(null)
     mockRunPlanningPipeline.mockResolvedValue({ report: VALID_PLAN, timing: VALID_TIMING })
   })
 
@@ -125,6 +133,80 @@ describe("POST /api/agent/planning", () => {
       targetProfitPercent: undefined,
       ddReport: { asset: "BTC", status: "complete", sections: {} },
     })
+  })
+
+  it("uses a fresh cached DD report instead of running the DD agent", async () => {
+    const cachedDD = {
+      asset: "BTC",
+      category: "major",
+      timestamp: "2026-08-06T10:00:00.000Z",
+      sections: {
+        fundamental: { score: 80, signals: [], summary: "Strong" },
+        onchain: { score: 60, signals: [], summary: "Neutral" },
+        sentiment: { score: 55, signals: [], summary: "Neutral" },
+        technical: { score: 70, signals: ["RSI > 60"], summary: "Bullish" },
+      },
+      aggregated_thesis: "BTC has upside",
+      confidence_score: 65,
+      risk_flags: [],
+      errors: [],
+      status: "complete",
+      processingTimeMs: 250,
+    }
+    mockReadRecentDDReport.mockResolvedValue(cachedDD)
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(mockReadRecentDDReport).toHaveBeenCalledWith("BTC", "user-1")
+    expect(mockRunDDAgent).not.toHaveBeenCalled()
+    expect(mockRunPlanningPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ ddReport: cachedDD })
+    )
+    expect(data.report.asset).toBe("BTC")
+  })
+
+  it("falls back to the DD agent when no fresh cached report exists", async () => {
+    mockReadRecentDDReport.mockResolvedValue(null)
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+
+    expect(res.status).toBe(200)
+    expect(mockReadRecentDDReport).toHaveBeenCalledWith("BTC", "user-1")
+    expect(mockRunDDAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back to the DD agent when the cache read throws", async () => {
+    mockReadRecentDDReport.mockRejectedValue(new Error("db down"))
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+
+    expect(res.status).toBe(200)
+    expect(mockRunDDAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it("passes ddCoverage through to the response when the pipeline reports it", async () => {
+    const ddCoverage = { usableFactorCount: 3, totalFactors: 4, failedFactors: ["sentiment"] }
+    mockRunPlanningPipeline.mockResolvedValue({
+      report: VALID_PLAN,
+      timing: VALID_TIMING,
+      ddCoverage,
+    })
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data.ddCoverage).toEqual(ddCoverage)
+  })
+
+  it("omits ddCoverage from the response when the pipeline does not report it", async () => {
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data).not.toHaveProperty("ddCoverage")
   })
 
   it("passes a provided ddReport to the pipeline without calling runDDAgent", async () => {

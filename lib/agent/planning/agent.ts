@@ -312,6 +312,14 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     )
   }
 
+  // reason: degraded-DD signaling (F3) — same factor-failure derivation as the
+  // pipeline's ddCoverage; passed to evaluateConsensus so NO_TRADE reasons get
+  // the failed-factors suffix and RE-DEPLOY messages get the "[degraded DD]"
+  // label (retry-for-data vs retry-for-consensus).
+  const degradedFactors = (ddReport.factorReports ?? [])
+    .filter((f) => f.score === null || typeof f.score !== "number")
+    .map((f) => f.factor)
+
   // reason: equity is pre-fetched once (spec §16.4) — no get_equity tool —
   // and shared through the tool registry ctx + position sizing.
   const equity = await fetchUserEquity(params.walletAddress).catch(() => 0)
@@ -415,7 +423,11 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
 
     // --- EVALUATE (Layer 1) ---
     const evalT0 = Date.now()
-    const evaluation = evaluateConsensus(allReports, aggregation)
+    const evaluation = evaluateConsensus(
+      allReports,
+      aggregation,
+      degradedFactors.length > 0 ? degradedFactors : undefined
+    )
     timing.evaluateMs += Date.now() - evalT0
     log("info", "consensus.evaluated", {
       iteration,

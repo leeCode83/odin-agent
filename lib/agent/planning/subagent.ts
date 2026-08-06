@@ -29,7 +29,9 @@ import { compactDDReport } from "@/lib/agent/planning/utils"
  *     planning fields survive zod's stripping. Returns the thought to `runSubagent`
  *     unchanged.
  *   - `getSystemPrompt`: `makePlanningSystemPrompt({ targetProfitPercent })` composed
- *     with (perspective, tools, instruction).
+ *     with (perspective, tools, instruction). When the DD report is partial
+ *     (some factorReports have score null/missing), the failed factor names are
+ *     passed in so the prompt carries the degraded-DD note (F3).
  *   - The `FactorReport` returned by `runSubagent` is merged with the stashed
  *     planning fields; missing extras fall back to defaults (`no_trade`, 0, []).
  * @param {Object} params - Perspective subagent configuration.
@@ -49,6 +51,13 @@ export async function runPerspectiveSubagent(params: {
   targetProfitPercent: number
   tools: ToolRegistry
 }): Promise<PerspectiveReport> {
+  // reason: degraded-DD signaling (F3) — factor reports with score null or
+  // missing count as failed; the names reach the perspective's system prompt
+  // so the LLM accounts for the missing analysis instead of treating a
+  // data-starved NO_TRADE as real market conviction.
+  const degradedFactors = (params.ddReport.factorReports ?? [])
+    .filter((f) => f.score === null || typeof f.score !== "number")
+    .map((f) => f.factor)
   // reason: zod strips unknown keys in SubAgentThoughtSchema — the only way the
   // wrapper can see side/entry_price/suggested_*/risk_flags is to stash the parsed
   // return thought here before runSubagent discards it.
@@ -78,7 +87,10 @@ export async function runPerspectiveSubagent(params: {
     maxLoops: 5,
     timeoutMs: 60000,
     llmThink,
-    getSystemPrompt: makePlanningSystemPrompt({ targetProfitPercent: params.targetProfitPercent }),
+    getSystemPrompt: makePlanningSystemPrompt({
+      targetProfitPercent: params.targetProfitPercent,
+      degradedFactors: degradedFactors.length > 0 ? degradedFactors : undefined,
+    }),
   })
 
   return {

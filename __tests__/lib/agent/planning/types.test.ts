@@ -105,13 +105,14 @@ describe("Planning swarm types", () => {
     }>()
   })
 
-  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason", () => {
+  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason, degraded", () => {
     expectTypeOf<ConsensusResult>().toEqualTypeOf<{
       decision: "ACCEPT" | "RE-DEPLOY" | "NO_TRADE" | "FAILED"
       lowConsensusPerspectives: string[]
       contradictions: string[]
       message: string
       noTradeReason?: string
+      degraded?: boolean
     }>()
   })
 

@@ -87,6 +87,32 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain('Think step by step in the reasoning field before deciding on an action.')
     expect(prompt).toContain('Do NOT invent price levels.')
   })
+
+  it("appends the degraded-DD note when degradedFactors provided", () => {
+    const prompt = makePlanningSystemPrompt({
+      targetProfitPercent: 100,
+      degradedFactors: ["technical"],
+    })("conservative", tools, "Validate")
+
+    expect(prompt).toContain(
+      "Note: DD analysis incomplete — factors technical failed. Account for missing data explicitly."
+    )
+  })
+
+  it("joins multiple failed factors with comma in the degraded note", () => {
+    const prompt = makePlanningSystemPrompt({
+      targetProfitPercent: 100,
+      degradedFactors: ["technical", "sentiment"],
+    })("balance", tools, "Validate")
+
+    expect(prompt).toContain("factors technical, sentiment failed.")
+  })
+
+  it("omits the degraded-DD note when no factors failed", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+
+    expect(prompt).not.toContain("Note: DD analysis incomplete")
+  })
 })
 
 describe("PLAN_PROMPT", () => {

@@ -197,4 +197,105 @@ describe("runPlanningPipeline", () => {
       runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: { asset: "BTC" } as unknown as DDReport })
     ).rejects.toThrow(/Planning pipeline failed for BTC:/)
   })
+
+  it("omits ddCoverage when every factor score is usable", async () => {
+    vi.mocked(runPlanningAgent).mockResolvedValueOnce({
+      report: mockTradePlan,
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      iterations: 1,
+      status: "complete",
+    })
+
+    const result = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+      ddReport: {
+        asset: "BTC",
+        factorReports: [
+          { factor: "technical", score: 70 },
+          { factor: "sentiment", score: 55 },
+          { factor: "fundamental", score: 80 },
+        ],
+      } as unknown as DDReport,
+    })
+
+    expect("ddCoverage" in result).toBe(false)
+    expect(result.ddCoverage).toBeUndefined()
+  })
+
+  it("computes ddCoverage when a factor failed (score null)", async () => {
+    vi.mocked(runPlanningAgent).mockResolvedValueOnce({
+      report: mockTradePlan,
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      iterations: 1,
+      status: "complete",
+    })
+
+    const result = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+      ddReport: {
+        asset: "BTC",
+        factorReports: [
+          { factor: "technical", score: 70 },
+          { factor: "sentiment", score: null },
+          { factor: "fundamental", score: 80 },
+        ],
+      } as unknown as DDReport,
+    })
+
+    expect(result.ddCoverage).toEqual({
+      usableFactorCount: 2,
+      totalFactors: 3,
+      failedFactors: ["sentiment"],
+    })
+  })
+
+  it("treats a missing score as a failed factor in ddCoverage", async () => {
+    vi.mocked(runPlanningAgent).mockResolvedValueOnce({
+      report: mockTradePlan,
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      iterations: 1,
+      status: "complete",
+    })
+
+    const result = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+      ddReport: {
+        asset: "BTC",
+        factorReports: [
+          { factor: "technical", score: 70 },
+          { factor: "onchain" },
+        ],
+      } as unknown as DDReport,
+    })
+
+    expect(result.ddCoverage).toEqual({
+      usableFactorCount: 1,
+      totalFactors: 2,
+      failedFactors: ["onchain"],
+    })
+  })
+
+  it("omits ddCoverage when the report carries no factorReports", async () => {
+    vi.mocked(runPlanningAgent).mockResolvedValueOnce({
+      report: mockTradePlan,
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      iterations: 1,
+      status: "complete",
+    })
+
+    const result = await runPlanningPipeline({
+      asset: "BTC",
+      userId: "user-1",
+      walletAddress: "0x123",
+      ddReport: { asset: "BTC", factorReports: [] } as unknown as DDReport,
+    })
+
+    expect("ddCoverage" in result).toBe(false)
+  })
 })

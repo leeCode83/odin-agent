@@ -100,6 +100,23 @@ export interface ConsensusResult {
   contradictions: string[]
   message: string
   noTradeReason?: string
+  // reason: true when the upstream DD report was partial (some factors
+  // failed) — marks consensus results so NO_TRADE/RE-DEPLOY aren't mistaken
+  // for real market conviction. Omitted entirely when DD was complete.
+  degraded?: boolean
+}
+
+/**
+ * @interface DDCoverage
+ * @description How much of the upstream DD analysis was usable. Present on
+ *   the pipeline output only when at least one factor failed (score null or
+ *   missing), so callers can distinguish "market says no" from "data says
+ *   nothing".
+ */
+export interface DDCoverage {
+  usableFactorCount: number
+  totalFactors: number
+  failedFactors: string[]
 }
 
 /**
