@@ -16,6 +16,7 @@ import type { SubAgentThought, LlmThinkMessage, ThinkResult } from "@/lib/agent/
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { think } from "@/lib/agent/due-diligence/llm"
 import { makePlanningSystemPrompt } from "@/lib/agent/planning/prompts"
+import { compactDDReport } from "@/lib/agent/planning/utils"
 
 /**
  * @function runPerspectiveSubagent
@@ -62,7 +63,7 @@ export async function runPerspectiveSubagent(params: {
     // JSON-in-prompt convention, which T6 leaves untouched for non-DD callers.
     const withReport: LlmThinkMessage[] = [
       ...messages,
-      { role: "user", content: `[DDReport]\n${JSON.stringify(params.ddReport)}` },
+      { role: "user", content: `[DDReport]\n${JSON.stringify(compactDDReport(params.ddReport))}` },
     ]
     const thought = await think(withReport)
     if (thought.action === "return") stash = thought

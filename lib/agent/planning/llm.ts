@@ -4,6 +4,7 @@ import { PerspectiveSchema } from "./types"
 import type { Perspective, PlanningSubagentPlan, PlanningAggregationResult, PerspectiveReport } from "./types"
 import type { DDReport } from "@/lib/agent/types"
 import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "./prompts"
+import { compactDDReport } from "./utils"
 
 type ThinkingParams = { thinking: { type: string }; reasoning_effort: string }
 
@@ -200,7 +201,7 @@ export async function plan(params: {
     phase: "plan",
     systemPrompt: PLAN_PROMPT,
     userContent: JSON.stringify({
-      ddReport: params.ddReport,
+      ddReport: compactDDReport(params.ddReport),
       targetProfitPercent: params.targetProfitPercent,
     }),
     parse: sanitizePlans,
@@ -229,7 +230,7 @@ export async function rePlan(params: {
     phase: "rePlan",
     systemPrompt: REPLAN_PROMPT,
     userContent: JSON.stringify({
-      ddReport: params.ddReport,
+      ddReport: compactDDReport(params.ddReport),
       targetProfitPercent: params.targetProfitPercent,
       lowConsensusPerspectives: params.lowConsensusPerspectives,
       previousReports: params.previousReports,
@@ -261,7 +262,7 @@ export async function aggregate(params: {
     systemPrompt: AGGREGATE_PROMPT,
     userContent: JSON.stringify({
       reports: params.reports,
-      ddReport: params.ddReport,
+      ddReport: compactDDReport(params.ddReport),
       targetProfitPercent: params.targetProfitPercent,
     }),
     parse: sanitizeAggregation,
