@@ -15,16 +15,19 @@ import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import type { PlanningErrorCategory } from "@/lib/agent/planning/pipeline"
 import { planningCircuitBreaker } from "@/lib/agent/planning/circuit-breaker"
-import { TradePlanSchema } from "@/lib/agent/types"
-
+import { TradePlanSchema, DDReportSchema } from "@/lib/agent/types"
+import { getCategory } from "@/lib/asset-categories"
+import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 /**
  * @constant requiredBodySchema
  * @description Zod schema for the required request fields (spec §12).
+ *   Now includes an optional ddReport for API decoupling.
  */
 const requiredBodySchema = z.object({
   asset: z.string().min(1),
   userId: z.string().min(1),
   walletAddress: z.string().min(1),
+  ddReport: DDReportSchema.optional(),
 })
 
 /**
@@ -75,7 +78,8 @@ const CATEGORY_TO_HTTP_STATUS: Record<PlanningErrorCategory, number> = {
  *   HTTP codes (422 dd/llm, 502 data, 500 internal, CONSENSUS_FAILED for
  *   phase evaluate). A partial DD with usable factors returns 200 with
  *   status "approval_required" so the plan flows to the approval path.
- * @param {NextRequest} req - Request with { asset, userId, walletAddress, targetProfitPercent? }.
+ *   If a valid ddReport is provided, it skips the DD execution phase.
+ * @param {NextRequest} req - Request with { asset, userId, walletAddress, targetProfitPercent?, ddReport? }.
  * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status },
  *   400 on invalid input, 503 PLANNING_UNAVAILABLE, 422/502/500 per taxonomy.
  */
@@ -90,7 +94,7 @@ export async function POST(req: NextRequest) {
   const required = requiredBodySchema.safeParse(body)
   if (!required.success) {
     return NextResponse.json(
-      { error: "asset, userId, and walletAddress required" },
+      { error: "Invalid request body (asset, userId, walletAddress required; ddReport must be valid if provided)", detail: required.error.issues },
       { status: 400 }
     )
   }
@@ -119,11 +123,36 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    let ddReport = required.data.ddReport
+    
+    if (!ddReport) {
+      const category = getCategory(required.data.asset)
+      if (!category) {
+         throw new PlanningError("Unknown asset", { phase: "dd" }, undefined, "internal")
+      }
+      try {
+        ddReport = await runDDAgent({
+          asset: required.data.asset,
+          category,
+          userId: required.data.userId,
+          walletAddress: required.data.walletAddress,
+        })
+      } catch (e) {
+        throw new PlanningError(
+          "PLANNING_FAILED",
+          { phase: "dd", reports: [], aggregation: null, ddReport: null, message: String(e) },
+          undefined,
+          "dd"
+        )
+      }
+    }
+
     const output = await runPlanningPipeline({
       asset: required.data.asset,
       userId: required.data.userId,
       walletAddress: required.data.walletAddress,
       targetProfitPercent: targetProfitPercent.data,
+      ddReport,
     })
     const validated = TradePlanSchema.parse(output.report)
     return NextResponse.json({

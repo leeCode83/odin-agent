@@ -8,7 +8,7 @@
 
 import { z } from "zod"
 import { SignalEntrySchema } from "@/lib/agent/due-diligence/types"
-import type { TradePlan, ConfidenceBreakdown } from "@/lib/agent/types"
+import type { TradePlan, ConfidenceBreakdown, DDReport } from "@/lib/agent/types"
 
 /**
  * @constant PerspectiveSchema
@@ -105,12 +105,14 @@ export interface ConsensusResult {
 /**
  * @interface PlanningAgentInput
  * @description Input parameters for the planning swarm agent.
+ *   Requires a pre-computed Due Diligence (DD) report.
  */
 export interface PlanningAgentInput {
   asset: string
   userId: string
   walletAddress: string
   targetProfitPercent: number
+  ddReport: DDReport
 }
 
 /**
@@ -121,7 +123,6 @@ export interface PlanningAgentInput {
 export interface PlanningAgentOutput {
   report: TradePlan
   timing: {
-    ddMs: number
     planMs: number
     executeMs: number
     aggregateMs: number

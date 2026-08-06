@@ -15,16 +15,28 @@ const {
   mockIsLLMPanicked,
   mockRecordDDFailure,
   mockRecordLLMFailure,
+  mockGetCategory,
+  mockRunDDAgent,
 } = vi.hoisted(() => ({
   mockRunPlanningPipeline: vi.fn(),
   mockIsDDPanicked: vi.fn(),
   mockIsLLMPanicked: vi.fn(),
   mockRecordDDFailure: vi.fn(),
   mockRecordLLMFailure: vi.fn(),
+  mockGetCategory: vi.fn(),
+  mockRunDDAgent: vi.fn(),
 }))
 
 vi.mock("@/lib/agent/pipeline", () => ({
   runPlanningPipeline: mockRunPlanningPipeline,
+}))
+
+vi.mock("@/lib/asset-categories", () => ({
+  getCategory: mockGetCategory,
+}))
+
+vi.mock("@/lib/agent/due-diligence/agent", () => ({
+  runDDAgent: mockRunDDAgent,
 }))
 
 vi.mock("@/lib/agent/planning/circuit-breaker", () => ({
@@ -91,6 +103,8 @@ describe("POST /api/agent/planning", () => {
     vi.clearAllMocks()
     mockIsDDPanicked.mockReturnValue(false)
     mockIsLLMPanicked.mockReturnValue(false)
+    mockGetCategory.mockReturnValue({ name: "major", activeFactors: [] })
+    mockRunDDAgent.mockResolvedValue({ asset: "BTC", status: "complete", sections: {} })
     mockRunPlanningPipeline.mockResolvedValue({ report: VALID_PLAN, timing: VALID_TIMING })
   })
 
@@ -109,7 +123,37 @@ describe("POST /api/agent/planning", () => {
       userId: "user-1",
       walletAddress: "0x123",
       targetProfitPercent: undefined,
+      ddReport: { asset: "BTC", status: "complete", sections: {} },
     })
+  })
+
+  it("passes a provided ddReport to the pipeline without calling runDDAgent", async () => {
+    const customDD = {
+      aggregated_thesis: "BTC has upside",
+      asset: "BTC",
+      category: "major",
+      timestamp: "2026-07-20T10:00:00Z",
+      status: "complete",
+      sections: {
+        fundamental: { score: 80, signals: [], summary: "Strong" },
+        onchain: { score: 60, signals: [], summary: "Neutral" },
+        sentiment: { score: 55, signals: [], summary: "Neutral" },
+        technical: { score: 70, signals: ["RSI > 60"], summary: "Bullish" },
+      },
+      confidence_score: 65,
+      risk_flags: [],
+      errors: [],
+    }
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: customDD })
+    
+    if (res.status === 400) {
+      console.log(await res.json())
+    }
+    expect(res.status).toBe(200)
+    expect(mockRunDDAgent).not.toHaveBeenCalled()
+    expect(mockRunPlanningPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({ ddReport: customDD })
+    )
   })
 
   it("returns 200 for NO_TRADE with status no_trade", async () => {
@@ -136,7 +180,7 @@ describe("POST /api/agent/planning", () => {
     const data = await res.json()
 
     expect(res.status).toBe(400)
-    expect(data.error).toBe("asset, userId, and walletAddress required")
+    expect(data.error).toMatch(/Invalid request body/)
   })
 
   it("returns 400 when userId is missing", async () => {
@@ -155,7 +199,7 @@ describe("POST /api/agent/planning", () => {
     const res = await post({ asset: "", userId: "user-1", walletAddress: "0x123" })
 
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toBe("asset, userId, and walletAddress required")
+    expect((await res.json()).error).toMatch(/Invalid request body/)
   })
 
   it("returns 400 when targetProfitPercent is zero", async () => {

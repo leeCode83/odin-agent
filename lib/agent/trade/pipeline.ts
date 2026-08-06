@@ -20,7 +20,7 @@ export async function runTradePipeline(
   const ddMs = Date.now() - t0
   const ddReport = ddOutput.report
 
-  const planningOutput = await runPlanningPipeline({ asset, userId, walletAddress })
+  const planningOutput = await runPlanningPipeline({ asset, userId, walletAddress, ddReport })
   const planningMs = Date.now() - t0 - ddMs
   const tradePlan = planningOutput.report
 

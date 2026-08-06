@@ -19,7 +19,6 @@ import type {
 import type { DDReport } from "@/lib/agent/types"
 
 const getCategoryMock = vi.hoisted(() => vi.fn())
-const runDDAgentMock = vi.hoisted(() => vi.fn())
 const planMock = vi.hoisted(() => vi.fn())
 const rePlanMock = vi.hoisted(() => vi.fn())
 const aggregateMock = vi.hoisted(() => vi.fn())
@@ -31,7 +30,7 @@ const envDefaultsMock = vi.hoisted(() => vi.fn())
 const recordDecisionMock = vi.hoisted(() => vi.fn())
 
 vi.mock("@/lib/asset-categories", () => ({ getCategory: getCategoryMock }))
-vi.mock("@/lib/agent/due-diligence/agent", () => ({ runDDAgent: runDDAgentMock }))
+
 vi.mock("@/lib/agent/planning/llm", () => ({
   plan: planMock,
   rePlan: rePlanMock,
@@ -50,13 +49,6 @@ vi.mock("@/lib/db/risk-thresholds", () => ({
 }))
 vi.mock("@/lib/db/graph-memory", () => ({ recordDecision: recordDecisionMock }))
 
-const INPUT: PlanningAgentInput = {
-  asset: "BTC",
-  userId: "user-1",
-  walletAddress: "0xabc",
-  targetProfitPercent: 100,
-}
-
 const CATEGORY = { name: "major", activeFactors: ["technical", "onchain", "sentiment", "fundamental"] as const }
 
 const DD_REPORT: DDReport = {
@@ -72,6 +64,16 @@ const DD_REPORT: DDReport = {
   confidence_score: 65,
   risk_flags: [],
 }
+
+const INPUT: PlanningAgentInput = {
+  asset: "BTC",
+  userId: "user-1",
+  walletAddress: "0xabc",
+  targetProfitPercent: 100,
+  ddReport: DD_REPORT,
+}
+
+
 
 const FULL_PLAN: PlanningSubagentPlan[] = [
   { perspective: "conservative", instruction: "Validate conservatively", priority: 1 },
@@ -136,7 +138,6 @@ describe("runPlanningAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getCategoryMock.mockReturnValue(CATEGORY)
-    runDDAgentMock.mockResolvedValue(DD_REPORT)
     fetchUserEquityMock.mockResolvedValue(10000)
     getRiskThresholdsMock.mockResolvedValue(THRESHOLDS)
     envDefaultsMock.mockReturnValue(THRESHOLDS)
@@ -151,7 +152,7 @@ describe("runPlanningAgent", () => {
     recordDecisionMock.mockResolvedValue("key-1")
   })
 
-  describe("step 0 — DD auto-call", () => {
+  describe("step 0 — setup and pre-fetches", () => {
     it("throws PlanningError for an unknown asset", async () => {
       getCategoryMock.mockReturnValue(null)
 
@@ -159,29 +160,6 @@ describe("runPlanningAgent", () => {
 
       expect(err).toBeInstanceOf(PlanningError)
       expect((err as Error).message).toBe("Unknown asset")
-      expect(runDDAgentMock).not.toHaveBeenCalled()
-    })
-
-    it("throws PlanningError with phase dd when the DD agent fails", async () => {
-      runDDAgentMock.mockRejectedValue(new Error("dd boom"))
-
-      const err = await captureError(runPlanningAgent(INPUT))
-
-      expect(err).toBeInstanceOf(PlanningError)
-      expect((err as Error).message).toBe("PLANNING_FAILED")
-      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
-      expect(runPerspectiveSubagentMock).not.toHaveBeenCalled()
-    })
-
-    it("calls runDDAgent with the resolved category and user context", async () => {
-      await runPlanningAgent(INPUT)
-
-      expect(runDDAgentMock).toHaveBeenCalledWith({
-        asset: "BTC",
-        category: CATEGORY,
-        userId: "user-1",
-        walletAddress: "0xabc",
-      })
     })
 
     it("pre-fetches equity once and passes it to the tool registry", async () => {
@@ -210,9 +188,7 @@ describe("runPlanningAgent", () => {
 
   describe("step 0 — DD report quality gate", () => {
     it("throws PlanningError with phase dd when the DD report status is failed", async () => {
-      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "failed" })
-
-      const err = await captureError(runPlanningAgent(INPUT))
+      const err = await captureError(runPlanningAgent({ ...INPUT, ddReport: { ...DD_REPORT, status: "failed" } }))
 
       expect(err).toBeInstanceOf(PlanningError)
       expect((err as Error).message).toBe("PLANNING_FAILED")
@@ -221,15 +197,15 @@ describe("runPlanningAgent", () => {
     })
 
     it("proceeds with a confidence penalty when the DD report status is partial with usable scores", async () => {
-      runDDAgentMock.mockResolvedValue({
+      const partialDD = {
         ...DD_REPORT,
-        status: "partial",
+        status: "partial" as const,
         usableFactorCount: 3,
         sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
-      })
+      }
       aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
 
-      const out = await runPlanningAgent(INPUT)
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
 
       // 80 * 3/4 = 60 → below the 70 confidence threshold → approval path
       expect(out.status).toBe("approval_required")
@@ -243,10 +219,10 @@ describe("runPlanningAgent", () => {
         name: "meme",
         activeFactors: ["technical", "onchain", "sentiment"] as const,
       })
-      runDDAgentMock.mockResolvedValue({
+      const partialDD = {
         ...DD_REPORT,
         category: "meme",
-        status: "partial",
+        status: "partial" as const,
         usableFactorCount: 2,
         sections: {
           technical: { score: 80, summary: "x", signals: [] },
@@ -254,10 +230,10 @@ describe("runPlanningAgent", () => {
           sentiment: { score: 70, summary: "y", signals: [] },
           fundamental: { score: null, summary: null, signals: [] },
         },
-      })
+      }
       aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
 
-      const out = await runPlanningAgent(INPUT)
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
 
       // 80 * 2/3 = 53.33 → 53 → below the 70 confidence threshold → approval path
       expect(out.status).toBe("approval_required")
@@ -265,15 +241,15 @@ describe("runPlanningAgent", () => {
     })
 
     it("keeps status complete when a penalized DD still clears the autonomy gate", async () => {
-      runDDAgentMock.mockResolvedValue({
+      const partialDD = {
         ...DD_REPORT,
-        status: "partial",
+        status: "partial" as const,
         usableFactorCount: 3,
         sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
-      })
+      }
       aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 96 }))
 
-      const out = await runPlanningAgent(INPUT)
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
 
       // 96 * 3/4 = 72 → at/above the 70 threshold → auto
       expect(out.status).toBe("complete")
@@ -282,12 +258,12 @@ describe("runPlanningAgent", () => {
     })
 
     it("keeps status no_trade when a partial DD still yields NO_TRADE", async () => {
-      runDDAgentMock.mockResolvedValue({
+      const partialDD = {
         ...DD_REPORT,
-        status: "partial",
+        status: "partial" as const,
         usableFactorCount: 3,
         sections: { ...DD_REPORT.sections, fundamental: { score: null, summary: null, signals: [] } },
-      })
+      }
       runPerspectiveSubagentMock.mockImplementation(
         async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) =>
           makeReport({ perspective, side: "no_trade" })
@@ -296,25 +272,25 @@ describe("runPlanningAgent", () => {
         makeAggregation({ side: "no_trade", position_size_usdc: 0, confidence_score: 40, profit_feasible: false })
       )
 
-      const out = await runPlanningAgent(INPUT)
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
 
       expect(out.status).toBe("no_trade")
       expect(out.report.autonomy_decision).toBe("auto")
     })
 
     it("throws PlanningError with phase dd when every factor section has a null score", async () => {
-      runDDAgentMock.mockResolvedValue({
+      const brokenDD = {
         ...DD_REPORT,
-        status: "complete",
+        status: "complete" as const,
         sections: {
           technical: { score: null, summary: null, signals: [] },
           onchain: { score: null, summary: null, signals: [] },
           sentiment: { score: null, summary: null, signals: [] },
           fundamental: { score: null, summary: null, signals: [] },
         },
-      })
+      }
 
-      const err = await captureError(runPlanningAgent(INPUT))
+      const err = await captureError(runPlanningAgent({ ...INPUT, ddReport: brokenDD }))
 
       expect(err).toBeInstanceOf(PlanningError)
       expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
@@ -322,9 +298,7 @@ describe("runPlanningAgent", () => {
     })
 
     it("proceeds when the DD report has usable factor scores", async () => {
-      runDDAgentMock.mockResolvedValue({ ...DD_REPORT, status: "complete" })
-
-      const out = await runPlanningAgent(INPUT)
+      const out = await runPlanningAgent({ ...INPUT, ddReport: { ...DD_REPORT, status: "complete" } })
 
       expect(out.status).toBe("complete")
     })
@@ -337,7 +311,6 @@ describe("runPlanningAgent", () => {
       expect(out.status).toBe("complete")
       expect(out.iterations).toBe(1)
       expect(out.timing).toMatchObject({
-        ddMs: expect.any(Number),
         planMs: expect.any(Number),
         executeMs: expect.any(Number),
         aggregateMs: expect.any(Number),
@@ -561,17 +534,8 @@ describe("runPlanningAgent", () => {
 
   describe("Error 2 & 3: Planning timeout crash", () => {
     it("TASK 1: fallbackAggregation with empty array forces NO_TRADE instead of throwing on zero prices", async () => {
-      // Simulate DD agent taking longer than the loop budget.
-      // This will cause the loop to break at iteration 0, leaving allReports empty.
-      vi.stubEnv("PLANNING_LOOP_TIMEOUT_MS", "50")
+      vi.stubEnv("PLANNING_LOOP_TIMEOUT_MS", "-1")
       try {
-        runDDAgentMock.mockImplementation(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 60))
-          return DD_REPORT
-        })
-
-        // Currently this throws a ZodError (PlanningError) because fallbackAggregation([]) produces 0 prices.
-        // We expect it to gracefully return a NO_TRADE plan.
         const out = await runPlanningAgent(INPUT)
 
         expect(out.status).toBe("no_trade")

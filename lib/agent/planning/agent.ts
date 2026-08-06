@@ -11,7 +11,6 @@
  */
 
 import { getCategory } from "@/lib/asset-categories"
-import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import { plan, rePlan, aggregate } from "@/lib/agent/planning/llm"
 import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
 import { buildPlanningToolRegistry } from "@/lib/agent/planning/tools"
@@ -24,7 +23,7 @@ import { fetchUserEquity } from "@/lib/data/hyperliquid"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import { TradePlanSchema } from "@/lib/agent/types"
 import { log } from "@/lib/agent/planning/log"
-import type { AutonomyDecision, DDReport, RiskThresholds, TradePlan } from "@/lib/agent/types"
+import type { AutonomyDecision, RiskThresholds, TradePlan } from "@/lib/agent/types"
 import type {
   PlanningAgentInput,
   PlanningAgentOutput,
@@ -252,8 +251,8 @@ function persistDecision(plan: TradePlan, params: PlanningAgentInput): void {
 
 /**
  * @function runPlanningAgent
- * @description Main planning swarm orchestrator (spec §6.2). Step 0
- *   auto-calls the DD agent and pre-fetches equity once (spec §16.4), then
+ * @description Main planning swarm orchestrator (spec §6.2). Assumes a valid
+ *   DD report is provided via input. Pre-fetches equity once (spec §16.4), then
  *   runs up to 3 Plan-Execute-Reflect iterations (fail fast: a loop deadline
  *   checked at each iteration start breaks out with a partial best-effort
  *   plan):
@@ -274,34 +273,15 @@ function persistDecision(plan: TradePlan, params: PlanningAgentInput): void {
 export async function runPlanningAgent(params: PlanningAgentInput): Promise<PlanningAgentOutput> {
   const t0 = Date.now()
   const errors: string[] = []
-  const timing = { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0 }
+  const timing = { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0 }
 
   log("info", "planning.started", { asset: params.asset, userId: params.userId })
 
-  // --- Step 0: category, DD auto-call, equity pre-fetch ---
+  // --- Step 0: category & equity pre-fetch ---
   const category = getCategory(params.asset)
   if (!category) throw new PlanningError("Unknown asset")
 
-  const ddT0 = Date.now()
-  let ddReport: DDReport
-  try {
-    ddReport = await runDDAgent({
-      asset: params.asset,
-      category,
-      userId: params.userId,
-      walletAddress: params.walletAddress,
-    })
-  } catch (e) {
-    // reason: planning cannot proceed without a DDReport (spec §9.4); the DD
-    // agent threw before producing one → category "dd" (report unusable).
-    throw new PlanningError(
-      "PLANNING_FAILED",
-      { phase: "dd", reports: [], aggregation: null, ddReport: null, message: String(e) },
-      Date.now() - t0,
-      "dd"
-    )
-  }
-  timing.ddMs = Date.now() - ddT0
+  const { ddReport } = params
 
   // --- Step 0b: DD report quality gate (user-requested) ---
   // reason: a "successful" DD run can still return a broken report (all factor

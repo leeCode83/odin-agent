@@ -11,6 +11,7 @@ import {
   ConsensusResult,
 } from "@/lib/agent/planning/types"
 import { TradePlanSchema } from "@/lib/agent/types"
+import type { DDReport } from "@/lib/agent/types"
 
 describe("PerspectiveSchema", () => {
   it("accepts conservative", () => {
@@ -120,6 +121,7 @@ describe("Planning swarm types", () => {
       userId: string
       walletAddress: string
       targetProfitPercent: number
+      ddReport: DDReport
     }>()
   })
 
@@ -151,7 +153,7 @@ describe("Planning swarm types", () => {
         processingTimeMs?: number
         iterations?: number
       }
-      timing: { ddMs: number; planMs: number; executeMs: number; aggregateMs: number; evaluateMs: number; totalMs: number }
+      timing: { planMs: number; executeMs: number; aggregateMs: number; evaluateMs: number; totalMs: number }
       iterations: number
       status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
     }>()

@@ -6,7 +6,7 @@ vi.mock("@/lib/agent/planning/agent", () => ({
 
 import { runPlanningPipeline, PlanningError } from "@/lib/agent/planning/pipeline"
 import { runPlanningAgent } from "@/lib/agent/planning/agent"
-import type { TradePlan } from "@/lib/agent/types"
+import type { TradePlan, DDReport } from "@/lib/agent/types"
 
 const mockTradePlan: TradePlan = {
   asset: "BTC",
@@ -37,7 +37,7 @@ describe("runPlanningPipeline", () => {
   it("calls runPlanningAgent and returns validated report with timing", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       report: mockTradePlan,
-      timing: { ddMs: 100, planMs: 50, executeMs: 200, aggregateMs: 100, evaluateMs: 50, totalMs: 500 },
+      timing: { planMs: 50, executeMs: 200, aggregateMs: 100, evaluateMs: 50, totalMs: 500 },
       iterations: 1,
       status: "complete",
     })
@@ -46,6 +46,7 @@ describe("runPlanningPipeline", () => {
       asset: "BTC",
       userId: "user-1",
       walletAddress: "0x123",
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     })
 
     expect(runPlanningAgent).toHaveBeenCalledWith({
@@ -53,6 +54,7 @@ describe("runPlanningPipeline", () => {
       userId: "user-1",
       walletAddress: "0x123",
       targetProfitPercent: 100,
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     })
     expect(result.report).toEqual(mockTradePlan)
     expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
@@ -62,12 +64,12 @@ describe("runPlanningPipeline", () => {
   it("defaults targetProfitPercent to 100 when omitted", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       report: mockTradePlan,
-      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
     })
 
-    await runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    await runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: { asset: "BTC" } as unknown as DDReport })
 
     expect(runPlanningAgent).toHaveBeenCalledWith(
       expect.objectContaining({ targetProfitPercent: 100 })
@@ -77,7 +79,7 @@ describe("runPlanningPipeline", () => {
   it("passes through targetProfitPercent when provided", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       report: mockTradePlan,
-      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
     })
@@ -87,6 +89,7 @@ describe("runPlanningPipeline", () => {
       userId: "user-1",
       walletAddress: "0x123",
       targetProfitPercent: 150,
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     })
 
     expect(runPlanningAgent).toHaveBeenCalledWith(
@@ -97,7 +100,7 @@ describe("runPlanningPipeline", () => {
   it("treats a partial status as a successful pipeline result", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       report: mockTradePlan,
-      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 3,
       status: "partial",
     })
@@ -106,6 +109,7 @@ describe("runPlanningPipeline", () => {
       asset: "BTC",
       userId: "user-1",
       walletAddress: "0x123",
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     })
 
     expect(result.report).toEqual(mockTradePlan)
@@ -115,7 +119,7 @@ describe("runPlanningPipeline", () => {
     vi.mocked(runPlanningAgent).mockRejectedValueOnce(new Error("Agent crashed"))
 
     await expect(
-      runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+      runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: { asset: "BTC" } as unknown as DDReport })
     ).rejects.toThrow(/Planning pipeline failed for BTC: Error: Agent crashed/)
   })
 
@@ -128,6 +132,7 @@ describe("runPlanningPipeline", () => {
       asset: "BTC",
       userId: "user-1",
       walletAddress: "0x123",
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     }).catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(PlanningError)
@@ -153,6 +158,7 @@ describe("runPlanningPipeline", () => {
       asset: "BTC",
       userId: "user-1",
       walletAddress: "0x123",
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     }).catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(PlanningError)
@@ -162,7 +168,7 @@ describe("runPlanningPipeline", () => {
   it("surfaces the agent status in the pipeline result", async () => {
     vi.mocked(runPlanningAgent).mockResolvedValueOnce({
       report: mockTradePlan,
-      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "approval_required",
     })
@@ -171,6 +177,7 @@ describe("runPlanningPipeline", () => {
       asset: "BTC",
       userId: "user-1",
       walletAddress: "0x123",
+      ddReport: { asset: "BTC" } as unknown as DDReport,
     })
 
     expect(result.status).toBe("approval_required")
@@ -181,13 +188,13 @@ describe("runPlanningPipeline", () => {
       // reason: deliberately schema-invalid report (entry_price undefined) to
       // prove TradePlanSchema.parse runs in the pipeline wrapper.
       report: { ...mockTradePlan, entry_price: undefined } as unknown as TradePlan,
-      timing: { ddMs: 0, planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
+      timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
     })
 
     await expect(
-      runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+      runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: { asset: "BTC" } as unknown as DDReport })
     ).rejects.toThrow(/Planning pipeline failed for BTC:/)
   })
 })

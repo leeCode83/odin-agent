@@ -122,7 +122,7 @@ describe("runTradePipeline", () => {
     })
 
     expect(mockRunDDPipeline).toHaveBeenCalledWith({ asset: "BTC", userId: "user-1" })
-    expect(mockRunPlanningPipeline).toHaveBeenCalledWith({ asset: "BTC", userId: "user-1", walletAddress: "0xmaster" })
+    expect(mockRunPlanningPipeline).toHaveBeenCalledWith({ asset: "BTC", userId: "user-1", walletAddress: "0xmaster", ddReport: mockDDReport })
     expect(mockRunExecutionPipeline).toHaveBeenCalledWith({ tradePlan: mockTradePlanAuto, walletAddress: "0xmaster", userId: "user-1", ddReport: mockDDReport })
   })
 

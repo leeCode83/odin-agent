@@ -9,7 +9,7 @@
 
 import { runPlanningAgent } from "@/lib/agent/planning/agent"
 import { TradePlanSchema } from "@/lib/agent/types"
-import type { TradePlan } from "@/lib/agent/types"
+import type { TradePlan, DDReport } from "@/lib/agent/types"
 
 /**
  * @type PlanningErrorCategory
@@ -78,6 +78,7 @@ export interface PlanningPipelineResult {
  * @param {string} input.userId - User identifier.
  * @param {string} input.walletAddress - User's wallet address.
  * @param {number} [input.targetProfitPercent] - Target profit percent; defaults to 100.
+ * @param {DDReport} input.ddReport - The due diligence report to base the plan on.
  * @returns {Promise<PlanningPipelineResult>} The validated trade plan and execution timings.
  * @throws {PlanningError} When the agent fails or the plan fails validation.
  */
@@ -86,9 +87,10 @@ export async function runPlanningPipeline(input: {
   userId: string
   walletAddress: string
   targetProfitPercent?: number
+  ddReport: DDReport
 }): Promise<PlanningPipelineResult> {
   const t0 = Date.now()
-  const { asset, userId, walletAddress, targetProfitPercent = 100 } = input
+  const { asset, userId, walletAddress, targetProfitPercent = 100, ddReport } = input
 
   try {
     const { report, status } = await runPlanningAgent({
@@ -96,6 +98,7 @@ export async function runPlanningPipeline(input: {
       userId,
       walletAddress,
       targetProfitPercent,
+      ddReport,
     })
 
     return {
