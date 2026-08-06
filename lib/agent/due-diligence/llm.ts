@@ -12,7 +12,7 @@ import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
 import { SubagentPlanSchema, AggregationResultSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
 import { createDdLogger } from "@/lib/agent/due-diligence/logger"
-import { parseLlmJson } from "@/lib/agent/due-diligence/json"
+import { parseLlmJson, parseInvokeXml } from "@/lib/agent/due-diligence/json"
 import { z } from "zod"
 
 const log = createDdLogger({ module: "llm" })
@@ -163,6 +163,26 @@ export async function think(
     assistantMessage: msg,
   })
 
+  // reason: DeepSeek reasoning models drift into Claude-style XML tool calls
+  // (<invoke name="...">) instead of JSON — embrace it: convert the blocks to
+  // native tool_calls so the ReAct loop executes them, cheaper than an LLM
+  // retry that would likely repeat the same drift. Shared by the first-shot
+  // and retry parse-fail paths.
+  const xmlToNativeResult = (xmlContent: string, retry: boolean): NativeToolCallsResult | null => {
+    const xmlCalls = parseInvokeXml(xmlContent)
+    if (xmlCalls === null) return null
+    log("info", "think_xml_tool_calls", { factor, count: xmlCalls.length, retry })
+    return toNativeResult({
+      role: "assistant",
+      content: xmlContent,
+      tool_calls: xmlCalls.map((c, i) => ({
+        id: `call_xml_${i}`,
+        type: "function" as const,
+        function: { name: c.toolName, arguments: JSON.stringify(c.params) },
+      })),
+    })
+  }
+
   const callLLM = async (
     msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = requestMessages
   ): Promise<OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam | null> => {
@@ -208,6 +228,8 @@ export async function think(
   let parsed: unknown
   parsed = parseLlmJson(content)
   if (parsed === null) {
+    const xmlResult = xmlToNativeResult(content, false)
+    if (xmlResult !== null) return xmlResult
     // reason: DeepSeek reasoning models emit valid JSON followed by trailing
     // prose — parseLlmJson already strips fences and extracts the first
     // balanced object; only truly unparseable output reaches this retry.
@@ -233,6 +255,10 @@ rawPrefix: ${content.slice(0, 500)}`
     content = typeof retryMessage.content === "string" ? retryMessage.content : ""
     parsed = parseLlmJson(content)
     if (parsed === null) {
+      // reason: the retry can drift into XML tool calls too — same embrace as
+      // the first-shot path, executed instead of the final fallback.
+      const retryXmlResult = xmlToNativeResult(content, true)
+      if (retryXmlResult !== null) return retryXmlResult
       log("error", "think_json_repair_failed", { factor, rawPrefix: content.slice(0, 300) })
       return fallback
     }

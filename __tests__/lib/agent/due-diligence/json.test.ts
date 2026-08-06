@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseLlmJson, repairJSON } from "@/lib/agent/due-diligence/json"
+import { parseLlmJson, repairJSON, parseInvokeXml } from "@/lib/agent/due-diligence/json"
 
 describe("parseLlmJson", () => {
   it("parses plain valid JSON", () => {
@@ -52,5 +52,53 @@ describe("repairJSON", () => {
 
   it("returns null when beyond repair", () => {
     expect(repairJSON("garbage")).toBeNull()
+  })
+})
+
+describe("parseInvokeXml", () => {
+  it("parses a single invoke block with no params", () => {
+    expect(parseInvokeXml('<invoke name="get_fear_greed">\n</invoke>')).toEqual([
+      { toolName: "get_fear_greed", params: {} },
+    ])
+  })
+
+  it("parses multiple blocks with typed params", () => {
+    const content =
+      '<invoke name="get_asset_momentum">\n<parameter name="coinId" string="false">1027</parameter>\n</invoke>\n' +
+      '<invoke name="get_trending_coins">\n</invoke>'
+    expect(parseInvokeXml(content)).toEqual([
+      { toolName: "get_asset_momentum", params: { coinId: 1027 } },
+      { toolName: "get_trending_coins", params: {} },
+    ])
+  })
+
+  it("keeps string params as strings", () => {
+    expect(parseInvokeXml('<invoke name="get_rsi"><parameter name="timeframe">1h</parameter></invoke>')).toEqual([
+      { toolName: "get_rsi", params: { timeframe: "1h" } },
+    ])
+  })
+
+  it("extracts invoke blocks embedded in JSON-ish hybrid output", () => {
+    // reason: the observed drift — output starts like JSON, then switches to XML
+    const content = '{\n\n<invoke name="get_fear_greed">\n\n</invoke>\n<invoke name="get_asset_momentum">\n<parameter name="coinId" string="false">1027</parameter>\n</invoke>'
+    const calls = parseInvokeXml(content)
+    expect(calls).not.toBeNull()
+    expect(calls).toHaveLength(2)
+    expect(calls?.[1].params).toEqual({ coinId: 1027 })
+  })
+
+  it("decodes XML entities in values", () => {
+    expect(
+      parseInvokeXml('<invoke name="get_coin_sentiment"><parameter name="query">ETH &amp; BTC &quot;long&quot;</parameter></invoke>')
+    ).toEqual([{ toolName: "get_coin_sentiment", params: { query: 'ETH & BTC "long"' } }])
+  })
+
+  it("returns null when no invoke block exists", () => {
+    expect(parseInvokeXml('{"action":"return","score":70}')).toBeNull()
+    expect(parseInvokeXml("")).toBeNull()
+  })
+
+  it("returns null for malformed blocks", () => {
+    expect(parseInvokeXml('<invoke name="get_rsi">')).toBeNull()
   })
 })

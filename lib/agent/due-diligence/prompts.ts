@@ -31,7 +31,7 @@ export function describeZodSchema(schema: unknown): string {
  *   summarizes every field of the SubAgentThought discriminated union so the model reproduces it.
  * @note Uses CoT ordering — reasoning field is first in JSON schema to enforce step-by-step thinking before action selection.
  */
-export const THINK_JSON_INSTRUCTION = `Respond ONLY with valid JSON. No markdown, no code fences.
+export const THINK_JSON_INSTRUCTION = `Respond ONLY with valid JSON. No markdown, no code fences. Do NOT use XML tags or <invoke> blocks — tool calls are expressed via the "action": "tool_call" field.
 Output MUST match this schema:
 \`\`\`json
 {
@@ -94,7 +94,7 @@ INSTRUCTION: ${instruction}
 Available tools:
 ${toolDescriptions}
 
-Respond ONLY with valid JSON. No markdown, no code fences. Output MUST match this schema:
+Respond ONLY with valid JSON. No markdown, no code fences. Do NOT use XML tags or <invoke> blocks — tool calls are expressed via the "action": "tool_call" field. Output MUST match this schema:
 \`\`\`json
 {
   "reasoning": "...",  // ALWAYS REQUIRED for BOTH actions

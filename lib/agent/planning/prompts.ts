@@ -51,7 +51,7 @@ INSTRUCTION: ${instruction}
 Available tools:
 ${toolDescriptions}
 
-You MUST respond in JSON format. Output MUST match this schema:
+You MUST respond in JSON format. Do NOT use XML tags or <invoke> blocks — tool calls are expressed via the "action": "tool_call" field. Output MUST match this schema:
 \`\`\`json
 {
   "reasoning": "...", // ALWAYS REQUIRED

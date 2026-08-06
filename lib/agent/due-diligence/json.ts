@@ -1,9 +1,11 @@
 /**
  * @file due-diligence/json.ts
- * @description Robust JSON parsing for LLM output: strips markdown code fences,
+ * @description Robust parsing for LLM output: strips markdown code fences,
  *   extracts the first balanced JSON object (tolerating trailing text that
- *   reasoning models append after the closing brace), then falls back to
- *   truncation repair.
+ *   reasoning models append after the closing brace), falls back to truncation
+ *   repair, and converts Claude-style `<invoke name="...">` XML tool calls
+ *   (a common training drift of DeepSeek reasoning models) into structured
+ *   tool-call candidates.
  * @module due-diligence
  * @layer util
  */
@@ -118,4 +120,75 @@ export function parseLlmJson(content: string): unknown | null {
   // only when the whole output is still the JSON body — same path as before.
   const repaired = repairJSON(stripped)
   return repaired
+}
+
+/**
+ * @typedef XmlInvokeCall
+ * @description A parsed Claude-style XML tool call: `<invoke name="toolName">`
+ *   with optional `<parameter name="key" string="false">value</parameter>`
+ *   children. The `string` attribute marks the value as non-string (number,
+ *   boolean) — it is coerced accordingly.
+ */
+export type XmlInvokeCall = {
+  toolName: string
+  params: Record<string, unknown>
+}
+
+/**
+ * @function decodeXmlEntities
+ * @description Decodes the XML/HTML entities an LLM may emit inside tool-call
+ *   text (quotes, ampersand, angle brackets).
+ * @param {string} raw - Value possibly containing entities.
+ * @returns {string} Decoded value.
+ */
+function decodeXmlEntities(raw: string): string {
+  return raw
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+}
+
+/**
+ * @function parseInvokeXml
+ * @description Extracts Claude-style `<invoke name="...">` tool-call blocks
+ *   from LLM output — the format DeepSeek reasoning models drift into instead
+ *   of emitting JSON or native tool_calls. Values carrying the `string="false"`
+ *   attribute are coerced to numbers (or booleans) so zod params validation
+ *   accepts them as-is.
+ * @param {string} content - The raw LLM output text.
+ * @returns {XmlInvokeCall[] | null} Parsed tool calls, or null when no
+ *   `<invoke>` block exists (so callers can distinguish "no XML" from
+ *   "empty XML").
+ */
+export function parseInvokeXml(content: string): XmlInvokeCall[] | null {
+  const blockRe = /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/gi
+  const paramRe = /<parameter\s+name="([^"]+)"(?:\s+string="([^"]*)")?\s*>([\s\S]*?)<\/parameter>/gi
+  const calls: XmlInvokeCall[] = []
+
+  for (const block of content.matchAll(blockRe)) {
+    const toolName = block[1].trim()
+    const inner = block[2]
+    const params: Record<string, unknown> = {}
+
+    for (const p of inner.matchAll(paramRe)) {
+      const key = p[1].trim()
+      let value: unknown = decodeXmlEntities(p[3].trim())
+      // reason: `string="false"` is Claude's type hint — the value is a literal
+      // number/boolean, not text; coerce so zod's typed params accept it.
+      if (p[2]?.trim() === "false") {
+        if (value === "true") value = true
+        else if (value === "false") value = false
+        else {
+          const num = Number(value)
+          if (Number.isFinite(num)) value = num
+        }
+      }
+      params[key] = value
+    }
+
+    calls.push({ toolName, params })
+  }
+
+  return calls.length > 0 ? calls : null
 }

@@ -103,6 +103,46 @@ describe("think()", () => {
     expect(mockCreate).toHaveBeenCalledTimes(2)
   })
 
+  it("converts Claude-style XML invoke blocks into native tool calls (no retry)", async () => {
+    // reason: the observed drift — DeepSeek reasoning models reply with
+    // <invoke name="..."> XML instead of JSON; the parser must embrace it.
+    mockCreate.mockResolvedValueOnce({
+      choices: [{
+        message: {
+          content:
+            '{\n\n<invoke name="get_fear_greed">\n\n</invoke>\n' +
+            '<invoke name="get_asset_momentum">\n<parameter name="coinId" string="false">1027</parameter>\n</invoke>',
+        },
+      }],
+    })
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("native_tool_call")
+    if (result.action === "native_tool_call") {
+      expect(result.toolCalls).toHaveLength(2)
+      expect(result.toolCalls[0].toolName).toBe("get_fear_greed")
+      expect(result.toolCalls[1].toolName).toBe("get_asset_momentum")
+      expect(JSON.parse(result.toolCalls[1].rawArguments)).toEqual({ coinId: 1027 })
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it("converts XML invoke blocks in the retry response too", async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: "not valid json" } }],
+    })
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { content: '<invoke name="get_rsi"><parameter name="timeframe">1h</parameter></invoke>' } }],
+    })
+    const result = await think([{ role: "user", content: "test" }])
+    expect(result.action).toBe("native_tool_call")
+    if (result.action === "native_tool_call") {
+      expect(result.toolCalls).toHaveLength(1)
+      expect(result.toolCalls[0].toolName).toBe("get_rsi")
+      expect(JSON.parse(result.toolCalls[0].rawArguments)).toEqual({ timeframe: "1h" })
+    }
+    expect(mockCreate).toHaveBeenCalledTimes(2)
+  })
+
   it("retries with error feedback when JSON parse fails, then succeeds", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: "not valid json" } }],
