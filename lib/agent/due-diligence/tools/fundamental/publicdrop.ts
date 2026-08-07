@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 
 const PD_BASE = process.env.PUBLICDROP_BASE_URL || "https://api.publicdrop.org/v1"
 

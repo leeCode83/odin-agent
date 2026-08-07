@@ -10,13 +10,14 @@
  */
 
 import type { DDReport } from "@/lib/agent/types"
-import type { ToolRegistry } from "@/lib/agent/tools/types"
+import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import type { Perspective, PerspectiveReport } from "@/lib/agent/planning/types"
 import type { SubAgentThought, LlmThinkMessage, ThinkResult } from "@/lib/agent/due-diligence/subagent"
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { think } from "@/lib/agent/due-diligence/llm"
 import { makePlanningSystemPrompt } from "@/lib/agent/planning/prompts"
 import { compactDDReport } from "@/lib/agent/planning/utils"
+import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 
 /**
  * @function runPerspectiveSubagent
@@ -55,9 +56,7 @@ export async function runPerspectiveSubagent(params: {
   // missing count as failed; the names reach the perspective's system prompt
   // so the LLM accounts for the missing analysis instead of treating a
   // data-starved NO_TRADE as real market conviction.
-  const degradedFactors = (params.ddReport.factorReports ?? [])
-    .filter((f) => f.score === null || typeof f.score !== "number")
-    .map((f) => f.factor)
+  const degradedFactors = extractDegradedFactors(params.ddReport.factorReports ?? [])
   // reason: zod strips unknown keys in SubAgentThoughtSchema — the only way the
   // wrapper can see side/entry_price/suggested_*/risk_flags is to stash the parsed
   // return thought here before runSubagent discards it.

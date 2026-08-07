@@ -18,10 +18,10 @@ const mockCoinData = {
   },
 }
 
-let toolsModule: typeof import("@/lib/agent/tools/onchain/coingecko") | null = null
+let toolsModule: typeof import("@/lib/agent/due-diligence/tools/onchain/coingecko") | null = null
 async function getModule() {
   if (!toolsModule) {
-    toolsModule = await import("@/lib/agent/tools/onchain/coingecko")
+    toolsModule = await import("@/lib/agent/due-diligence/tools/onchain/coingecko")
   }
   return toolsModule
 }

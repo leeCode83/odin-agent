@@ -4,8 +4,8 @@
  * @module tools/fundamental
  */
 
-import type { ToolRegistry } from "@/lib/agent/tools/types"
-import { registerTools } from "@/lib/agent/tools/registry"
+import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
+import { registerTools } from "@/lib/agent/due-diligence/tools/registry"
 import { coingeckoMetadataTools } from "./coingecko-metadata"
 import { publicDropTools } from "./publicdrop"
 

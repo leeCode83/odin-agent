@@ -18,6 +18,7 @@ import { evaluateConsensus } from "@/lib/agent/planning/evaluate"
 import { autonomyGate } from "@/lib/agent/planning/gate"
 import { computePositionSize, capLeverage } from "@/lib/agent/planning/risk-engine"
 import { recordDecision } from "@/lib/db/graph-memory"
+import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
 import { fetchUserEquity } from "@/lib/data/hyperliquid"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
@@ -326,9 +327,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // pipeline's ddCoverage; passed to evaluateConsensus so NO_TRADE reasons get
   // the failed-factors suffix and RE-DEPLOY messages get the "[degraded DD]"
   // label (retry-for-data vs retry-for-consensus).
-  const degradedFactors = (ddReport.factorReports ?? [])
-    .filter((f) => f.score === null || typeof f.score !== "number")
-    .map((f) => f.factor)
+  const degradedFactors = extractDegradedFactors(ddReport.factorReports ?? [])
 
   // reason: equity is pre-fetched once (spec §16.4) — no get_equity tool —
   // and shared through the tool registry ctx + position sizing.

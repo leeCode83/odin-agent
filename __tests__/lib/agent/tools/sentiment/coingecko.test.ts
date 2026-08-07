@@ -18,7 +18,7 @@ import {
   getCoinSentiment,
   getCategoryPerformance,
   getGlobalSentiment,
-} from "@/lib/agent/tools/sentiment/coingecko"
+} from "@/lib/agent/due-diligence/tools/sentiment/coingecko"
 
 describe("get_trending_coins tool", () => {
   beforeEach(() => {

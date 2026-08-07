@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest"
-import type { CandleMap } from "@/lib/agent/tools/technical/candles"
+import type { CandleMap } from "@/lib/agent/due-diligence/tools/technical/candles"
 import type { CandleData } from "@/lib/data/types"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 
 function makeTrendCandles(n: number, startPrice = 100, uptrend = true): CandleData[] {
   const dir = uptrend ? 1 : -1
@@ -36,7 +36,7 @@ describe("buildIndicators", () => {
   let tools: ToolDefinition[]
 
   beforeAll(async () => {
-    const { buildIndicators } = await import("@/lib/agent/tools/technical/indicators")
+    const { buildIndicators } = await import("@/lib/agent/due-diligence/tools/technical/indicators")
     tools = buildIndicators(candleMap)
   })
 
@@ -51,7 +51,7 @@ describe("buildIndicators", () => {
 
   it("get_rsi returns error with insufficient candles", async () => {
     const emptyMap: CandleMap = { "1h": [], "15m": [], "1d": [] }
-    const { buildIndicators } = await import("@/lib/agent/tools/technical/indicators")
+    const { buildIndicators } = await import("@/lib/agent/due-diligence/tools/technical/indicators")
     const localTools = buildIndicators(emptyMap)
     const tool = localTools.find((t) => t.name === "get_rsi")!
     const result = await tool.execute({ period: 14, timeframe: "1h" })
@@ -105,7 +105,7 @@ describe("buildIndicators", () => {
       "15m": [],
       "1d": [],
     }
-    const { buildIndicators } = await import("@/lib/agent/tools/technical/indicators")
+    const { buildIndicators } = await import("@/lib/agent/due-diligence/tools/technical/indicators")
     const localTools = buildIndicators(volatileMap)
     const tool = localTools.find((t) => t.name === "get_atr")!
     const result = await tool.execute({ period: 14, timeframe: "1h" })

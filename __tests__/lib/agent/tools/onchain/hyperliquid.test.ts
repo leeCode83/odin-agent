@@ -33,10 +33,10 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-let toolsModule: typeof import("@/lib/agent/tools/onchain/hyperliquid") | null = null
+let toolsModule: typeof import("@/lib/agent/due-diligence/tools/onchain/hyperliquid") | null = null
 async function getModule() {
   if (!toolsModule) {
-    toolsModule = await import("@/lib/agent/tools/onchain/hyperliquid")
+    toolsModule = await import("@/lib/agent/due-diligence/tools/onchain/hyperliquid")
   }
   return toolsModule
 }

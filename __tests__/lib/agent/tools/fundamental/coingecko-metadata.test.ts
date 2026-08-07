@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { coingeckoMetadataTools } from "@/lib/agent/tools/fundamental/coingecko-metadata"
+import { coingeckoMetadataTools } from "@/lib/agent/due-diligence/tools/fundamental/coingecko-metadata"
 
 const mockFetch = vi.fn()
 

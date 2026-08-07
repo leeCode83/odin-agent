@@ -8,9 +8,9 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { fetchCandlesForATR, fetchMarkPrice } from "@/lib/data/hyperliquid"
-import { getOrderbookDepthTool } from "@/lib/agent/tools/onchain/hyperliquid"
+import { getOrderbookDepthTool } from "@/lib/agent/due-diligence/tools/onchain/hyperliquid"
 import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
 import { queryGraphPatterns } from "@/lib/db/graph-memory"
 import type { RiskThresholds } from "@/lib/agent/types"

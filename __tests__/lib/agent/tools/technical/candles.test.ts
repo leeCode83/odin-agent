@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { getTimeframeCandles, type CandleMap } from "@/lib/agent/tools/technical/candles"
+import { getTimeframeCandles, type CandleMap } from "@/lib/agent/due-diligence/tools/technical/candles"
 import type { CandleData } from "@/lib/data/types"
 
 const makeCandles = (n: number): CandleData[] =>
@@ -51,7 +51,7 @@ describe("fetchCandleMap", () => {
       fetchCandlesByInterval: mockFetchCandlesByInterval,
     }))
 
-    const { fetchCandleMap } = await import("@/lib/agent/tools/technical/candles")
+    const { fetchCandleMap } = await import("@/lib/agent/due-diligence/tools/technical/candles")
     const result = await fetchCandleMap("BTC")
 
     expect(mockFetchCandlesByInterval).toHaveBeenCalledTimes(3)
@@ -73,7 +73,7 @@ describe("fetchCandleMap", () => {
       fetchCandlesByInterval: mockFetchCandlesByInterval,
     }))
 
-    const { fetchCandleMap } = await import("@/lib/agent/tools/technical/candles")
+    const { fetchCandleMap } = await import("@/lib/agent/due-diligence/tools/technical/candles")
     const result = await fetchCandleMap("ETH")
 
     expect(result["1h"]).toHaveLength(200)
@@ -88,7 +88,7 @@ describe("fetchCandleMap", () => {
       fetchCandlesByInterval: mockFetchCandlesByInterval,
     }))
 
-    const { fetchCandleMap } = await import("@/lib/agent/tools/technical/candles")
+    const { fetchCandleMap } = await import("@/lib/agent/due-diligence/tools/technical/candles")
     await fetchCandleMap("SOL")
 
     const calls = mockFetchCandlesByInterval.mock.calls

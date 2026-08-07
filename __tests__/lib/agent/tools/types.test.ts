@@ -6,12 +6,12 @@ import {
   type ToolResult,
   type ToolRegistry,
   toolRegistryToOpenAITools,
-} from "@/lib/agent/tools/types"
+} from "@/lib/agent/due-diligence/tools/types"
 import {
   getToolRegistry,
   getCrossFactorRegistry,
   registerTools,
-} from "@/lib/agent/tools/registry"
+} from "@/lib/agent/due-diligence/tools/registry"
 
 describe("ToolDefinition interface", () => {
   it("creates a valid tool definition", () => {

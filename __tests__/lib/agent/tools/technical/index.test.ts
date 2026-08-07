@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import type { ToolRegistry } from "@/lib/agent/tools/types"
-import type { CandleMap } from "@/lib/agent/tools/technical/candles"
+import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
+import type { CandleMap } from "@/lib/agent/due-diligence/tools/technical/candles"
 import type { CandleData } from "@/lib/data/types"
 
 const makeCandles = (n: number): CandleData[] =>
@@ -15,7 +15,7 @@ const makeCandles = (n: number): CandleData[] =>
 
 describe("buildTechnicalRegistry", () => {
   it("returns a ToolRegistry with all 13 tools", async () => {
-    const { buildTechnicalRegistry } = await import("@/lib/agent/tools/technical")
+    const { buildTechnicalRegistry } = await import("@/lib/agent/due-diligence/tools/technical")
 
     const candleMap: CandleMap = {
       "1h": makeCandles(220),
@@ -53,7 +53,7 @@ describe("buildTechnicalRegistry", () => {
   })
 
   it("all tool execute methods work with default parameters", async () => {
-    const { buildTechnicalRegistry } = await import("@/lib/agent/tools/technical")
+    const { buildTechnicalRegistry } = await import("@/lib/agent/due-diligence/tools/technical")
 
     const candleMap: CandleMap = {
       "1h": makeCandles(220),

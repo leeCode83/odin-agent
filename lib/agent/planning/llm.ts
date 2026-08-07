@@ -5,6 +5,9 @@ import type { Perspective, PlanningSubagentPlan, PlanningAggregationResult, Pers
 import type { DDReport } from "@/lib/agent/types"
 import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "./prompts"
 import { compactDDReport } from "./utils"
+import { getClient, DEEPSEEK_BASE_URL, DEEPSEEK_THINK_MODEL } from "@/lib/agent/shared/llm-client"
+
+export { getClient, DEEPSEEK_BASE_URL, DEEPSEEK_THINK_MODEL }
 
 type ThinkingParams = { thinking: { type: string }; reasoning_effort: string }
 
@@ -13,8 +16,6 @@ function thinkingParams(): ThinkingParams & Record<string, any> {
   return { thinking: { type: "enabled" }, reasoning_effort: DEEPSEEK_REASONING_EFFORT }
 }
 
-const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com"
-const DEEPSEEK_THINK_MODEL = process.env.DEEPSEEK_THINK_MODEL || "deepseek-v4-pro"
 const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high"
 
 // reason: planning orchestrator/aggregator calls run in thinking mode — DeepSeek
@@ -22,24 +23,6 @@ const DEEPSEEK_REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT || "high
 const PLANNING_TIMEOUT_MS = 60_000
 const PLANNING_MAX_RETRIES = 1
 
-let client: OpenAI | null = null
-
-/**
- * @function getClient
- * @description Creates or returns cached OpenAI client configured for DeepSeek.
- * Reads DEEPSEEK_API_KEY and DEEPSEEK_BASE_URL from env.
- * @returns {OpenAI | null} OpenAI client or null if no API key configured.
- */
-function getClient(): OpenAI | null {
-  if (!process.env.DEEPSEEK_API_KEY) return null
-  if (!client) {
-    client = new OpenAI({
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      baseURL: DEEPSEEK_BASE_URL,
-    })
-  }
-  return client
-}
 
 /**
  * @function clamp

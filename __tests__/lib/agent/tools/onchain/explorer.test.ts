@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest"
 
-let toolsModule: typeof import("@/lib/agent/tools/onchain/explorer") | null = null
+let toolsModule: typeof import("@/lib/agent/due-diligence/tools/onchain/explorer") | null = null
 async function getModule() {
   if (!toolsModule) {
-    toolsModule = await import("@/lib/agent/tools/onchain/explorer")
+    toolsModule = await import("@/lib/agent/due-diligence/tools/onchain/explorer")
   }
   return toolsModule
 }

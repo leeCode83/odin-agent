@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { z } from "zod"
 import { runSubagent, SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
-import type { ToolDefinition, ToolRegistry } from "@/lib/agent/tools/types"
+import type { ToolDefinition, ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 
 function makeTool(name: string, execute?: ToolDefinition["execute"]): ToolDefinition {
   return {

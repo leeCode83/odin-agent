@@ -9,7 +9,7 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { withTimeout } from "@/lib/utils"
 
 /**

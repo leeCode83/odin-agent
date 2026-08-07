@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { z } from "zod"
 import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
 import type { DDReport } from "@/lib/agent/types"
-import type { ToolDefinition, ToolRegistry } from "@/lib/agent/tools/types"
+import type { ToolDefinition, ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import type { SubAgentThought } from "@/lib/agent/due-diligence/subagent"
 
 const thinkMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<SubAgentThought>>())

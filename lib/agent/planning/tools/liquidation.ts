@@ -10,9 +10,9 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { createHLClient, fetchOnchainData } from "@/lib/data/hyperliquid"
-import { getOrderbookDepthTool } from "@/lib/agent/tools/onchain/hyperliquid"
+import { getOrderbookDepthTool } from "@/lib/agent/due-diligence/tools/onchain/hyperliquid"
 
 /**
  * @interface LiquidationToolContext

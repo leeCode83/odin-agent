@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 const mockFetch = vi.fn()
 vi.stubGlobal("fetch", mockFetch)
 
-let toolsModule: typeof import("@/lib/agent/tools/onchain/defillama") | null = null
+let toolsModule: typeof import("@/lib/agent/due-diligence/tools/onchain/defillama") | null = null
 async function getModule() {
   if (!toolsModule) {
-    toolsModule = await import("@/lib/agent/tools/onchain/defillama")
+    toolsModule = await import("@/lib/agent/due-diligence/tools/onchain/defillama")
   }
   return toolsModule
 }

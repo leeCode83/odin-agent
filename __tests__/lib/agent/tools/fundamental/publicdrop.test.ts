@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { publicDropTools } from "@/lib/agent/tools/fundamental/publicdrop"
+import { publicDropTools } from "@/lib/agent/due-diligence/tools/fundamental/publicdrop"
 
 const mockFetch = vi.fn()
 

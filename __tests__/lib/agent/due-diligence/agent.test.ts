@@ -21,14 +21,14 @@ vi.mock("@/lib/agent/due-diligence/subagent", () => ({
   runSubagent: vi.fn(),
 }))
 
-vi.mock("@/lib/agent/tools/registry", () => ({
+vi.mock("@/lib/agent/due-diligence/tools/registry", () => ({
   getToolRegistry: vi.fn(() => ({})),
 }))
 
 // reason: the real fetchCandleMap hits the network (variable latency) — it is
 // only consumed by getToolRegistry (already mocked), so stub it to keep the
 // pipeline-timeout test's tiny budget deterministic.
-vi.mock("@/lib/agent/tools/technical/candles", () => ({
+vi.mock("@/lib/agent/due-diligence/tools/technical/candles", () => ({
   fetchCandleMap: vi.fn(() => Promise.resolve(undefined)),
 }))
 

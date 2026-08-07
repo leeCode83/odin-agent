@@ -6,7 +6,7 @@
 
 import { z } from "zod"
 import { withTimeout, withRetry } from "@/lib/utils"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 
 const CG_BASE = process.env.COINGECKO_BASE_URL || "https://api.coingecko.com/api/v3"
 const PD_BASE = process.env.PUBLICDROP_BASE_URL || "https://api.publicdrop.org/v1"

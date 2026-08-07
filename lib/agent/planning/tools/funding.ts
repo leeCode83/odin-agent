@@ -10,7 +10,7 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { createHLClient, fetchOnchainData, fetchMarkPrice, fetchCandles } from "@/lib/data/hyperliquid"
 import { withTimeout } from "@/lib/utils"
 

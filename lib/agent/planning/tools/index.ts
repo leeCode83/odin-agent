@@ -7,8 +7,8 @@
  * @layer agent
  */
 
-import type { ToolDefinition, ToolRegistry } from "@/lib/agent/tools/types"
-import { registerTools } from "@/lib/agent/tools/registry"
+import type { ToolDefinition, ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
+import { registerTools } from "@/lib/agent/due-diligence/tools/registry"
 import { buildRiskEngineTools } from "./risk-engine"
 import { buildMarketDataTools } from "./market-data"
 import { buildFundingTools } from "./funding"

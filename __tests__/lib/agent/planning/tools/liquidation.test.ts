@@ -20,7 +20,7 @@ vi.mock("@/lib/data/hyperliquid", () => ({
   fetchCandles: vi.fn(),
 }))
 
-vi.mock("@/lib/agent/tools/onchain/hyperliquid", () => ({
+vi.mock("@/lib/agent/due-diligence/tools/onchain/hyperliquid", () => ({
   getOrderbookDepthTool: vi.fn(() => ({ execute: mockBookExecute })),
 }))
 

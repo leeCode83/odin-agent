@@ -12,6 +12,20 @@ vi.mock("openai", () => {
   return { default: MockOpenAI }
 })
 
+vi.mock("@/lib/agent/shared/llm-client", () => {
+  let client: unknown = null
+  return {
+    DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+    DEEPSEEK_MODEL: "deepseek-v4-flash",
+    DEEPSEEK_THINK_MODEL: "deepseek-v4-pro",
+    getClient: () => {
+      if (!process.env.DEEPSEEK_API_KEY) return null
+      if (!client) client = { chat: { completions: { create: mockCreate } } }
+      return client
+    },
+  }
+})
+
 const mockDDReport: DDReport = {
   asset: "BTC",
   category: "large-cap",

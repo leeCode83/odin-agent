@@ -5,7 +5,7 @@ vi.mock("@/lib/data/sentiment/altme", () => ({
 }))
 
 import { fetchFearGreedIndex } from "@/lib/data/sentiment/altme"
-import { getFearGreed } from "@/lib/agent/tools/sentiment/altme"
+import { getFearGreed } from "@/lib/agent/due-diligence/tools/sentiment/altme"
 
 describe("get_fear_greed tool", () => {
   beforeEach(() => {

@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition, ToolResult } from "@/lib/agent/tools/types"
+import type { ToolDefinition, ToolResult } from "@/lib/agent/due-diligence/tools/types"
 import type { CandleMap } from "./candles"
 import { getTimeframeCandles } from "./candles"
 import {

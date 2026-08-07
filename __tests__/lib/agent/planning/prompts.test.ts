@@ -6,7 +6,7 @@ import {
   AGGREGATE_PROMPT,
   REPLAN_PROMPT,
 } from "@/lib/agent/planning/prompts"
-import type { ToolRegistry } from "@/lib/agent/tools/types"
+import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 
 describe("makePlanningSystemPrompt", () => {
   const tools: ToolRegistry = {
@@ -130,8 +130,8 @@ describe("PLAN_PROMPT", () => {
   })
 
   it("includes few-shot examples for perspectives", () => {
-    expect(PLAN_PROMPT).toContain("Example for conservative:")
-    expect(PLAN_PROMPT).toContain("Example for aggressive:")
+    expect(PLAN_PROMPT).toContain("Example for conservative (bullish):")
+    expect(PLAN_PROMPT).toContain("Example for aggressive (bullish):")
   })
 })
 

@@ -6,7 +6,7 @@ vi.mock("@/lib/data/sentiment/alternativeme", () => ({
 }))
 
 import { fetchGlobalMarket, fetchAssetMomentum } from "@/lib/data/sentiment/alternativeme"
-import { getGlobalMarket, getAssetMomentum } from "@/lib/agent/tools/sentiment/alternativeme"
+import { getGlobalMarket, getAssetMomentum } from "@/lib/agent/due-diligence/tools/sentiment/alternativeme"
 
 describe("get_global_market tool", () => {
   beforeEach(() => {

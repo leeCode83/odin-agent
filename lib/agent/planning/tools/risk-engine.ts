@@ -8,7 +8,7 @@
  */
 
 import { z } from "zod"
-import type { ToolDefinition } from "@/lib/agent/tools/types"
+import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import type { Side } from "@/lib/agent/types"
 import { fetchCandlesForATR, fetchMarkPrice } from "@/lib/data/hyperliquid"
 import { computeATR, computeSLTP, computePositionSize, capLeverage } from "@/lib/agent/planning/risk-engine"

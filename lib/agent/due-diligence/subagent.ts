@@ -9,9 +9,10 @@
 
 import { z } from "zod"
 import type OpenAI from "openai"
-import type { FactorReport, SignalEntry } from "@/lib/agent/due-diligence/types"
-import type { ToolRegistry } from "@/lib/agent/tools/types"
-import { toolRegistryToOpenAITools } from "@/lib/agent/tools/types"
+import type { FactorReport } from "@/lib/agent/due-diligence/types"
+import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
+import { toolRegistryToOpenAITools } from "@/lib/agent/due-diligence/tools/types"
+import { normalizeSignal } from "@/lib/agent/shared/dd-utils"
 
 /**
  * @constant SignalEntrySchema
@@ -26,21 +27,6 @@ const SignalEntrySchema = z.union([
     direction: z.enum(["bullish", "bearish", "neutral"]),
   }),
 ])
-
-/**
- * @function normalizeSignal
- * @description Converts a raw parsed signal (string or object) to a SignalEntry.
- */
-function normalizeSignal(signal: string | { name?: string; strength?: number; direction?: "bullish" | "bearish" | "neutral" }): SignalEntry {
-  if (typeof signal === "string") {
-    return { name: signal, strength: 50, direction: "neutral" }
-  }
-  return {
-    name: signal.name ?? "unknown",
-    strength: signal.strength ?? 50,
-    direction: signal.direction ?? "neutral",
-  }
-}
 
 /**
  * @constant SubAgentThoughtSchema

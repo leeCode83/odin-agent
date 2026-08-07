@@ -12,6 +12,7 @@ import { log } from "@/lib/agent/planning/log"
 import type { DDCoverage } from "@/lib/agent/planning/types"
 import { TradePlanSchema } from "@/lib/agent/types"
 import type { TradePlan, DDReport } from "@/lib/agent/types"
+import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 
 /**
  * @type PlanningErrorCategory
@@ -89,9 +90,7 @@ function computeDDCoverage(ddReport: DDReport): DDCoverage | undefined {
   // reason: factorReports is optional on DDReportSchema — a report without
   // them has zero failed factors and stays non-degraded.
   const factorReports = ddReport.factorReports ?? []
-  const failedFactors = factorReports
-    .filter((f) => f.score === null || typeof f.score !== "number")
-    .map((f) => f.factor)
+  const failedFactors = extractDegradedFactors(factorReports)
   if (failedFactors.length === 0) return undefined
   return {
     usableFactorCount: factorReports.filter((f) => typeof f.score === "number").length,
