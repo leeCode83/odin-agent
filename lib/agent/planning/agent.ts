@@ -117,12 +117,22 @@ function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationR
     }
   }
 
-  const longs = reports.filter((r) => r.side === "long").length
-  const shorts = reports.filter((r) => r.side === "short").length
+  const longs = reports.filter((r) => r.side === "long")
+  const shorts = reports.filter((r) => r.side === "short")
+  // ponytail: confidence-weighted tie-break — equal counts go to higher
+  // avg confidence; still tied → default long (schema forces a side).
+  const longAvg = longs.length
+    ? longs.reduce((s, r) => s + (r.confidence ?? 0), 0) / longs.length
+    : 0
+  const shortAvg = shorts.length
+    ? shorts.reduce((s, r) => s + (r.confidence ?? 0), 0) / shorts.length
+    : 0
   return {
     // reason: no_trade is never chosen here — NO_TRADE is decided by
     // evaluateConsensus from the reports themselves, not by this fallback.
-    side: longs >= shorts ? "long" : "short",
+    side: longs.length > shorts.length || (longs.length === shorts.length && longAvg >= shortAvg)
+      ? "long"
+      : "short",
     thesis: "Best-effort plan from perspective reports (aggregation failed)",
     reasoning:
       reports.map((r) => `${r.perspective}: ${r.reasoning}`).join("; ") ||

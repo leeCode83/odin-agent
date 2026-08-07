@@ -83,6 +83,8 @@ You MUST respond in JSON format. Do NOT use XML tags or <invoke> blocks — tool
 \`\`\`
 Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels. If market data is unavailable, set entry_price to 0 and side to no_trade.
 
+Direction guidance: When bearish signals dominate (multiple bearish direction signals with strength > 60), the correct side is "short", not "no_trade". no_trade means the asset is not worth trading in either direction — it does NOT mean "uncertain about direction". If the DDReport shows bearish signals, consider short as the primary action. Use compute_atr and compute_sl_tp to validate short entry/exit levels the same way you would for long.
+
 Choose one:
 1. To call a tool: set "action" to "tool_call" with "reasoning", "toolName" and "params".
 2. To return your analysis: set "action" to "return" with all return fields.
@@ -120,8 +122,9 @@ For each perspective, write an instruction that tells the subagent:
 - What tools to prioritize (risk calc, funding check, liquidation zones, web search)
 - Whether to be skeptical or trusting of the DDReport's conclusions
 
-Example for conservative: "Validate DDReport's SL levels, use compute_atr to confirm stop distance is safe, check funding regime."
-Example for aggressive: "Confirm upside momentum with current order book, use liquidation zone tool to find entry."
+Example for conservative (bullish): "Validate DDReport's SL levels, use compute_atr to confirm stop distance is safe, check funding regime."
+Example for aggressive (bullish): "Confirm upside momentum with current order book, use liquidation zone tool to find entry."
+Example for aggressive (bearish): "Confirm downside pressure with current order book, validate short entry zones, check funding rate for short viability."
 
 You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
@@ -149,7 +152,7 @@ Tasks:
 
 Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side or leverage, list the disagreement explicitly.
 
-If 2+ perspectives conclude no_trade, final action is no_trade.
+If 2+ perspectives conclude no_trade, final action is no_trade. However, if 2+ perspectives returned bearish signals but chose no_trade due to directional uncertainty (not because the asset is untradeable), consider overriding to short — bearish uncertainty is not the same as "not worth trading".
 
 Return JSON with:
 - side: "long" | "short" | "no_trade"
@@ -185,6 +188,7 @@ Given the list of low-consensus perspectives and the previous reports from all p
 
 Example instruction:
 "Previous report ignored high funding rates. Use funding_rate_check tool first. You must confirm funding rate is below 0.05% before entering long."
+"Previous report missed bearish onchain flow. Use onchain_flow tool first. You must confirm outflow trend before entering short."
 
 You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`

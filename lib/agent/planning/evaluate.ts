@@ -85,7 +85,8 @@ function majoritySide(reports: PerspectiveReport[]): "long" | "short" | null {
   const { long, short } = sideCounts(reports)
   const majority = Math.max(long, short)
   if (majority < NO_TRADE_MAJORITY) return null
-  return long >= short ? "long" : "short"
+  // ponytail: strict comparison — equal counts → null → RE-DEPLOY
+  return long > short ? "long" : short > long ? "short" : null
 }
 
 /**
