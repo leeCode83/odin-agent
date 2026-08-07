@@ -5,6 +5,9 @@
  * everything from scratch. Run with: npm run setup
  * WARNING: Destroys all existing data in the database.
  */
+import { loadEnvConfig } from "@next/env"
+loadEnvConfig(process.cwd())
+
 import { teardownArangoGraph, setupArangoGraph } from "../lib/db/setup"
 
 async function main(): Promise<void> {

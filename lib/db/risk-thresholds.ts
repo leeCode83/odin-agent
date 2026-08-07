@@ -9,10 +9,10 @@ import { getDb } from "@/lib/db/arango-client"
  */
 export function envDefaults(): RiskThresholds {
   return {
-    confidence_threshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 70,
-    max_position_usdc: Number(process.env.RISK_MAX_POSITION_USDC) || 100,
-    max_leverage: Number(process.env.RISK_MAX_LEVERAGE) || 10,
-    risk_per_trade_percent: Number(process.env.RISK_PER_TRADE_PERCENT) || 1,
+    confidence_threshold: Number(process.env.RISK_CONFIDENCE_THRESHOLD) || 30,
+    max_position_usdc: Number(process.env.RISK_MAX_POSITION_USDC) || 3000,
+    max_leverage: Number(process.env.RISK_MAX_LEVERAGE) || 100,
+    risk_per_trade_percent: Number(process.env.RISK_PER_TRADE_PERCENT) || 10,
   }
 }
 

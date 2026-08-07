@@ -10,7 +10,7 @@ export interface DecisionNode {
   asset: string
   category: string
   decision: "buy" | "sell" | "hold"
-  side: "long" | "short"
+  side: "long" | "short" | "no_trade"
   confidence: number
   tradePlan: unknown
   autonomyDecision: "auto" | "approve"

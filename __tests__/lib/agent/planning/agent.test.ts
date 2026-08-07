@@ -619,7 +619,8 @@ describe("runPlanningAgent", () => {
       expect(plan.position_size_contracts).toBe(0)
       expect(plan.leverage).toBe(1)
       expect(plan.autonomy_decision).toBe("auto")
-      expect(recordDecisionMock).not.toHaveBeenCalled()
+      // NO_TRADE is now persisted for graph memory learning
+      expect(recordDecisionMock).toHaveBeenCalledTimes(1)
     })
 
     it("uses a placeholder entry of 1 when the aggregation entry is 0", async () => {

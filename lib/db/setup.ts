@@ -7,7 +7,7 @@
  */
 import { createArangoClient } from "./arango-client"
 
-const DOC_COLLECTIONS = ["decisions", "signals", "outcomes", "assets", "dd_reports"] as const
+const DOC_COLLECTIONS = ["decisions", "signals", "outcomes", "assets", "dd_reports", "paper_trades"] as const
 const EDGE_COLLECTIONS = ["decision_analyzed", "decision_triggered_by", "decision_resulted_in", "decision_has_factorreport"] as const
 
 const GRAPH_NAME = "odin_graph"

@@ -244,13 +244,18 @@ function buildTradePlan(params: BuildTradePlanParams): TradePlan {
  * @param {PlanningAgentInput} params - Run input (user/wallet context).
  * @returns {void}
  */
-function persistDecision(plan: TradePlan, params: PlanningAgentInput): void {
+function persistDecision(
+  plan: TradePlan,
+  params: PlanningAgentInput,
+  outcome?: "accepted" | "forced" | "no_trade"
+): void {
+  const isNoTrade = plan.action === "NO_TRADE" || outcome === "no_trade"
   recordDecision({
     userId: params.userId,
     asset: plan.asset,
     category: "trade",
-    decision: plan.side === "long" ? "buy" : "sell",
-    side: plan.side,
+    decision: isNoTrade ? "hold" : plan.side === "long" ? "buy" : "sell",
+    side: isNoTrade ? "no_trade" : plan.side,
     confidence: plan.confidence_score,
     tradePlan: plan,
     autonomyDecision: plan.autonomy_decision,
@@ -544,8 +549,8 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
           ? "complete"
           : "partial"
 
-  if (outcome === "accepted" || outcome === "forced") {
-    persistDecision(tradePlan, params)
+  if (outcome === "accepted" || outcome === "forced" || outcome === "no_trade") {
+    persistDecision(tradePlan, params, outcome)
   }
 
   log("info", "planning.completed", { asset: params.asset, status, outcome })
