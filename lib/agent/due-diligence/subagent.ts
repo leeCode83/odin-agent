@@ -13,6 +13,8 @@ import type { FactorReport } from "@/lib/agent/due-diligence/types"
 import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import { toolRegistryToOpenAITools } from "@/lib/agent/due-diligence/tools/types"
 import { normalizeSignal } from "@/lib/agent/shared/dd-utils"
+import { computeDeterministicConfidence } from "@/lib/agent/shared/confidence"
+import type { ExecutionSignals } from "@/lib/agent/shared/confidence"
 
 /**
  * @constant SignalEntrySchema
@@ -181,6 +183,48 @@ function summarizeHistory(history: HistoryEntry[]) {
 }
 
 /**
+ * @function deriveSignals
+ * @description One-pass derivation of deterministic execution signals from the loop
+ *   history. These signals feed computeDeterministicConfidence — the reported factor
+ *   confidence is computed from what actually happened (tool success/error counts,
+ *   unique tool coverage, empty data) rather than from the LLM's verbalized estimate.
+ * @param {HistoryEntry[]} history - Full internal tool history.
+ * @param {FactorReport["stopReason"]} stopReason - How the loop actually exited.
+ * @returns {ExecutionSignals} Deterministic signals for confidence computation.
+ */
+function deriveSignals(history: HistoryEntry[], stopReason: FactorReport["stopReason"]): ExecutionSignals {
+  const signals: ExecutionSignals = {
+    totalToolCalls: 0,
+    successToolCalls: 0,
+    uniqueTools: 0,
+    emptyDataCalls: 0,
+    transientErrors: 0,
+    permanentErrors: 0,
+    stopReason,
+  }
+  const seenTools = new Set<string>()
+  for (const h of history) {
+    signals.totalToolCalls++
+    seenTools.add(h.toolName)
+    if (h.result.success) {
+      signals.successToolCalls++
+      const data = h.result.data
+      if (data === null || data === undefined || (Array.isArray(data) && data.length === 0)) {
+        signals.emptyDataCalls++
+      }
+    } else if (h.result.errorKind === "transient") {
+      signals.transientErrors++
+    } else {
+      // reason: errors without an explicit kind (e.g. duplicate detection, unknown
+      // tool, unvalidated failures) are treated as permanent by default.
+      signals.permanentErrors++
+    }
+  }
+  signals.uniqueTools = seenTools.size
+  return signals
+}
+
+/**
  * @function executeToolCall
  * @description Validates params against the tool's Zod schema, executes the tool, and
  *   records the outcome (success or error) into the loop history. Never throws —
@@ -338,7 +382,7 @@ export async function runSubagent(params: {
       return {
         factor,
         score: thought.score,
-        confidence: thought.confidence,
+        confidence: computeDeterministicConfidence(deriveSignals(history, "llm_return")),
         signals: thought.signals.map(normalizeSignal),
         dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
         reasoning: thought.reasoning,
@@ -378,6 +422,7 @@ export async function runSubagent(params: {
               metadata: { source: "system", latencyMs: 0 },
             },
           })
+          stopReason = "duplicate"
           break reactLoop
         }
         lastCallFingerprint.set(tc.toolName, fingerprint)
@@ -416,6 +461,7 @@ export async function runSubagent(params: {
           metadata: { source: "system", latencyMs: 0 },
         },
       })
+      stopReason = "duplicate"
       break reactLoop
     }
     lastCallFingerprint.set(thought.toolName, fingerprint)
@@ -464,7 +510,7 @@ export async function runSubagent(params: {
       return {
         factor,
         score: finalThought.score,
-        confidence: finalThought.confidence,
+        confidence: computeDeterministicConfidence(deriveSignals(history, stopReason)),
         signals: finalThought.signals.map(normalizeSignal),
         dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
         reasoning: finalThought.reasoning,

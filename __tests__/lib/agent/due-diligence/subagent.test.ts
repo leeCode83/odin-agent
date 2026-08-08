@@ -165,7 +165,8 @@ describe("runSubagent", () => {
 
     expect(report.factor).toBe("technical")
     expect(report.score).toBe(75)
-    expect(report.confidence).toBe(80)
+    // deterministic confidence: zero tool calls → floor (LLM verbalized 80 ignored)
+    expect(report.confidence).toBe(15)
     expect(report.signals).toHaveLength(1)
     expect(report.signals[0].name).toBe("RSI")
     expect(report.iterations).toBe(1)

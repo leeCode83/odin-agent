@@ -114,7 +114,7 @@ Odin non-custodial, pakai konsep **Hyperliquid API Wallet (Agent Wallet)**:
 Bukan pure-LLM decision — kombinasi reasoning + kode deterministic:
 
 1. **LLM reasoning (thinking mode)** — synthesize DD Report jadi trading thesis (arah, alasan, risk factor).
-2. **Structured confidence scoring** — rubric eksplisit di prompt (alignment antar 4 faktor, historical pattern match dari Graph Memory, kekuatan sinyal) → LLM keluarkan confidence 0–100 dengan breakdown alasan per komponen.
+2. **Structured confidence scoring** — confidence tiap factor (DD) & perspective (Planning) dihitung **deterministik dari execution signals** (formula di `lib/agent/shared/confidence.ts`: tool success, error jenis, empty data, cakupan tool, alasan berhenti), bukan verbalisasi LLM — confidence LLM diabaikan, `null` tetap `null` (faktor dianggap failed).
 3. **Self-consistency check** — reasoning dijalankan 2–3x (temperature rendah); hasil konsisten → confidence naik, hasil beda-beda → confidence turun otomatis (proxy uncertainty).
 4. **Deterministic risk engine** (kode biasa, bukan LLM) — hitung position size pakai fixed-fractional risk model (risk maks 1–2% equity per trade), tentukan SL/TP dari volatility (ATR-based).
 5. **Gate logic** (kode biasa) — bandingkan confidence & position size ke threshold user → auto-execute atau push approval ke dashboard.

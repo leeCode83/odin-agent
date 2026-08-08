@@ -78,7 +78,8 @@ describe("runPerspectiveSubagent", () => {
 
     expect(report.perspective).toBe("conservative")
     expect(report.score).toBe(75)
-    expect(report.confidence).toBe(80)
+    // deterministic confidence: 1 successful call, 1 unique tool → 100-15 (LLM verbalized 80 ignored)
+    expect(report.confidence).toBe(85)
     expect(report.side).toBe("long")
     expect(report.entry_price).toBe(65000)
     expect(report.suggested_stop_loss).toBe(62000)

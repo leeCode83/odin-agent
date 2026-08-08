@@ -30,7 +30,7 @@ export interface SignalEntry {
  * @typedef SubagentStopReason
  * @description Reason why a factor subagent completed its execution.
  */
-export type SubagentStopReason = "llm_return" | "timeout" | "max_loops" | "circuit_open"
+export type SubagentStopReason = "llm_return" | "timeout" | "max_loops" | "circuit_open" | "duplicate"
 
 /**
  * @interface FactorReport
@@ -158,7 +158,7 @@ export const FactorReportSchema = z.object({
   iterations: z.number().int().min(0),
   conclusion: z.string(),
   errors: z.array(z.string()),
-  stopReason: z.enum(["llm_return", "timeout", "max_loops", "circuit_open"]).optional(),
+  stopReason: z.enum(["llm_return", "timeout", "max_loops", "circuit_open", "duplicate"]).optional(),
 })
 
 /**
