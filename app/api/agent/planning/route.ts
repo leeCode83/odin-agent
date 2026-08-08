@@ -19,9 +19,9 @@ import type { PlanningErrorCategory } from "@/lib/agent/planning/pipeline"
 import { planningCircuitBreaker } from "@/lib/agent/planning/circuit-breaker"
 import { log } from "@/lib/agent/planning/log"
 import { TradePlanSchema, DDReportSchema } from "@/lib/agent/types"
-import { getCategory } from "@/lib/asset-categories"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import { readRecentDDReport } from "@/lib/db/graph-memory"
+import { assertAssetInUniverse, HyperliquidUniverseError } from "@/lib/agent/shared/hl-universe"
 /**
  * @constant requiredBodySchema
  * @description Zod schema for the required request fields (spec §12).
@@ -157,14 +157,32 @@ export async function POST(req: NextRequest) {
     }
 
     if (!ddReport) {
-      const category = getCategory(required.data.asset)
-      if (!category) {
-         throw new PlanningError("Unknown asset", { phase: "dd" }, undefined, "internal")
+      // reason: validate the asset against the HL universe before running the
+      // DD agent. Unknown asset → UNKNOWN_ASSET; HL unreachable → block
+      // (HL_UNAVAILABLE), never fall through — if HL is down trading is
+      // impossible anyway. Skips this check when a ddReport is supplied or a
+      // fresh cache hit exists (F2).
+      try {
+        await assertAssetInUniverse(required.data.asset)
+      } catch (e) {
+        if (e instanceof HyperliquidUniverseError && e.kind === "asset_not_found") {
+          throw new PlanningError(
+            "UNKNOWN_ASSET",
+            { phase: "dd", asset: required.data.asset, message: e.message },
+            undefined,
+            "dd"
+          )
+        }
+        throw new PlanningError(
+          "HL_UNAVAILABLE",
+          { phase: "dd", asset: required.data.asset, message: String(e) },
+          undefined,
+          "data"
+        )
       }
       try {
         ddReport = await runDDAgent({
           asset: required.data.asset,
-          category,
           userId: required.data.userId,
           walletAddress: required.data.walletAddress,
         })

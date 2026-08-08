@@ -513,7 +513,6 @@ describe("plan()", () => {
 
     const result = await plan({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain"] },
     })
     expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
@@ -526,7 +525,6 @@ describe("plan()", () => {
     mockCreate.mockRejectedValueOnce(new Error("API error"))
     const result = await plan({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical"] },
     })
     expect(result).toEqual([])
   })
@@ -535,7 +533,6 @@ describe("plan()", () => {
     delete process.env.DEEPSEEK_API_KEY
     const result = await plan({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical"] },
     })
     expect(result).toEqual([])
   })
@@ -550,7 +547,6 @@ describe("plan()", () => {
 
     const result = await plan({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain"] },
     })
     expect(result).toHaveLength(1)
     expect(result[0].factor).toBe("technical")
@@ -566,7 +562,6 @@ describe("plan()", () => {
 
     const result = await plan({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain"] },
     })
     expect(result).toHaveLength(1)
     expect(result[0].factor).toBe("technical")
@@ -588,7 +583,6 @@ describe("rePlan()", () => {
 
     const result = await rePlan({
       asset: "BTC",
-      category: "major",
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
@@ -602,7 +596,6 @@ describe("rePlan()", () => {
     mockCreate.mockRejectedValueOnce(new Error("API error"))
     const result = await rePlan({
       asset: "BTC",
-      category: "major",
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
@@ -613,7 +606,6 @@ describe("rePlan()", () => {
     delete process.env.DEEPSEEK_API_KEY
     const result = await rePlan({
       asset: "BTC",
-      category: "major",
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
@@ -630,7 +622,6 @@ describe("rePlan()", () => {
 
     const result = await rePlan({
       asset: "BTC",
-      category: "major",
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
@@ -648,7 +639,6 @@ describe("rePlan()", () => {
 
     const result = await rePlan({
       asset: "BTC",
-      category: "major",
       lowConfidenceFactors: ["technical", "onchain"],
       previousReports: [],
     })
@@ -680,7 +670,6 @@ describe("aggregate()", () => {
 
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).not.toBeNull()
@@ -701,7 +690,6 @@ describe("aggregate()", () => {
     mockCreate.mockRejectedValueOnce(new Error("API error"))
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).toBeNull()
@@ -711,7 +699,6 @@ describe("aggregate()", () => {
     delete process.env.DEEPSEEK_API_KEY
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).toBeNull()
@@ -733,7 +720,6 @@ describe("aggregate()", () => {
 
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).not.toBeNull()
@@ -758,7 +744,6 @@ describe("aggregate()", () => {
     })
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).toBeNull()
@@ -789,7 +774,6 @@ describe("aggregate()", () => {
 
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result?.thesis).toBe("BTC is bullish")
@@ -808,7 +792,6 @@ describe("aggregate()", () => {
 
     const result = await aggregate({
       asset: "BTC",
-      category: "major",
       factorReports: [],
     })
     expect(result).toBeNull()

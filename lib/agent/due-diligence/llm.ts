@@ -275,16 +275,14 @@ rawPrefix: ${content.slice(0, 500)}`
 
 /**
  * @function plan
- * @description LLM call for the Main Agent's PLAN step. Given an asset and its category,
+ * @description LLM call for the Main Agent's PLAN step. Given an asset,
  *   determines which subagents to deploy and their instructions.
  * @param {Object} params - Plan parameters.
  * @param {string} params.asset - The asset ticker or identifier.
- * @param {{ name: string; activeFactors: string[] }} params.category - Category with name and active factors.
  * @returns {Promise<SubagentPlan[]>} Array of subagent plans with factor, instruction, and priority.
  */
 export async function plan(params: {
   asset: string
-  category: { name: string; activeFactors: string[] }
 }): Promise<SubagentPlan[]> {
   const c = getClient()
   if (!c) return []
@@ -298,7 +296,7 @@ export async function plan(params: {
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: getPrompt("DD_PLAN") },
-          { role: "user", content: JSON.stringify({ asset: params.asset, category: params.category }) },
+          { role: "user", content: JSON.stringify({ asset: params.asset }) },
         ],
       },
       { timeout: 45_000, maxRetries: 1 }
@@ -332,14 +330,12 @@ export async function plan(params: {
  *   for low-confidence factors based on previous reports.
  * @param {Object} params - Re-plan parameters.
  * @param {string} params.asset - The asset ticker or identifier.
- * @param {string} params.category - The asset category.
  * @param {string[]} params.lowConfidenceFactors - Factor names that need re-analysis.
  * @param {FactorReport[]} params.previousReports - Previous factor reports for context.
  * @returns {Promise<SubagentPlan[]>} Array of re-deploy subagent plans.
  */
 export async function rePlan(params: {
   asset: string
-  category: string
   lowConfidenceFactors: string[]
   previousReports: FactorReport[]
 }): Promise<SubagentPlan[]> {
@@ -391,7 +387,6 @@ export async function rePlan(params: {
  *   json_schema not supported by DeepSeek — using json_object + schema prompt.
  * @param {Object} params - Aggregate parameters.
  * @param {string} params.asset - The asset ticker or identifier.
- * @param {string} params.category - The asset category.
  * @param {FactorReport[]} params.factorReports - Array of reports from subagent runs.
  * @returns {Promise<{ thesis: string; crossValidation: { pairs: Array<{ factorA: string; factorB: string; alignment: number; note: string }>; overallAlignment: number; contradictions: string[] }; risks: Array<{ factor: string; description: string; severity: string }>; catalysts: Array<{ factor: string; description: string; impact: string }>; summary: string }>}
  *   The aggregated thesis, cross-validation data, risks, catalysts, and summary.
@@ -410,7 +405,6 @@ interface AggregateResult {
 
 export async function aggregate(params: {
   asset: string
-  category: string
   factorReports: FactorReport[]
 }): Promise<AggregateResult | null> {
   const c = getClient()
@@ -422,7 +416,6 @@ export async function aggregate(params: {
       role: "user",
       content: JSON.stringify({
         asset: params.asset,
-        category: params.category,
         factorReports: params.factorReports.map((fr) => {
           // Strip reasoning — aggregate only needs structured data
           const { reasoning: _reasoning, ...rest } = fr

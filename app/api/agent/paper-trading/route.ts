@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { getDb } from "@/lib/db/arango-client"
-import { getCategory } from "@/lib/asset-categories"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { readRecentDDReport } from "@/lib/db/graph-memory"
@@ -18,6 +17,7 @@ import { createLogger } from "@/lib/agent/shared/logger"
 import { PaperTradeInputSchema, type PaperTrade, type Duration } from "@/lib/agent/paper-trading/types"
 import { startMonitoring } from "@/lib/agent/paper-trading/service"
 import type { DDReport } from "@/lib/agent/types"
+import { assertAssetInUniverse, HyperliquidUniverseError } from "@/lib/agent/shared/hl-universe"
 
 const log = createLogger({ route: "paper-trading" })
 
@@ -89,15 +89,25 @@ export async function POST(req: NextRequest) {
       }
 
       if (!ddReport) {
-        const category = getCategory(asset)
-        if (!category) {
+        // reason: validate the asset against the HL universe before running
+        // the DD agent — unknown asset → 400, HL unreachable → 503 (block,
+        // never fall through: if HL is down trading is impossible anyway).
+        try {
+          await assertAssetInUniverse(asset)
+        } catch (e) {
+          if (e instanceof HyperliquidUniverseError && e.kind === "asset_not_found") {
+            return NextResponse.json(
+              { error: "UNKNOWN_ASSET", message: e.message },
+              { status: 400 },
+            )
+          }
           return NextResponse.json(
-            { error: `Unknown asset: ${asset}` },
-            { status: 400 },
+            { error: "HL_UNAVAILABLE", message: String(e) },
+            { status: 503 },
           )
         }
         try {
-          ddReport = await runDDAgent({ asset, category, userId, walletAddress })
+          ddReport = await runDDAgent({ asset, userId, walletAddress })
         } catch (e) {
           return NextResponse.json(
             { error: "DD_AGENT_FAILED", message: String(e) },

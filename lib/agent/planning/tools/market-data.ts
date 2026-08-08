@@ -120,17 +120,16 @@ export function buildMarketDataTools(ctx: MarketDataToolContext): ToolDefinition
     },
     {
       name: "get_graph_patterns",
-      description: "Query the historical trade graph for patterns matching the asset, category, and signals, with outcome frequencies.",
+      description: "Query the historical trade graph for patterns matching the asset and signals, with outcome frequencies.",
       parameters: z.object({
         asset: z.string().optional().describe("Asset ticker (e.g. BTC, ETH). Defaults to the planning context asset."),
-        category: z.string().optional().default("").describe("Asset category to match against historical decisions (default empty)"),
         signals: z.array(z.string()).optional().default([]).describe("Signal names to match against historical patterns"),
       }),
       execute: async (params) => {
         const start = Date.now()
         try {
           const asset = params.asset ?? ctx.asset
-          const patterns = await queryGraphPatterns(asset, params.category, params.signals)
+          const patterns = await queryGraphPatterns(asset, params.signals)
           return {
             success: true,
             data: { patterns },

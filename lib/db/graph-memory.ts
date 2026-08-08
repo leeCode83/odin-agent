@@ -16,13 +16,11 @@ import { getDb } from "@/lib/db/arango-client"
  * @function queryGraphPatterns
  * @description Queries the ArangoDB graph for trading patterns matching signals.
  * @param {string} asset - The asset to query for.
- * @param {string} category - The category of the asset.
  * @param {string[]} signals - Signal names to match against historical patterns.
  * @returns {Promise<GraphPattern[]>} Array of historical patterns and outcomes.
  */
 export async function queryGraphPatterns(
   asset: string,
-  category: string,
   signals: string[]
 ): Promise<GraphPattern[]> {
   try {
@@ -32,7 +30,7 @@ export async function queryGraphPatterns(
     const { DECISIONS, EDGE_TRIGGERED_BY, EDGE_RESULTED_IN } = GraphCollectionNames
     const aqlQuery = `
       FOR d IN @@decisions
-      FILTER d.asset == @asset AND d.category == @category
+      FILTER d.asset == @asset
       FOR s IN 1..1 OUTBOUND d @@edgeTriggered
         FILTER s.name IN @signals
       FOR o IN 1..1 OUTBOUND d @@edgeResulted
@@ -45,7 +43,6 @@ export async function queryGraphPatterns(
       "@edgeTriggered": EDGE_TRIGGERED_BY,
       "@edgeResulted": EDGE_RESULTED_IN,
       asset,
-      category,
       signals,
     })
 
@@ -238,7 +235,6 @@ export async function recordDDReport(
       userId,
       walletAddress,
       asset: (report.asset as string) || "",
-      category: (report.category as string) || "",
       report,
       timestamp: new Date().toISOString(),
       processingTimeMs: (report.processingTimeMs as number) || 0,

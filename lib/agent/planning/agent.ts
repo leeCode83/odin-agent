@@ -10,7 +10,6 @@
  * @layer agent
  */
 
-import { getCategory } from "@/lib/asset-categories"
 import { plan, rePlan, aggregate } from "@/lib/agent/planning/llm"
 import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
 import { buildPlanningToolRegistry } from "@/lib/agent/planning/tools"
@@ -293,10 +292,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
 
   log("info", "planning.started", { asset: params.asset, userId: params.userId })
 
-  // --- Step 0: category & equity pre-fetch ---
-  const category = getCategory(params.asset)
-  if (!category) throw new PlanningError("Unknown asset")
-
+  // --- Step 0: equity pre-fetch ---
   const { ddReport } = params
 
   // --- Step 0b: DD report quality gate (user-requested) ---
@@ -312,7 +308,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   const usableFactorCount =
     ddReport.usableFactorCount ??
     Object.values(ddReport.sections ?? {}).filter((s) => typeof s.score === "number").length
-  const expectedFactorCount = category.activeFactors.length
+  const expectedFactorCount = 4
   if (ddReport.status === "failed" || usableFactorCount === 0) {
     throw new PlanningError(
       "PLANNING_FAILED",

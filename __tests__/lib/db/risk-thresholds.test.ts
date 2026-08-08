@@ -22,10 +22,10 @@ describe("getRiskThresholds", () => {
     const { getRiskThresholds } = await import("@/lib/db/risk-thresholds")
     const result = await getRiskThresholds("user-1")
 
-    expect(result.confidence_threshold).toBe(70)
-    expect(result.max_position_usdc).toBe(100)
-    expect(result.max_leverage).toBe(10)
-    expect(result.risk_per_trade_percent).toBe(1)
+    expect(result.confidence_threshold).toBe(30)
+    expect(result.max_position_usdc).toBe(3000)
+    expect(result.max_leverage).toBe(100)
+    expect(result.risk_per_trade_percent).toBe(10)
   })
 
   it("returns document values when found", async () => {
@@ -63,6 +63,6 @@ describe("getRiskThresholds", () => {
     const { getRiskThresholds } = await import("@/lib/db/risk-thresholds")
     const result = await getRiskThresholds("user-1")
 
-    expect(result.confidence_threshold).toBe(70)
+    expect(result.confidence_threshold).toBe(30)
   })
 })

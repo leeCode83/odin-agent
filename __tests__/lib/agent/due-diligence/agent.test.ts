@@ -164,7 +164,6 @@ describe("buildFinalReport", () => {
 
     const report = buildFinalReport({
       asset: "BTC",
-      category: "major",
       factorReports: reports,
       aggregation: defaultAggregationResult,
       deterministic,
@@ -175,7 +174,7 @@ describe("buildFinalReport", () => {
     })
 
     expect(report.asset).toBe("BTC")
-    expect(report.category).toBe("major")
+    expect(report.category).toBe("")
     expect(typeof report.timestamp).toBe("string")
     expect(report.overallScore).toBe(75)
     expect(report.overallConfidence).toBe(75)
@@ -208,7 +207,6 @@ describe("buildFinalReport", () => {
 
     const report = buildFinalReport({
       asset: "BTC",
-      category: "major",
       factorReports: reports,
       aggregation: null,
       deterministic: { overallScore: 40, overallConfidence: 40 },
@@ -226,7 +224,6 @@ describe("buildFinalReport", () => {
 
     const report = buildFinalReport({
       asset: "BTC",
-      category: "major",
       factorReports: reports,
       aggregation: null,
       deterministic: { overallScore: 50, overallConfidence: 50 },
@@ -245,7 +242,6 @@ describe("buildFinalReport", () => {
 
     const report = buildFinalReport({
       asset: "BTC",
-      category: "major",
       factorReports: reports,
       aggregation: null,
       deterministic: { overallScore: 50, overallConfidence: 50 },
@@ -271,11 +267,6 @@ describe("runDDAgent", () => {
     vi.clearAllMocks()
   })
 
-  const defaultCategory = {
-    name: "major",
-    activeFactors: ["technical", "onchain", "sentiment", "fundamental"],
-  }
-
   it("happy path: accepts on first iteration and returns complete DDReport", async () => {
     const plans: SubagentPlan[] = [
       { factor: "technical", instruction: "Analyze BTC technicals", priority: 1 },
@@ -292,7 +283,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       maxLoops: 3,
       userId: "user-1",
       walletAddress: "0x123",
@@ -300,7 +290,7 @@ describe("runDDAgent", () => {
 
     expect(result.status).toBe("complete")
     expect(result.asset).toBe("BTC")
-    expect(result.category).toBe("major")
+    expect(result.category).toBe("")
     expect(result.overallScore).toBe(85)
     expect(result.overallConfidence).toBe(90)
     expect(result.iterations).toBe(1)
@@ -340,7 +330,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       maxLoops: 3,
     })
 
@@ -368,7 +357,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain"] },
       maxLoops: 3,
     })
 
@@ -392,7 +380,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain", "sentiment"] },
       maxLoops: 3,
     })
 
@@ -409,7 +396,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       maxLoops: 2,
     })
 
@@ -431,7 +417,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: { name: "major", activeFactors: ["technical", "onchain", "sentiment"] },
       maxLoops: 2,
     })
 
@@ -467,7 +452,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       maxLoops: 3,
     })
 
@@ -502,7 +486,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       maxLoops: 2,
     })
 
@@ -537,7 +520,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
     })
 
     expect(result.status).toBe("partial")
@@ -558,7 +540,7 @@ describe("runDDAgent", () => {
     )
     vi.mocked(aggregate).mockResolvedValueOnce(defaultAggregationResult)
 
-    await runDDAgent({ asset: "BTC", category: defaultCategory })
+    await runDDAgent({ asset: "BTC" })
 
     expect(runSubagent).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 120000 }))
   })
@@ -584,7 +566,7 @@ describe("runDDAgent", () => {
     vi.mocked(aggregate).mockResolvedValueOnce(defaultAggregationResult)
     vi.mocked(rePlan).mockResolvedValue([])
 
-    const result = await runDDAgent({ asset: "BTC", category: defaultCategory })
+    const result = await runDDAgent({ asset: "BTC" })
 
     expect(result.status).toBe("partial")
     expect(result.iterations).toBe(1)
@@ -615,7 +597,6 @@ describe("runDDAgent", () => {
 
     const result = await runDDAgent({
       asset: "BTC",
-      category: defaultCategory,
       pipelineTimeoutMs: 50,
     })
 

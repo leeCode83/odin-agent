@@ -49,8 +49,6 @@ const DEFAULT_PIPELINE_TIMEOUT_MS = 300_000
 export interface DDAgentParams {
   /** Asset ticker or identifier (e.g. "BTC"). */
   asset: string
-  /** Category configuration with name and active factor list. */
-  category: { name: string; activeFactors: string[] }
   /** Maximum Plan-Execute-Reflect iterations (default 3). */
   maxLoops?: number
   /** Global pipeline wall-clock budget in ms (default DD_PIPELINE_TIMEOUT_MS env or 300000). */
@@ -92,7 +90,6 @@ export function computeDeterministicScore(
  *   deterministic scoring, and run metadata.
  * @param {object} params - Report assembly parameters.
  * @param {string} params.asset - Asset ticker.
- * @param {string} params.category - Asset category name.
  * @param {FactorReport[]} params.factorReports - All collected factor reports.
  * @param {any} params.aggregation - LLM aggregation result (null on failure).
  * @param {{ overallScore: number; overallConfidence: number }} params.deterministic - Deterministic scores.
@@ -107,7 +104,6 @@ export function computeDeterministicScore(
  */
 export function buildFinalReport(params: {
   asset: string
-  category: string
   factorReports: FactorReport[]
   aggregation: AggregationResult | null
   deterministic: { overallScore: number; overallConfidence: number }
@@ -128,7 +124,7 @@ export function buildFinalReport(params: {
 
   return {
     asset: params.asset,
-    category: params.category,
+    category: "",
     timestamp: new Date().toISOString(),
     sections: sections as DDReport["sections"],
     factorReports: params.factorReports,
@@ -189,12 +185,11 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
   try {
     planSteps = await plan({
       asset: params.asset,
-      category: params.category,
     })
   } catch (e) {
     errors.push(`Initial plan failed: ${String(e)}`)
-    planSteps = params.category.activeFactors.map((f) => ({
-      factor: f as SubagentPlan["factor"],
+    planSteps = (["technical", "onchain", "sentiment", "fundamental"] as const).map((f) => ({
+      factor: f,
       instruction: `Analyze ${f} for ${params.asset}`,
       priority: 1,
     }))
@@ -211,7 +206,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       errors.push(`Pipeline timeout exceeded after ${iteration} iteration(s)`)
       return buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic: computeDeterministicScore(allFactorReports),
@@ -247,7 +241,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
     // AGGREGATE
     aggregation = await aggregate({
       asset: params.asset,
-      category: params.category.name,
       factorReports: allFactorReports,
     })
     if (!aggregation) {
@@ -263,7 +256,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       status = aggregation ? "complete" : "partial"
       const report = buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic,
@@ -289,7 +281,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       status = "partial"
       const report = buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic,
@@ -314,7 +305,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       status = "failed"
       return buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic,
@@ -334,7 +324,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       errors.push(`Early exit — ${failedFactorCount} factors failed; partial report returned`)
       return buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic: computeDeterministicScore(allFactorReports),
@@ -353,7 +342,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       errors.push("Re-deploy budget exhausted (max 1 round); partial report returned")
       return buildFinalReport({
         asset: params.asset,
-        category: params.category.name,
         factorReports: allFactorReports,
         aggregation,
         deterministic: computeDeterministicScore(allFactorReports),
@@ -369,7 +357,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       try {
         planSteps = await rePlan({
           asset: params.asset,
-          category: params.category.name,
           lowConfidenceFactors: evaluation.lowConfidenceFactors,
           previousReports: allFactorReports.filter((r) =>
             evaluation.lowConfidenceFactors.includes(r.factor)
@@ -389,7 +376,6 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
   // Exhausted max loops without accepting
   return buildFinalReport({
     asset: params.asset,
-    category: params.category.name,
     factorReports: allFactorReports,
     aggregation,
     deterministic: computeDeterministicScore(allFactorReports),

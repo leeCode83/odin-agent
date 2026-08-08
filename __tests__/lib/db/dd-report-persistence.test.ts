@@ -48,7 +48,6 @@ describe("recordDDReport", () => {
         userId: "user-1",
         walletAddress: "0x123",
         asset: "BTC",
-        category: "spot",
         report: mockReport,
         timestamp: expect.any(String),
         processingTimeMs: 1500,

@@ -5,10 +5,6 @@ vi.mock("@/lib/db/arango-client", () => ({
   getDb: vi.fn(),
 }))
 
-vi.mock("@/lib/asset-categories", () => ({
-  getCategory: vi.fn(),
-}))
-
 vi.mock("@/lib/agent/due-diligence/agent", () => ({
   runDDAgent: vi.fn(),
 }))
@@ -25,12 +21,21 @@ vi.mock("@/lib/agent/paper-trading/service", () => ({
   startMonitoring: vi.fn(),
 }))
 
+const { mockAssertAssetInUniverse } = vi.hoisted(() => ({
+  mockAssertAssetInUniverse: vi.fn(),
+}))
+
+vi.mock("@/lib/agent/shared/hl-universe", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent/shared/hl-universe")>()
+  return { ...actual, assertAssetInUniverse: mockAssertAssetInUniverse }
+})
+
 import { getDb } from "@/lib/db/arango-client"
-import { getCategory } from "@/lib/asset-categories"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import { runPlanningPipeline } from "@/lib/agent/pipeline"
 import { readRecentDDReport } from "@/lib/db/graph-memory"
 import { startMonitoring } from "@/lib/agent/paper-trading/service"
+import { HyperliquidUniverseError } from "@/lib/agent/shared/hl-universe"
 
 function mockNextRequest(body: unknown): NextRequest {
   return new NextRequest("http://localhost/api/agent/paper-trading", {
@@ -84,10 +89,10 @@ describe("POST /api/agent/paper-trading", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockDbSuccess()
-    vi.mocked(getCategory).mockReturnValue({ name: "major", activeFactors: ["technical"] } as never)
     vi.mocked(readRecentDDReport).mockResolvedValue(null)
     vi.mocked(runDDAgent).mockResolvedValue(MOCK_DD_REPORT as never)
     vi.mocked(runPlanningPipeline).mockResolvedValue({ report: MOCK_TRADE_PLAN } as never)
+    mockAssertAssetInUniverse.mockResolvedValue(undefined)
   })
 
   it("returns 201 with planReport provided (skip DD + Planning)", async () => {
@@ -157,16 +162,6 @@ describe("POST /api/agent/paper-trading", () => {
     expect(res.status).toBe(503)
   })
 
-  it("returns 400 for unknown asset", async () => {
-    vi.mocked(getCategory).mockReturnValue(null)
-
-    const res = await post({ ...VALID_BODY, asset: "XYZ" })
-
-    expect(res.status).toBe(400)
-    const json = await res.json()
-    expect(json.error).toContain("XYZ")
-  })
-
   it("returns 422 when DD agent fails", async () => {
     vi.mocked(runDDAgent).mockRejectedValueOnce(new Error("DD crash"))
 
@@ -185,5 +180,33 @@ describe("POST /api/agent/paper-trading", () => {
     expect(res.status).toBe(422)
     const json = await res.json()
     expect(json.error).toBe("PLANNING_FAILED")
+  })
+
+  it("returns 400 UNKNOWN_ASSET when the asset is not in the HL universe", async () => {
+    mockAssertAssetInUniverse.mockRejectedValue(
+      new HyperliquidUniverseError("asset_not_found", "Asset DOGE not found in Hyperliquid universe")
+    )
+
+    const res = await post({ ...VALID_BODY, asset: "DOGE" })
+    const json = await res.json()
+
+    expect(res.status).toBe(400)
+    expect(json.error).toBe("UNKNOWN_ASSET")
+    expect(runDDAgent).not.toHaveBeenCalled()
+    expect(runPlanningPipeline).not.toHaveBeenCalled()
+  })
+
+  it("returns 503 HL_UNAVAILABLE when Hyperliquid is unreachable", async () => {
+    mockAssertAssetInUniverse.mockRejectedValue(
+      new HyperliquidUniverseError("unreachable", "Hyperliquid unreachable while validating BTC: ECONNRESET")
+    )
+
+    const res = await post(VALID_BODY)
+    const json = await res.json()
+
+    expect(res.status).toBe(503)
+    expect(json.error).toBe("HL_UNAVAILABLE")
+    expect(runDDAgent).not.toHaveBeenCalled()
+    expect(runPlanningPipeline).not.toHaveBeenCalled()
   })
 })

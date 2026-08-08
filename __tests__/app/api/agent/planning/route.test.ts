@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { NextRequest } from "next/server"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
+import { HyperliquidUniverseError } from "@/lib/agent/shared/hl-universe"
 
 const {
   mockRunPlanningPipeline,
@@ -16,26 +17,27 @@ const {
   mockIsLLMPanicked,
   mockRecordDDFailure,
   mockRecordLLMFailure,
-  mockGetCategory,
   mockRunDDAgent,
   mockReadRecentDDReport,
+  mockAssertAssetInUniverse,
 } = vi.hoisted(() => ({
   mockRunPlanningPipeline: vi.fn(),
   mockIsDDPanicked: vi.fn(),
   mockIsLLMPanicked: vi.fn(),
   mockRecordDDFailure: vi.fn(),
   mockRecordLLMFailure: vi.fn(),
-  mockGetCategory: vi.fn(),
   mockRunDDAgent: vi.fn(),
   mockReadRecentDDReport: vi.fn(),
+  mockAssertAssetInUniverse: vi.fn(),
 }))
+
+vi.mock("@/lib/agent/shared/hl-universe", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent/shared/hl-universe")>()
+  return { ...actual, assertAssetInUniverse: mockAssertAssetInUniverse }
+})
 
 vi.mock("@/lib/agent/pipeline", () => ({
   runPlanningPipeline: mockRunPlanningPipeline,
-}))
-
-vi.mock("@/lib/asset-categories", () => ({
-  getCategory: mockGetCategory,
 }))
 
 vi.mock("@/lib/agent/due-diligence/agent", () => ({
@@ -110,9 +112,9 @@ describe("POST /api/agent/planning", () => {
     vi.clearAllMocks()
     mockIsDDPanicked.mockReturnValue(false)
     mockIsLLMPanicked.mockReturnValue(false)
-    mockGetCategory.mockReturnValue({ name: "major", activeFactors: [] })
     mockRunDDAgent.mockResolvedValue({ asset: "BTC", status: "complete", sections: {} })
     mockReadRecentDDReport.mockResolvedValue(null)
+    mockAssertAssetInUniverse.mockResolvedValue(undefined)
     mockRunPlanningPipeline.mockResolvedValue({ report: VALID_PLAN, timing: VALID_TIMING })
   })
 
@@ -466,5 +468,41 @@ describe("POST /api/agent/planning", () => {
     expect(data.error).toBe("PLANNING_FAILED")
     expect(data.message).toContain("LLM connection reset")
     expect(mockRecordLLMFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns 422 PLANNING_FAILED for an asset not in the HL universe", async () => {
+    mockAssertAssetInUniverse.mockRejectedValue(
+      new HyperliquidUniverseError("asset_not_found", "Asset DOGE not found in Hyperliquid universe")
+    )
+
+    const res = await post({ asset: "DOGE", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(mockAssertAssetInUniverse).toHaveBeenCalledWith("DOGE")
+    expect(res.status).toBe(422)
+    expect(data.error).toBe("PLANNING_FAILED")
+    expect(data.message).toBe("UNKNOWN_ASSET")
+    expect(data.details.phase).toBe("dd")
+    expect(mockRunDDAgent).not.toHaveBeenCalled()
+    expect(mockRunPlanningPipeline).not.toHaveBeenCalled()
+    expect(mockRecordDDFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns 502 PLANNING_FAILED when Hyperliquid is unreachable", async () => {
+    mockAssertAssetInUniverse.mockRejectedValue(
+      new HyperliquidUniverseError("unreachable", "Hyperliquid unreachable while validating BTC: ECONNRESET")
+    )
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(502)
+    expect(data.error).toBe("PLANNING_FAILED")
+    expect(data.message).toBe("HL_UNAVAILABLE")
+    expect(data.details.phase).toBe("dd")
+    expect(mockRunDDAgent).not.toHaveBeenCalled()
+    expect(mockRunPlanningPipeline).not.toHaveBeenCalled()
+    expect(mockRecordLLMFailure).toHaveBeenCalledTimes(1)
+    expect(mockRecordDDFailure).not.toHaveBeenCalled()
   })
 })

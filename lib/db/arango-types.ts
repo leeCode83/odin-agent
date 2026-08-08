@@ -90,7 +90,6 @@ export interface DDReportNode {
   userId: string
   walletAddress: string
   asset: string
-  category: string
   report: Record<string, unknown>
   timestamp: string
   processingTimeMs: number

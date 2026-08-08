@@ -179,22 +179,22 @@ describe("get_risk_thresholds", () => {
 
 describe("get_graph_patterns", () => {
   it("returns patterns from graph memory", async () => {
-    const params = tool("get_graph_patterns").parameters.parse({ asset: "BTC", category: "defi", signals: ["RSI_BOUNCE"] })
+    const params = tool("get_graph_patterns").parameters.parse({ asset: "BTC", signals: ["RSI_BOUNCE"] })
     const result = await tool("get_graph_patterns").execute(params)
 
     expect(result.success).toBe(true)
     expect(result.data.patterns).toEqual([
       { pattern: "RSI_BOUNCE", outcome: "profit", frequency: 3 },
     ])
-    expect(mockQueryGraphPatterns).toHaveBeenCalledWith("BTC", "defi", ["RSI_BOUNCE"])
+    expect(mockQueryGraphPatterns).toHaveBeenCalledWith("BTC", ["RSI_BOUNCE"])
   })
 
-  it("falls back to ctx.asset and empty category/signals when omitted", async () => {
+  it("falls back to ctx.asset and empty signals when omitted", async () => {
     const params = tool("get_graph_patterns").parameters.parse({})
     const result = await tool("get_graph_patterns").execute(params)
 
     expect(result.success).toBe(true)
-    expect(mockQueryGraphPatterns).toHaveBeenCalledWith("ETH", "", [])
+    expect(mockQueryGraphPatterns).toHaveBeenCalledWith("ETH", [])
   })
 
   it("returns success:false when query fails", async () => {

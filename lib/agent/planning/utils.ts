@@ -24,7 +24,6 @@ export interface CompactCrossValidation {
  */
 export interface CompactDDReport {
   asset: string
-  category: string
   timestamp: string
   sections: DDReport["sections"]
   aggregated_thesis?: string
@@ -48,7 +47,6 @@ export interface CompactDDReport {
 export function compactDDReport(report: DDReport): CompactDDReport {
   const {
     asset,
-    category,
     timestamp,
     sections,
     aggregated_thesis,
@@ -71,7 +69,6 @@ export function compactDDReport(report: DDReport): CompactDDReport {
 
   return {
     asset,
-    category,
     timestamp,
     sections,
     ...(aggregated_thesis !== undefined && { aggregated_thesis }),

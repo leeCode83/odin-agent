@@ -18,7 +18,6 @@ import type {
 } from "@/lib/agent/planning/types"
 import type { DDReport } from "@/lib/agent/types"
 
-const getCategoryMock = vi.hoisted(() => vi.fn())
 const planMock = vi.hoisted(() => vi.fn())
 const rePlanMock = vi.hoisted(() => vi.fn())
 const aggregateMock = vi.hoisted(() => vi.fn())
@@ -28,8 +27,6 @@ const fetchUserEquityMock = vi.hoisted(() => vi.fn())
 const getRiskThresholdsMock = vi.hoisted(() => vi.fn())
 const envDefaultsMock = vi.hoisted(() => vi.fn())
 const recordDecisionMock = vi.hoisted(() => vi.fn())
-
-vi.mock("@/lib/asset-categories", () => ({ getCategory: getCategoryMock }))
 
 vi.mock("@/lib/agent/planning/llm", () => ({
   plan: planMock,
@@ -48,8 +45,6 @@ vi.mock("@/lib/db/risk-thresholds", () => ({
   envDefaults: envDefaultsMock,
 }))
 vi.mock("@/lib/db/graph-memory", () => ({ recordDecision: recordDecisionMock }))
-
-const CATEGORY = { name: "major", activeFactors: ["technical", "onchain", "sentiment", "fundamental"] as const }
 
 const DD_REPORT: DDReport = {
   asset: "BTC",
@@ -137,7 +132,6 @@ function captureError(promise: Promise<unknown>): Promise<unknown> {
 describe("runPlanningAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    getCategoryMock.mockReturnValue(CATEGORY)
     fetchUserEquityMock.mockResolvedValue(10000)
     getRiskThresholdsMock.mockResolvedValue(THRESHOLDS)
     envDefaultsMock.mockReturnValue(THRESHOLDS)
@@ -153,15 +147,6 @@ describe("runPlanningAgent", () => {
   })
 
   describe("step 0 — setup and pre-fetches", () => {
-    it("throws PlanningError for an unknown asset", async () => {
-      getCategoryMock.mockReturnValue(null)
-
-      const err = await captureError(runPlanningAgent(INPUT))
-
-      expect(err).toBeInstanceOf(PlanningError)
-      expect((err as Error).message).toBe("Unknown asset")
-    })
-
     it("pre-fetches equity once and passes it to the tool registry", async () => {
       await runPlanningAgent(INPUT)
 
@@ -214,11 +199,7 @@ describe("runPlanningAgent", () => {
       expect(runPerspectiveSubagentMock).toHaveBeenCalled()
     })
 
-    it("penalizes confidence by usable/expected for meme categories (2/3)", async () => {
-      getCategoryMock.mockReturnValue({
-        name: "meme",
-        activeFactors: ["technical", "onchain", "sentiment"] as const,
-      })
+    it("penalizes confidence by usable/expected factors (2/4)", async () => {
       const partialDD = {
         ...DD_REPORT,
         category: "meme",
@@ -235,9 +216,9 @@ describe("runPlanningAgent", () => {
 
       const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
 
-      // 80 * 2/3 = 53.33 → 53 → below the 70 confidence threshold → approval path
+      // 80 * 2/4 = 40 → below the 70 confidence threshold → approval path
       expect(out.status).toBe("approval_required")
-      expect(out.report.confidence_score).toBe(53)
+      expect(out.report.confidence_score).toBe(40)
     })
 
     it("keeps status complete when a penalized DD still clears the autonomy gate", async () => {

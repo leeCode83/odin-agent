@@ -111,10 +111,9 @@ describe("compactDDReport", () => {
     ])
   })
 
-  it("preserves critical trading fields (asset, category, timestamp, sections, aggregated_thesis, risks, catalysts)", () => {
+  it("preserves critical trading fields (asset, timestamp, sections, aggregated_thesis, risks, catalysts)", () => {
     const compacted = compactDDReport(fullDDReport)
     expect(compacted.asset).toBe("BTC")
-    expect(compacted.category).toBe("layer1")
     expect(compacted.timestamp).toBe("2026-08-06T08:00:00Z")
     expect(compacted.sections).toEqual(fullDDReport.sections)
     expect(compacted.aggregated_thesis).toBe(fullDDReport.aggregated_thesis)

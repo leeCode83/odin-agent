@@ -128,10 +128,10 @@ If you cannot provide full signal objects, fall back to plain strings like ["sig
 /**
  * @constant PLAN_PROMPT
  * @description System prompt for the Main Agent's PLAN step. Instructs the LLM to
- *   determine which subagents to deploy and their instructions based on asset and category.
+ *   determine which subagents to deploy and their instructions based on asset.
  * @note Includes two few-shot examples to guide the model toward specific, actionable subagent instructions.
  */
-export const PLAN_PROMPT = `You are a senior analyst coordinating a due diligence analysis. Given an asset and its category, determine which subagents to deploy.
+export const PLAN_PROMPT = `You are a senior analyst coordinating a due diligence analysis. Given an asset, determine which subagents to deploy.
 
 For each active factor, provide:
 - factor: the factor name
@@ -142,8 +142,6 @@ Example instruction for technical factor:
 "Use compute_atr to verify current volatility and check RSI divergence on 1h chart."
 Example instruction for onchain factor:
 "Check whale wallet movements in the last 24h using the onchain tool, then verify exchange inflows."
-
-IMPORTANT: If the category is "meme", skip the fundamental factor — memecoins have no relevant fundamental data.
 
 Return a JSON array: [{factor, instruction, priority}, ...]`
 

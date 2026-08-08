@@ -5,7 +5,6 @@
  * @layer service
  */
 
-import { getCategory } from "@/lib/asset-categories"
 import { runDDAgent } from "@/lib/agent/due-diligence/agent"
 import type {
   DDPipelineInput,
@@ -24,15 +23,9 @@ import type {
 export async function runDDPipeline(input: DDPipelineInput): Promise<DDPipelineOutput> {
   const t0 = Date.now()
 
-  const category = getCategory(input.asset)
-  if (!category) {
-    throw new Error(`Unknown asset: ${input.asset}`)
-  }
-
   try {
     const report = await runDDAgent({
       asset: input.asset,
-      category,
       userId: input.userId ?? "anonymous",
       walletAddress: input.walletAddress,
     })
