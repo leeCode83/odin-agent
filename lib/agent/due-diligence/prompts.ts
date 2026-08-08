@@ -126,24 +126,49 @@ If you cannot provide full signal objects, fall back to plain strings like ["sig
 }
 
 /**
+ * @constant DEPLOYMENT_RULES
+ * @description Single source of truth for subagent deployment rules, injected into both
+ *   PLAN_PROMPT and REPLAN_PROMPT. Constrains the LLM planner to the four valid factors
+ *   and defines exactly when the optional factors (sentiment, fundamental) may be deployed.
+ * @note Enforcement is dual: these prompt rules plus code-side sanitization in
+ *   plan-validator.ts (filters invalid factors, forces technical + onchain presence).
+ */
+export const DEPLOYMENT_RULES = `DEPLOYMENT RULES (MANDATORY):
+- Only 4 factors exist: technical, onchain, sentiment, fundamental.
+- technical and onchain are MANDATORY: always deploy both (futures trading context).
+- sentiment is OPTIONAL: deploy ONLY when technical and onchain data are unclear
+  (e.g. tool calls failed) and an extra signal is needed to strengthen the report.
+- fundamental is OPTIONAL: deploy ONLY when you have zero knowledge about the asset
+  itself. Self-judge only — no date, age, or market-cap checks.
+- Each instruction must name a specific tool and state what to look for.
+- Output ONLY the JSON array below. No prose, no markdown, no extra fields.`
+
+/**
  * @constant PLAN_PROMPT
  * @description System prompt for the Main Agent's PLAN step. Instructs the LLM to
  *   determine which subagents to deploy and their instructions based on asset.
- * @note Includes two few-shot examples to guide the model toward specific, actionable subagent instructions.
+ * @note Injects DEPLOYMENT_RULES (single source of truth) and uses few-shot examples
+ *   showing conditional deployment of optional factors.
  */
 export const PLAN_PROMPT = `You are a senior analyst coordinating a due diligence analysis. Given an asset, determine which subagents to deploy.
 
-For each active factor, provide:
-- factor: the factor name
-- instruction: specific analysis instructions for that factor
-- priority: 1-4 (1 highest)
+${DEPLOYMENT_RULES}
+
+For each deployed factor, provide:
+- factor: one of the 4 factors above
+- instruction: specific analysis instructions naming a concrete tool
+- priority: 1-4 (1 highest; technical and onchain get 1 and 2)
 
 Example instruction for technical factor:
-"Use compute_atr to verify current volatility and check RSI divergence on 1h chart."
+"Use get_atr to verify current volatility and check RSI divergence on the 1h chart."
 Example instruction for onchain factor:
-"Check whale wallet movements in the last 24h using the onchain tool, then verify exchange inflows."
+"Use get_whale_txns to check whale wallet movements in the last 24h, then get_exchange_flow to verify exchange inflows."
+Example instruction for sentiment (only if technical and onchain tool calls failed):
+"Technical and onchain data are unclear. Use get_coin_sentiment to gauge market mood as a supplementary signal."
+Example instruction for fundamental (only if you have zero knowledge of the asset):
+"I have no knowledge of this token. Use get_coin_metadata to gather basics, then get_tokenomics for supply details."
 
-Return a JSON array: [{factor, instruction, priority}, ...]`
+Return a JSON array: [{"factor": "...", "instruction": "...", "priority": 1-4}]`
 
 registerPrompt("DD_PLAN", PLAN_PROMPT)
 
@@ -151,21 +176,19 @@ registerPrompt("DD_PLAN", PLAN_PROMPT)
  * @constant REPLAN_PROMPT
  * @description System prompt for the Main Agent's EVALUATE→RE-DEPLOY step. Instructs the
  *   LLM to generate targeted instructions for low-confidence factors.
- * @note Instructs the model to name a specific tool, explains why previous analysis was insufficient, and provides a few-shot example.
+ * @note Injects DEPLOYMENT_RULES (single source of truth), requires naming a specific
+ *   tool first, explains why previous analysis was insufficient, and provides a few-shot example.
  */
 export const REPLAN_PROMPT = `You are re-deploying subagents that returned low-confidence results. Given the previous reports, provide new targeted instructions for each low-confidence factor.
 
-Your new instruction must explicitly name which tool to call first and why the previous analysis was insufficient.
+${DEPLOYMENT_RULES}
 
-For each active factor, provide:
-- factor: the factor name
-- instruction: specific analysis instructions for that factor
-- priority: 1-4 (1 highest)
+Your new instruction must explicitly name which tool to call first and why the previous analysis was insufficient. Deployed factors must respect the same deployment rules above — technical and onchain remain mandatory when re-deploying.
 
 Example instruction:
-"Previous sentiment score lacked twitter data. Use social_sentiment_tool to analyze mentions from the last 24h."
+"Previous sentiment score lacked twitter data. Use get_coin_sentiment to analyze mentions from the last 24h."
 
-Return a JSON array: [{factor, instruction, priority}, ...]`
+Return a JSON array: [{"factor": "...", "instruction": "...", "priority": 1-4}]`
 
 registerPrompt("DD_REPLAN", REPLAN_PROMPT)
 

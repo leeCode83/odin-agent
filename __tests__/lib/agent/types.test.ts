@@ -80,8 +80,20 @@ describe("DDReportSchema", () => {
     expect(() => DDReportSchema.parse(noAsset)).toThrow()
   })
 
-  it("rejects report with missing section key", () => {
-    const bad = { ...validReport, sections: { technical: validReport.sections.technical } }
+  it("accepts report with missing optional section keys", () => {
+    const partial = { ...validReport, sections: { technical: validReport.sections.technical } }
+    const result = DDReportSchema.parse(partial)
+    expect(result.asset).toBe("BTC")
+    expect(result.sections.onchain).toBeUndefined()
+    expect(result.sections.sentiment).toBeUndefined()
+    expect(result.sections.fundamental).toBeUndefined()
+  })
+
+  it("rejects report with invalid section value", () => {
+    const bad = {
+      ...validReport,
+      sections: { technical: { score: 72, summary: "bullish", signals: "RSI" } },
+    }
     expect(() => DDReportSchema.parse(bad)).toThrow()
   })
 

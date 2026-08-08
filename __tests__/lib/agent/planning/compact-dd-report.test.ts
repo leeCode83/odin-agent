@@ -140,7 +140,7 @@ describe("compactDDReport", () => {
 
     const compacted = compactDDReport(minimalReport)
     expect(compacted.asset).toBe("ETH")
-    expect(compacted.sections.technical.score).toBe(50)
+    expect(compacted.sections.technical!.score).toBe(50)
     expect(compacted.crossValidation).toBeUndefined()
   })
 })

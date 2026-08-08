@@ -26,8 +26,6 @@ export const SectionResultSchema = z.object({
 
 export const SECTION_KEYS = ["technical", "onchain", "sentiment", "fundamental"] as const
 
-const SectionKey = z.enum(SECTION_KEYS)
-
 /**
  * @constant DDReportSchema
  * @description Zod schema for the full Due Diligence report, extended with factor reports, cross-validation, risks, and catalysts.
@@ -36,7 +34,15 @@ export const DDReportSchema = z.object({
   asset: z.string(),
   category: z.string(),
   timestamp: z.string().datetime(),
-  sections: z.record(SectionKey, SectionResultSchema),
+  // reason: optional section keys — optional factors (sentiment, fundamental)
+  // are deployed only on demand, so a report may legitimately lack them.
+  // (z.record with an optional enum key fails zod v4 type inference.)
+  sections: z.object({
+    technical: SectionResultSchema.optional(),
+    onchain: SectionResultSchema.optional(),
+    sentiment: SectionResultSchema.optional(),
+    fundamental: SectionResultSchema.optional(),
+  }),
   aggregated_thesis: z.string().optional(),
   confidence_score: z.number().int().min(0).max(100).optional(),
   risk_flags: z.array(z.string()),
@@ -58,7 +64,7 @@ export const DDReportSchema = z.object({
 
 export type SectionResult = z.infer<typeof SectionResultSchema>
 export type DDReport = z.infer<typeof DDReportSchema>
-export type Factor = z.infer<typeof SectionKey>
+export type Factor = (typeof SECTION_KEYS)[number]
 
 export interface DDPipelineInput {
   asset: string

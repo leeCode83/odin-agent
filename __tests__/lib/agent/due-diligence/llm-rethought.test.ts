@@ -548,11 +548,13 @@ describe("plan()", () => {
     const result = await plan({
       asset: "BTC",
     })
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
+    expect(result.map((p) => p.factor)).not.toContain("invalid_factor")
+    expect(result.some((p) => p.factor === "onchain")).toBe(true)
   })
 
-  it("filters out items with empty instruction", async () => {
+  it("filters out items with empty instruction and enforces mandatory factors", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: JSON.stringify([
         { factor: "technical", instruction: "Valid instruction", priority: 1 },
@@ -563,8 +565,10 @@ describe("plan()", () => {
     const result = await plan({
       asset: "BTC",
     })
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
+    const onchain = result.find((p) => p.factor === "onchain")
+    expect(onchain?.instruction.length).toBeGreaterThan(0)
   })
 })
 
@@ -586,10 +590,11 @@ describe("rePlan()", () => {
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
     expect(result[0].instruction).toContain("Re-analyze")
     expect(result[0].priority).toBe(1)
+    expect(result.some((p) => p.factor === "onchain")).toBe(true)
   })
 
   it("returns empty array on LLM error", async () => {
@@ -625,11 +630,12 @@ describe("rePlan()", () => {
       lowConfidenceFactors: ["technical"],
       previousReports: [],
     })
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
+    expect(result.map((p) => p.factor)).not.toContain("invalid_factor")
   })
 
-  it("filters out items with empty instruction", async () => {
+  it("filters out items with empty instruction and enforces mandatory factors", async () => {
     mockCreate.mockResolvedValueOnce({
       choices: [{ message: { content: JSON.stringify([
         { factor: "technical", instruction: "Valid instruction", priority: 1 },
@@ -642,8 +648,10 @@ describe("rePlan()", () => {
       lowConfidenceFactors: ["technical", "onchain"],
       previousReports: [],
     })
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].factor).toBe("technical")
+    const onchain = result.find((p) => p.factor === "onchain")
+    expect(onchain?.instruction.length).toBeGreaterThan(0)
   })
 })
 

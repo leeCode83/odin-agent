@@ -10,7 +10,8 @@ import { getPrompt } from "@/lib/agent/due-diligence/prompt-registry"
 import "@/lib/agent/due-diligence/prompts"
 import { SubAgentThoughtSchema } from "@/lib/agent/due-diligence/subagent"
 import type { LlmThinkMessage, ThinkOptions, ThinkResult, NativeToolCallsResult } from "@/lib/agent/due-diligence/subagent"
-import { SubagentPlanSchema, AggregationResultSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
+import { AggregationResultSchema, type SubagentPlan, type FactorReport } from "@/lib/agent/due-diligence/types"
+import { parsePlanOutput } from "@/lib/agent/due-diligence/plan-validator"
 import { createDdLogger } from "@/lib/agent/due-diligence/logger"
 import { parseLlmJson, parseInvokeXml } from "@/lib/agent/shared/json-utils"
 import { normalizeThought, formatZodErrors } from "@/lib/agent/shared/llm-helpers"
@@ -277,6 +278,8 @@ rawPrefix: ${content.slice(0, 500)}`
  * @function plan
  * @description LLM call for the Main Agent's PLAN step. Given an asset,
  *   determines which subagents to deploy and their instructions.
+ *   Output is sanitized via parsePlanOutput (filters invalid factors,
+ *   forces technical + onchain presence).
  * @param {Object} params - Plan parameters.
  * @param {string} params.asset - The asset ticker or identifier.
  * @returns {Promise<SubagentPlan[]>} Array of subagent plans with factor, instruction, and priority.
@@ -302,22 +305,7 @@ export async function plan(params: {
       { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
-    const parsed = parseLlmJson(content)
-    if (parsed === null || !Array.isArray(parsed)) {
-      log("warn", "plan_json_unparseable", { rawPrefix: content.slice(0, 300) })
-      return []
-    }
-    
-    const validPlans: SubagentPlan[] = []
-    for (const item of parsed) {
-      const result = SubagentPlanSchema.safeParse(item)
-      if (result.success) {
-        validPlans.push(result.data)
-      } else {
-        log("warn", "plan_invalid_item_dropped", { factor: item?.factor, error: result.error.message })
-      }
-    }
-    return validPlans
+    return parsePlanOutput(content, "plan")
   } catch (err) {
     log("error", "plan_api_error", { error: err instanceof Error ? err.message : String(err) })
     return []
@@ -328,6 +316,8 @@ export async function plan(params: {
  * @function rePlan
  * @description LLM call for the Main Agent's RE-DEPLOY step. Generates targeted instructions
  *   for low-confidence factors based on previous reports.
+ *   Output is sanitized via parsePlanOutput (filters invalid factors,
+ *   forces technical + onchain presence).
  * @param {Object} params - Re-plan parameters.
  * @param {string} params.asset - The asset ticker or identifier.
  * @param {string[]} params.lowConfidenceFactors - Factor names that need re-analysis.
@@ -357,22 +347,7 @@ export async function rePlan(params: {
       { timeout: 45_000, maxRetries: 1 }
     )
     const content = response.choices?.[0]?.message?.content || "[]"
-    const parsed = parseLlmJson(content)
-    if (parsed === null || !Array.isArray(parsed)) {
-      log("warn", "replan_json_unparseable", { rawPrefix: content.slice(0, 300) })
-      return []
-    }
-
-    const validPlans: SubagentPlan[] = []
-    for (const item of parsed) {
-      const result = SubagentPlanSchema.safeParse(item)
-      if (result.success) {
-        validPlans.push(result.data)
-      } else {
-        log("warn", "replan_invalid_item_dropped", { factor: item?.factor, error: result.error.message })
-      }
-    }
-    return validPlans
+    return parsePlanOutput(content, "replan")
   } catch (err) {
     log("error", "replan_api_error", { error: err instanceof Error ? err.message : String(err) })
     return []

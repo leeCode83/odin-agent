@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { REACT_SYSTEM_PROMPT, PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "@/lib/agent/due-diligence/prompts"
+import { REACT_SYSTEM_PROMPT, PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT, DEPLOYMENT_RULES } from "@/lib/agent/due-diligence/prompts"
 
 describe("REACT_SYSTEM_PROMPT", () => {
   it("includes specific context for technical factor", () => {
@@ -35,10 +35,25 @@ describe("REACT_SYSTEM_PROMPT", () => {
   })
 })
 
+describe("DEPLOYMENT_RULES", () => {
+  it("defines the four valid factors and the mandatory/optional split", () => {
+    expect(DEPLOYMENT_RULES).toContain("Only 4 factors exist: technical, onchain, sentiment, fundamental")
+    expect(DEPLOYMENT_RULES).toContain("technical and onchain are MANDATORY")
+    expect(DEPLOYMENT_RULES).toContain("sentiment is OPTIONAL")
+    expect(DEPLOYMENT_RULES).toContain("fundamental is OPTIONAL")
+  })
+})
+
 describe("PLAN_PROMPT", () => {
   it("includes few-shot examples", () => {
     expect(PLAN_PROMPT).toContain('Example instruction for technical factor:')
     expect(PLAN_PROMPT).toContain('Example instruction for onchain factor:')
+  })
+
+  it("embeds DEPLOYMENT_RULES and the conditional examples", () => {
+    expect(PLAN_PROMPT).toContain(DEPLOYMENT_RULES)
+    expect(PLAN_PROMPT).toContain('only if technical and onchain tool calls failed')
+    expect(PLAN_PROMPT).toContain('only if you have zero knowledge of the asset')
   })
 })
 
@@ -46,6 +61,11 @@ describe("REPLAN_PROMPT", () => {
   it("includes specific instruction for tool and example", () => {
     expect(REPLAN_PROMPT).toContain('Your new instruction must explicitly name which tool to call first')
     expect(REPLAN_PROMPT).toContain('Example instruction:')
+  })
+
+  it("embeds DEPLOYMENT_RULES and keeps mandatory factors on re-deploy", () => {
+    expect(REPLAN_PROMPT).toContain(DEPLOYMENT_RULES)
+    expect(REPLAN_PROMPT).toContain('technical and onchain remain mandatory when re-deploying')
   })
 })
 
