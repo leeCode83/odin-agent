@@ -285,8 +285,33 @@ export async function runDDAgent(params: DDAgentParams): Promise<DDReport> {
       return report
     }
 
-    if (evaluation.decision === "PARTIAL" || evaluation.decision === "FAILED") {
-      status = evaluation.decision === "FAILED" ? "failed" : "partial"
+    if (evaluation.decision === "PARTIAL") {
+      status = "partial"
+      const report = buildFinalReport({
+        asset: params.asset,
+        category: params.category.name,
+        factorReports: allFactorReports,
+        aggregation,
+        deterministic,
+        iterations: iteration + 1,
+        processingTimeMs: Date.now() - t0,
+        status,
+        errors,
+      })
+
+      if (params.userId && params.walletAddress) {
+        recordDDReport(
+          report as unknown as Record<string, unknown>,
+          params.userId,
+          params.walletAddress
+        ).catch((e) => log("warn", "db_persist_failed", { error: e instanceof Error ? e.message : String(e) }))
+      }
+
+      return report
+    }
+
+    if (evaluation.decision === "FAILED") {
+      status = "failed"
       return buildFinalReport({
         asset: params.asset,
         category: params.category.name,
