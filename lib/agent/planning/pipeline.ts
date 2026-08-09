@@ -83,6 +83,10 @@ export interface PlanningPipelineResult {
  *   reports: total factor count, usable (scored) count, and the names of
  *   failed factors (score null or missing). Returns undefined when nothing
  *   failed, so the output key is omitted rather than present-but-empty.
+ *   Note: usableFactorCount here is pure passthrough metadata echoed to API
+ *   consumers — it feeds NO ratio/penalty math in this pipeline. Confidence
+ *   penalties live in agent.ts and read ddReport.usableFactorCount directly,
+ *   so this value must NOT be "aligned" to a denominator.
  * @param {DDReport} ddReport - The upstream due diligence report.
  * @returns {DDCoverage | undefined} Coverage summary, or undefined when all factors scored.
  */

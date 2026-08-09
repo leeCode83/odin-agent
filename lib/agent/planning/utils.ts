@@ -35,6 +35,15 @@ export interface CompactDDReport {
   catalysts?: DDReport["catalysts"]
   summary?: string
   crossValidation?: CompactCrossValidation
+  /**
+   * @property {Object} [factorCoverage] - Optional factor coverage summary consumed by downstream planning
+   *   agents to detect partial/failed due diligence.
+   *   `plannedFactors` lists every key of `sections`, INCLUDING failed factors whose score is null.
+   *   `usableCount` counts only sections where `typeof score === "number"`.
+   *   Omitted entirely when `sections` is absent or empty (cleaner contract; consumers fall back
+   *   to a default when the field is missing).
+   */
+  factorCoverage?: { plannedFactors: string[]; usableCount: number }
 }
 
 /**
@@ -67,6 +76,18 @@ export function compactDDReport(report: DDReport): CompactDDReport {
       }
     : undefined
 
+  // reason: derive coverage from sections so failed (null-score) factors stay
+  // visible to planning; omitted when sections is absent/empty.
+  const compactFactorCoverage =
+    sections && Object.keys(sections).length > 0
+      ? {
+          plannedFactors: Object.keys(sections),
+          usableCount: Object.values(sections).filter(
+            (s) => s !== undefined && typeof s.score === "number"
+          ).length,
+        }
+      : undefined
+
   return {
     asset,
     timestamp,
@@ -80,5 +101,6 @@ export function compactDDReport(report: DDReport): CompactDDReport {
     ...(catalysts !== undefined && { catalysts }),
     ...(summary !== undefined && { summary }),
     ...(compactCrossValidation !== undefined && { crossValidation: compactCrossValidation }),
+    ...(compactFactorCoverage !== undefined && { factorCoverage: compactFactorCoverage }),
   }
 }

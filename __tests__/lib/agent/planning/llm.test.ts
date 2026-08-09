@@ -112,6 +112,19 @@ describe("plan", () => {
     expect(userPayload.targetProfitPercent).toBe(100)
   })
 
+  it("appends factor coverage context to the user message", async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ subagents: [] }) } }],
+    })
+
+    await plan({ ddReport: mockDDReport, targetProfitPercent: 100 })
+
+    const [reqArgs] = mockCreate.mock.calls[0] as [Record<string, unknown>]
+    const messages = reqArgs.messages as Array<{ role: string; content: string }>
+    const userPayload = JSON.parse(messages[1].content)
+    expect(userPayload.factorCoverageContext).toContain("covers 4 factors")
+  })
+
   it("dedupes repeated perspectives and clamps priority to 1-3", async () => {
     mockCreate.mockResolvedValue({
       choices: [
@@ -262,6 +275,24 @@ describe("rePlan", () => {
     expect(userPayload.targetProfitPercent).toBe(50)
   })
 
+  it("appends factor coverage context to the user message", async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ subagents: [] }) } }],
+    })
+
+    await rePlan({
+      ddReport: mockDDReport,
+      targetProfitPercent: 50,
+      lowConsensusPerspectives: ["conservative"],
+      previousReports,
+    })
+
+    const [reqArgs] = mockCreate.mock.calls[0] as [Record<string, unknown>]
+    const messages = reqArgs.messages as Array<{ role: string; content: string }>
+    const userPayload = JSON.parse(messages[1].content)
+    expect(userPayload.factorCoverageContext).toContain("covers 4 factors")
+  })
+
   it("returns [] on failure", async () => {
     mockCreate.mockRejectedValue(new Error("boom"))
     const result = await rePlan({
@@ -383,6 +414,19 @@ describe("aggregate", () => {
     const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 100 })
     expect(result!.side).toBe("no_trade")
     expect(result!.no_trade_reason).toBe("Funding overheated")
+  })
+
+  it("appends factor coverage context to the user message", async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify(validAggregationJson) } }],
+    })
+
+    await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 100 })
+
+    const [reqArgs] = mockCreate.mock.calls[0] as [Record<string, unknown>]
+    const messages = reqArgs.messages as Array<{ role: string; content: string }>
+    const userPayload = JSON.parse(messages[1].content)
+    expect(userPayload.factorCoverageContext).toContain("covers 4 factors")
   })
 
   it("clamps bounded numbers to 0-100", async () => {

@@ -9,6 +9,7 @@
  */
 
 import { describeZodSchema } from "@/lib/agent/due-diligence/prompts"
+import type { CompactDDReport } from "./utils"
 
 /**
  * @function makePlanningSystemPrompt
@@ -114,8 +115,6 @@ Given a DDReport and user's target profit percentage, decide:
 2. Specific instruction for each perspective
 3. Priority order (1 = highest)
 
-The DDReport contains analysis of 4 factors: technical, onchain, sentiment, fundamental.
-
 For each perspective, write an instruction that tells the subagent:
 - What aspects of the DDReport to focus on
 - What tools to prioritize (risk calc, funding check, liquidation zones, web search)
@@ -127,6 +126,50 @@ Example for aggressive (bearish): "Confirm downside pressure with current order 
 
 You MUST respond in JSON format.
 Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
+
+/**
+ * @function buildDDFactorContext
+ * @description Composes a one-sentence coverage summary of the DDReport's
+ *   factor analysis, for embedding into orchestrator user payloads (plan /
+ *   rePlan / aggregate). Replaces the hardcoded "4 factors" sentence that
+ *   PLAN_PROMPT used to carry, so the coverage statement stays accurate when
+ *   factors are optional, fail, or new ones get added.
+ * @param {CompactDDReport} ddReport - Compacted DD report. The
+ *   `factorCoverage` field is OPTIONAL — the contract guarantees it exists
+ *   only when the DD report producer emits it. When missing, this helper falls
+ *   back to `Object.keys(ddReport.sections ?? {})` as the planned factors and
+ *   derives usability from section scores (`typeof score === "number"`).
+ * @returns {string} One coverage sentence:
+ *   - all succeeded: "DDReport covers N factors: a, b."
+ *   - degraded: "DDReport covers M of N planned factors: a, b. Failed: c."
+ *   - unknown: "DDReport coverage unavailable." (never throws)
+ */
+export function buildDDFactorContext(ddReport: CompactDDReport): string {
+  // reason: factorCoverage is optional — read it defensively so this never
+  // crashes while the field is absent from CompactDDReport.
+  const coverage = (ddReport as CompactDDReport & {
+    factorCoverage?: { plannedFactors: string[]; usableCount: number }
+  }).factorCoverage
+
+  const plannedFactors = coverage?.plannedFactors ?? Object.keys(ddReport.sections ?? {})
+  if (plannedFactors.length === 0) return "DDReport coverage unavailable."
+
+  // reason: sections is typed with known optional keys; index it via a record
+  // cast so arbitrary (incl. future) factor names stay type-safe.
+  const sections = (ddReport.sections ?? {}) as Record<string, { score?: number | null } | undefined>
+  const usableNames = plannedFactors.filter((factor) => typeof sections[factor]?.score === "number")
+  const usableCount = coverage?.usableCount ?? usableNames.length
+
+  // reason: usableCount >= plannedFactors.length means the failed set is not
+  // derivable — per contract, emit the all-succeeded form (also covers the
+  // degenerate case where no usable names are nameable).
+  if (usableCount >= plannedFactors.length || usableNames.length === 0) {
+    return `DDReport covers ${plannedFactors.length} factors: ${plannedFactors.join(", ")}.`
+  }
+
+  const failed = plannedFactors.filter((factor) => !usableNames.includes(factor))
+  return `DDReport covers ${usableCount} of ${plannedFactors.length} planned factors: ${usableNames.join(", ")}. Failed: ${failed.join(", ")}.`
+}
 
 /**
  * @constant AGGREGATE_PROMPT

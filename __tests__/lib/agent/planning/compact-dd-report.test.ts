@@ -124,6 +124,75 @@ describe("compactDDReport", () => {
     expect(compacted.summary).toBe(fullDDReport.summary)
   })
 
+  it("lists ALL section keys in plannedFactors including failed (null-score) factors", () => {
+    const report: DDReport = {
+      ...fullDDReport,
+      sections: {
+        ...fullDDReport.sections,
+        technical: { ...fullDDReport.sections.technical!, score: null },
+      },
+    }
+
+    const compacted = compactDDReport(report)
+    expect(compacted.factorCoverage?.plannedFactors).toEqual([
+      "technical",
+      "onchain",
+      "sentiment",
+      "fundamental",
+    ])
+  })
+
+  it("counts only numeric scores in usableCount, excluding failed factors", () => {
+    const report: DDReport = {
+      ...fullDDReport,
+      sections: {
+        technical: { ...fullDDReport.sections.technical!, score: null },
+        onchain: fullDDReport.sections.onchain!,
+        sentiment: fullDDReport.sections.sentiment!,
+        fundamental: fullDDReport.sections.fundamental!,
+      },
+    }
+
+    const compacted = compactDDReport(report)
+    expect(compacted.factorCoverage).toEqual({
+      plannedFactors: ["technical", "onchain", "sentiment", "fundamental"],
+      usableCount: 3,
+    })
+  })
+
+  it("all-failed case: usableCount 0 but plannedFactors still lists all keys", () => {
+    const report: DDReport = {
+      ...fullDDReport,
+      sections: {
+        technical: { score: null, summary: null, signals: [] },
+        onchain: { score: null, summary: null, signals: [] },
+        sentiment: { score: null, summary: null, signals: [] },
+        fundamental: { score: null, summary: null, signals: [] },
+      },
+    }
+
+    const compacted = compactDDReport(report)
+    expect(compacted.factorCoverage).toEqual({
+      plannedFactors: ["technical", "onchain", "sentiment", "fundamental"],
+      usableCount: 0,
+    })
+  })
+
+  it("omits factorCoverage when sections is missing", () => {
+    const report = {
+      ...fullDDReport,
+      sections: undefined,
+    } as unknown as DDReport
+
+    const compacted = compactDDReport(report)
+    expect(compacted).not.toHaveProperty("factorCoverage")
+  })
+
+  it("omits factorCoverage when sections is empty", () => {
+    const compacted = compactDDReport({ ...fullDDReport, sections: {} })
+    expect(compacted).not.toHaveProperty("factorCoverage")
+  })
+
   it("handles minimal DDReport with optional fields missing gracefully", () => {
     const minimalReport: DDReport = {
       asset: "ETH",

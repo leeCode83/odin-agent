@@ -305,6 +305,118 @@ describe("runPlanningAgent", () => {
     })
   })
 
+  describe("confidence penalty — planned factor count denominator", () => {
+    // reason: the penalty denominator is plannedFactorCount (number of sections
+    // DD deployed, incl. failed ones with null score), NOT a fixed 4 — a
+    // deliberately small DD run (e.g. 2 factors, all successful) must not be
+    // discounted, while failed deployed factors still penalize proportionally.
+
+    it("applies no penalty when all deployed factors succeeded (2/2 → 1.0)", async () => {
+      const twoFactorDD = {
+        ...DD_REPORT,
+        status: "complete" as const,
+        sections: {
+          technical: { score: 80, summary: "x", signals: [] },
+          onchain: { score: 70, summary: "y", signals: [] },
+        },
+      }
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent({ ...INPUT, ddReport: twoFactorDD })
+
+      // 80 * 2/2 = 80 → no discount despite 2 < 4 factors
+      expect(out.report.confidence_score).toBe(80)
+      expect(out.status).toBe("complete")
+    })
+
+    it("penalizes when some deployed factors failed (2/4 → 0.5)", async () => {
+      const partialDD = {
+        ...DD_REPORT,
+        status: "partial" as const,
+        sections: {
+          technical: { score: 80, summary: "x", signals: [] },
+          onchain: { score: null, summary: null, signals: [] },
+          sentiment: { score: 70, summary: "y", signals: [] },
+          fundamental: { score: null, summary: null, signals: [] },
+        },
+      }
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
+
+      // 80 * 2/4 = 40 → below the 70 confidence threshold → approval path
+      expect(out.report.confidence_score).toBe(40)
+      expect(out.status).toBe("approval_required")
+    })
+
+    it("penalizes proportionally for 3 of 4 usable factors (3/4 → 0.75)", async () => {
+      const partialDD = {
+        ...DD_REPORT,
+        status: "partial" as const,
+        sections: {
+          technical: { score: 80, summary: "x", signals: [] },
+          onchain: { score: 70, summary: "y", signals: [] },
+          sentiment: { score: 60, summary: "z", signals: [] },
+          fundamental: { score: null, summary: null, signals: [] },
+        },
+      }
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent({ ...INPUT, ddReport: partialDD })
+
+      // 80 * 3/4 = 60 → below the 70 confidence threshold → approval path
+      expect(out.report.confidence_score).toBe(60)
+      expect(out.status).toBe("approval_required")
+    })
+
+    it("falls back to usableFactorCount when sections is empty — no NaN, no crash", async () => {
+      const noSectionsDD = {
+        ...DD_REPORT,
+        status: "complete" as const,
+        sections: {},
+        usableFactorCount: 2,
+      }
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent({ ...INPUT, ddReport: noSectionsDD })
+
+      // planned = 0 → falls back to usable = 2 → multiplier 2/2 = 1.0
+      expect(out.report.confidence_score).toBe(80)
+    })
+
+    it("falls back to usableFactorCount when sections is undefined — no NaN, no crash", async () => {
+      const noSectionsDD = {
+        ...DD_REPORT,
+        status: "complete" as const,
+        sections: undefined,
+        usableFactorCount: 2,
+      } as unknown as DDReport
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 80 }))
+
+      const out = await runPlanningAgent({ ...INPUT, ddReport: noSectionsDD })
+
+      // planned = 0 → falls back to usable = 2 → multiplier 2/2 = 1.0
+      expect(out.report.confidence_score).toBe(80)
+    })
+
+    it("still throws when usableFactorCount is 0 even with deployed sections", async () => {
+      const zeroUsableDD = {
+        ...DD_REPORT,
+        status: "partial" as const,
+        sections: {
+          technical: { score: null, summary: null, signals: [] },
+          onchain: { score: null, summary: null, signals: [] },
+        },
+      }
+
+      const err = await captureError(runPlanningAgent({ ...INPUT, ddReport: zeroUsableDD }))
+
+      expect(err).toBeInstanceOf(PlanningError)
+      expect((err as Error).message).toBe("PLANNING_FAILED")
+      expect((err as PlanningError).detail).toMatchObject({ phase: "dd" })
+    })
+  })
+
   describe("happy path — ACCEPT", () => {
     it("accepts on full consensus and builds a LONG trade plan", async () => {
       const out = await runPlanningAgent(INPUT)

@@ -5,6 +5,7 @@ import {
   PLAN_PROMPT,
   AGGREGATE_PROMPT,
   REPLAN_PROMPT,
+  buildDDFactorContext,
 } from "@/lib/agent/planning/prompts"
 import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 
@@ -132,6 +133,94 @@ describe("PLAN_PROMPT", () => {
   it("includes few-shot examples for perspectives", () => {
     expect(PLAN_PROMPT).toContain("Example for conservative (bullish):")
     expect(PLAN_PROMPT).toContain("Example for aggressive (bullish):")
+  })
+
+  it("no longer hardcodes the factor list", () => {
+    expect(PLAN_PROMPT).not.toContain("4 factors")
+    expect(PLAN_PROMPT).not.toContain("technical, onchain, sentiment, fundamental")
+  })
+})
+
+describe("buildDDFactorContext", () => {
+  // reason: fixture factory — factorCoverage is optional (lands via the DD
+  // report contract), so tests must cover both with and without it.
+  const makeReport = (overrides: Record<string, unknown> = {}) => ({
+    asset: "BTC",
+    timestamp: "2025-01-01T00:00:00Z",
+    sections: {},
+    risk_flags: [],
+    ...overrides,
+  })
+
+  it("emits the all-succeeded form when every planned factor is usable", () => {
+    const report = makeReport({
+      sections: {
+        technical: { score: 70, summary: "Bullish trend", signals: [] },
+        sentiment: { score: 55, summary: "Neutral", signals: [] },
+      },
+      factorCoverage: { plannedFactors: ["technical", "sentiment"], usableCount: 2 },
+    })
+
+    expect(buildDDFactorContext(report)).toBe("DDReport covers 2 factors: technical, sentiment.")
+  })
+
+  it("emits the degraded form listing failed factors when some scores are null", () => {
+    const report = makeReport({
+      sections: {
+        technical: { score: 70, summary: "Bullish trend", signals: [] },
+        sentiment: { score: 55, summary: "Neutral", signals: [] },
+        fundamental: { score: null, summary: null, signals: [] },
+        onchain: { score: null, summary: null, signals: [] },
+      },
+      factorCoverage: {
+        plannedFactors: ["technical", "sentiment", "fundamental", "onchain"],
+        usableCount: 2,
+      },
+    })
+
+    expect(buildDDFactorContext(report)).toBe(
+      "DDReport covers 2 of 4 planned factors: technical, sentiment. Failed: fundamental, onchain."
+    )
+  })
+
+  it("falls back to sections when factorCoverage is missing", () => {
+    const report = makeReport({
+      sections: {
+        technical: { score: 70, summary: "Bullish trend", signals: [] },
+        sentiment: { score: 55, summary: "Neutral", signals: [] },
+        fundamental: { score: null, summary: null, signals: [] },
+      },
+    })
+
+    expect(buildDDFactorContext(report)).toBe(
+      "DDReport covers 2 of 3 planned factors: technical, sentiment. Failed: fundamental."
+    )
+  })
+
+  it("emits the all-succeeded form when usableCount is not derivable", () => {
+    // reason: usableCount >= plannedFactors.length means the failed set cannot
+    // be derived — the contract says to emit the all-succeeded form.
+    const report = makeReport({
+      sections: {
+        technical: { score: 70, summary: "Bullish trend", signals: [] },
+        sentiment: { score: 55, summary: "Neutral", signals: [] },
+        fundamental: { score: null, summary: null, signals: [] },
+      },
+      factorCoverage: {
+        plannedFactors: ["technical", "sentiment", "fundamental"],
+        usableCount: 3,
+      },
+    })
+
+    expect(buildDDFactorContext(report)).toBe(
+      "DDReport covers 3 factors: technical, sentiment, fundamental."
+    )
+  })
+
+  it("does not crash on empty sections", () => {
+    expect(buildDDFactorContext(makeReport({ sections: {} }))).toBe(
+      "DDReport coverage unavailable."
+    )
   })
 })
 

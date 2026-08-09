@@ -131,7 +131,7 @@ Konsep fundamental: **deterministic circuit breaker untuk LLM bias**. Setiap kep
 
 ---
 
-## Masalah 6: Planning Agent Hardcode 4 Factor — DD Agent Sudah Dinamis
+## ✅ Masalah 6: Planning Agent Hardcode 4 Factor — DD Agent Sudah Dinamis
 
 **Data flow:**
 ```
@@ -195,8 +195,8 @@ Beberapa komponen sudah menangani dynamic factor count dengan benar:
 | `extractDegradedFactors()`                    | `lib/agent/shared/dd-utils.ts:21-36`            | Generik, tidak hardcode nama factor   |
 | `compactDDReport()`                           | `lib/agent/planning/utils.ts:47-84`             | Iterasi `sections` secara generik     |
 | `buildFinalReport()`                          | `lib/agent/due-diligence/agent.ts:116-123`      | Iterasi `factorReports` secara generik |
-| `expectedFactorCount`                         | `lib/agent/planning/agent.ts:311`               | **HARDCODE 4**                        |
-| Prompt "4 factors"                            | `lib/agent/planning/prompts.ts:118`             | **HARDCODE 4**                        |
+| `plannedFactorCount`                        | `lib/agent/planning/agent.ts:339`               | ✅ **FIXED — dinamis** (sections keys + fallback) |
+| Prompt "4 factors"                            | `lib/agent/planning/prompts.ts`                 | ✅ **FIXED — dinamis** (`buildDDFactorContext`) |
 
 Dua baris hardcode ini adalah bottleneck: semua kode di atasnya sudah siap untuk dynamic factor count, tapi dua konstanta ini memaksa asumsi 4 factor.
 

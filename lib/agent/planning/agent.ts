@@ -331,12 +331,17 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // circuit breaker rejects subsequent requests for the cooldown window.
   // Graceful degradation rule: ONLY status "failed" or zero usable factors is
   // fatal. A "partial" report with usable factors continues — confidence is
-  // penalized later (multiplier = usable/expected, see below) so degraded
+  // penalized later (multiplier = usable/planned, see below) so degraded
   // input flows to the approval path instead of a 500.
   const usableFactorCount =
     ddReport.usableFactorCount ??
     Object.values(ddReport.sections ?? {}).filter((s) => typeof s.score === "number").length
-  const expectedFactorCount = 4
+  // reason: the sections record holds every factor DD intentionally deployed —
+  // including failed ones (score null) — so plannedFactorCount is the penalty
+  // denominator. A deliberately small DD (2 factors, all successful) must not
+  // be discounted against a fixed 4; fall back to usableFactorCount when no
+  // sections are recorded (avoids division by zero downstream).
+  const plannedFactorCount = Object.keys(ddReport.sections ?? {}).length || usableFactorCount
   if (ddReport.status === "failed" || usableFactorCount === 0) {
     throw new PlanningError(
       "PLANNING_FAILED",
@@ -345,7 +350,10 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
         reports: [],
         aggregation: null,
         ddReport,
-        message: `DD report insufficient quality — status: ${ddReport.status ?? "unknown"}, usable factor scores: ${usableFactorCount}`,
+        message:
+          ddReport.status === "failed"
+            ? `DD report status is failed (usable factor scores: ${usableFactorCount})`
+            : `DD report has 0 usable factor scores out of ${plannedFactorCount} deployed sections (status: ${ddReport.status ?? "unknown"}) — a partial report with at least one usable factor proceeds with a confidence penalty instead of failing`,
       },
       Date.now() - t0,
       "dd"
@@ -528,12 +536,15 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // position would trivially satisfy it anyway, so "auto" is forced.
   const thresholds = await getRiskThresholds(params.userId).catch(() => envDefaults())
   // reason: confidence penalty (graceful degradation of partial DD, spec
-  // §9.x). A report with usable < expected factors discounts the swarm's
+  // §9.x). A report with usable < planned factors discounts the swarm's
   // confidence BEFORE the autonomy gate, so degraded input flows to the human
   // approval path instead of failing. Formula:
-  //   multiplier = usableFactorCount / expectedFactorCount
-  //   (3/4 → 0.75, 2/4 → 0.5, 2/3 meme → 0.67); full reports → 1.0 (no-op).
-  const ddConfidenceMultiplier = Math.min(1, usableFactorCount / expectedFactorCount)
+  //   multiplier = usableFactorCount / plannedFactorCount
+  // plannedFactorCount = number of sections deployed by DD (incl. failed ones
+  // with null score); usableFactorCount = sections with a numeric score.
+  // All deployed factors succeeded → 1.0 (no penalty, no fixed 4); penalty
+  // applies only when some deployed factors failed (3/4 → 0.75, 2/4 → 0.5).
+  const ddConfidenceMultiplier = Math.min(1, usableFactorCount / plannedFactorCount)
   const finalAggregation = aggregation ?? fallbackAggregation(allReports)
   const effectiveAggregation: PlanningAggregationResult =
     ddConfidenceMultiplier < 1

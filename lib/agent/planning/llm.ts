@@ -3,7 +3,7 @@ import { z } from "zod"
 import { PerspectiveSchema } from "./types"
 import type { Perspective, PlanningSubagentPlan, PlanningAggregationResult, PerspectiveReport } from "./types"
 import type { DDReport } from "@/lib/agent/types"
-import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT } from "./prompts"
+import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT, buildDDFactorContext } from "./prompts"
 import { compactDDReport } from "./utils"
 import { getClient, DEEPSEEK_BASE_URL, DEEPSEEK_THINK_MODEL } from "@/lib/agent/shared/llm-client"
 
@@ -178,11 +178,14 @@ export async function plan(params: {
   ddReport: DDReport
   targetProfitPercent: number
 }): Promise<PlanningSubagentPlan[]> {
+  const compact = compactDDReport(params.ddReport)
   return callPlanningLLM({
     phase: "plan",
     systemPrompt: PLAN_PROMPT,
     userContent: JSON.stringify({
-      ddReport: compactDDReport(params.ddReport),
+      ddReport: compact,
+      // reason: dynamic factor-coverage context replaces the hardcoded 4-factor sentence.
+      factorCoverageContext: buildDDFactorContext(compact),
       targetProfitPercent: params.targetProfitPercent,
     }),
     parse: sanitizePlans,
@@ -207,11 +210,13 @@ export async function rePlan(params: {
   lowConsensusPerspectives: string[]
   previousReports: PerspectiveReport[]
 }): Promise<PlanningSubagentPlan[]> {
+  const compact = compactDDReport(params.ddReport)
   return callPlanningLLM({
     phase: "rePlan",
     systemPrompt: REPLAN_PROMPT,
     userContent: JSON.stringify({
-      ddReport: compactDDReport(params.ddReport),
+      ddReport: compact,
+      factorCoverageContext: buildDDFactorContext(compact),
       targetProfitPercent: params.targetProfitPercent,
       lowConsensusPerspectives: params.lowConsensusPerspectives,
       previousReports: params.previousReports,
@@ -238,12 +243,14 @@ export async function aggregate(params: {
   ddReport: DDReport
   targetProfitPercent: number
 }): Promise<PlanningAggregationResult | null> {
+  const compact = compactDDReport(params.ddReport)
   return callPlanningLLM({
     phase: "aggregate",
     systemPrompt: AGGREGATE_PROMPT,
     userContent: JSON.stringify({
       reports: params.reports,
-      ddReport: compactDDReport(params.ddReport),
+      ddReport: compact,
+      factorCoverageContext: buildDDFactorContext(compact),
       targetProfitPercent: params.targetProfitPercent,
     }),
     parse: sanitizeAggregation,
