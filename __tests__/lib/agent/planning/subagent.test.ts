@@ -46,7 +46,6 @@ const returnThoughtWithExtras: SubAgentThought = {
   entry_price: 65000,
   suggested_stop_loss: 62000,
   suggested_take_profit: 71000,
-  suggested_leverage: 5,
   suggested_position_size_usdc: 1000,
   risk_flags: ["Funding positive"],
 }
@@ -84,7 +83,6 @@ describe("runPerspectiveSubagent", () => {
     expect(report.entry_price).toBe(65000)
     expect(report.suggested_stop_loss).toBe(62000)
     expect(report.suggested_take_profit).toBe(71000)
-    expect(report.suggested_leverage).toBe(5)
     expect(report.suggested_position_size_usdc).toBe(1000)
     expect(report.risk_flags).toEqual(["Funding positive"])
     expect(report.signals).toHaveLength(1)
@@ -120,7 +118,6 @@ describe("runPerspectiveSubagent", () => {
     expect(report.entry_price).toBe(0)
     expect(report.suggested_stop_loss).toBe(0)
     expect(report.suggested_take_profit).toBe(0)
-    expect(report.suggested_leverage).toBe(0)
     expect(report.suggested_position_size_usdc).toBe(0)
     expect(report.risk_flags).toEqual([])
     expect(report.score).toBe(50)
@@ -208,7 +205,6 @@ describe("runPerspectiveSubagent", () => {
     expect(report.confidence).toBeNull()
     expect(report.side).toBe("no_trade")
     expect(report.entry_price).toBe(0)
-    expect(report.suggested_leverage).toBe(0)
     expect(report.risk_flags).toEqual([])
     expect(report.iterations).toBe(5)
     expect(thinkMock).toHaveBeenCalledTimes(6)

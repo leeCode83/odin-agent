@@ -113,17 +113,6 @@ export function computePositionSize(
 }
 
 /**
- * @function capLeverage
- * @description Caps LLM-suggested leverage to max allowed value.
- * @param {number} llmSuggested - Leverage suggested by the LLM.
- * @param {number} maxAllowed - Maximum leverage allowed by risk thresholds.
- * @returns {number} Capped leverage, rounded to 1 decimal place.
- */
-export function capLeverage(llmSuggested: number, maxAllowed: number): number {
-  return Math.round(Math.min(llmSuggested, maxAllowed) * 10) / 10
-}
-
-/**
  * @function computeEntryPrice
  * @description Fetches current mark price from Hyperliquid.
  * Delegates to the HL SDK via fetchOnchainData.
@@ -138,4 +127,64 @@ export async function computeEntryPrice(asset: string): Promise<number> {
   } catch {
     return 0
   }
+}
+
+/**
+ * @interface LeverageParams
+ * @description Inputs to computeLeverage.
+ * @property {number} entry - Entry price (USDC).
+ * @property {number} atr - Current ATR (same unit as entry).
+ * @property {number} confidence - 0..1, post-ddConfidenceMultiplier confidence.
+ * @property {number} maxLeverage - Absolute cap from risk thresholds.
+ * @property {number} [volTarget] - ATR percentage of price at which leverage ≈
+ *   confidence × maxLeverage (default 0.05, RISK_VOL_TARGET env).
+ * @property {number} [liqSafetyFactor] - Extra cushion below HL liquidation
+ *   (default 1.25; tier-1 maintenance margin = 0.5/L).
+ */
+export interface LeverageParams {
+  entry: number
+  atr: number
+  confidence: number
+  maxLeverage: number
+  volTarget?: number
+  liqSafetyFactor?: number
+}
+
+function clamp01(x: number): number {
+  return Math.min(1, Math.max(0, x))
+}
+
+/**
+ * @function computeLeverage
+ * @description Deterministic leverage sizing (no LLM). Stops at 1.5×ATR (same
+ * SL multiplier as computeSLTP) and requires the stop to sit well inside the
+ * Hyperliquid isolated-margin cushion: maintenance margin ≈ half of initial
+ * margin at max leverage (mmr = 0.5/L), so liquidation ≈ entry×(1−0.5/L) and
+ * cushion ≈ 1/L → stopPct ≤ (0.5/L)/liqSafetyFactor. Then volatility-targets
+ * with fractional Kelly: kappa = 0.25 + 0.75×clamp01(confidence),
+ * L_vol = kappa × (volTarget/atrPct). Final = clamp(min(L_safe, L_vol), 1,
+ * maxLeverage).
+ * @param {LeverageParams} params - entry/atr/confidence/maxLeverage, optional
+ *   volTarget (default 0.05, RISK_VOL_TARGET env) and liqSafetyFactor
+ *   (default 1.25).
+ * @returns {number} Leverage clamped to [1, maxLeverage], rounded to 1 decimal.
+ * @throws {RangeError} If entry <= 0 or atr <= 0.
+ */
+export function computeLeverage(params: LeverageParams): number {
+  const { entry, atr, confidence, maxLeverage } = params
+  if (entry <= 0 || atr <= 0) {
+    throw new RangeError(`Cannot compute leverage: entry=${entry}, atr=${atr} — both must be positive`)
+  }
+
+  const volTarget = params.volTarget ?? (Number(process.env.RISK_VOL_TARGET) || 0.05)
+  const liqSafetyFactor = params.liqSafetyFactor ?? 1.25
+
+  const stopPct = (1.5 * atr) / entry
+  const L_safe = 1 / (2 * stopPct * liqSafetyFactor)
+  const kappa = 0.25 + 0.75 * clamp01(confidence)
+  const atrPct = atr / entry
+  const L_vol = kappa * (volTarget / atrPct)
+  const L_final = Math.min(maxLeverage, Math.max(1, Math.min(L_safe, L_vol)))
+
+  return Math.round(L_final * 10) / 10
 }

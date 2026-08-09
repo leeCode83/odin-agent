@@ -15,11 +15,11 @@ import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
 import { buildPlanningToolRegistry } from "@/lib/agent/planning/tools"
 import { evaluateConsensus } from "@/lib/agent/planning/evaluate"
 import { autonomyGate } from "@/lib/agent/planning/gate"
-import { computePositionSize, capLeverage } from "@/lib/agent/planning/risk-engine"
+import { computeATR, computeLeverage, computePositionSize } from "@/lib/agent/shared/risk-engine"
 import { recordDecision } from "@/lib/db/graph-memory"
 import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
-import { fetchUserEquity } from "@/lib/data/hyperliquid"
+import { fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import { TradePlanSchema } from "@/lib/agent/types"
 import { log } from "@/lib/agent/planning/log"
@@ -91,7 +91,7 @@ function median(values: number[]): number {
  * @description Deterministic merge fallback (spec §9.2) used when the
  *   AGGREGATE LLM call never succeeded but a plan must still be built
  *   (forced accept / loop exhausted). Majority vote for side, medians for
- *   prices/leverage/confidence, no profit feasibility.
+ *   prices/confidence, no profit feasibility.
  * @param {PerspectiveReport[]} reports - Accumulated perspective reports.
  * @returns {PlanningAggregationResult} Synthesized aggregation.
  */
@@ -104,7 +104,6 @@ function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationR
       reasoning: "Planning loop exhausted before any perspective subagent completed",
       confidence_score: 0,
       confidence_breakdown: { factor_alignment: 0, historical_match: 0, signal_strength: 0 },
-      leverage_suggested: 1, // minimum valid for schema, NO_TRADE ignores leverage
       risk_flags: ["planning_timeout", "no_subagent_data"],
       consensus_alignment: 0,
       contradictions: [],
@@ -140,7 +139,6 @@ function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationR
     confidence_score: Math.round(median(reports.map((r) => r.confidence ?? 0))),
     // reason: reports carry no confidence_breakdown — zeros mark it as unmeasured.
     confidence_breakdown: { factor_alignment: 0, historical_match: 0, signal_strength: 0 },
-    leverage_suggested: median(reports.map((r) => r.suggested_leverage)),
     risk_flags: Array.from(new Set(reports.flatMap((r) => r.risk_flags))),
     consensus_alignment: 0,
     contradictions: [],
@@ -171,10 +169,14 @@ interface BuildTradePlanParams {
  * @description Assembles the final TradePlan from the accepted aggregation.
  *   NO_TRADE encodes a zero-size placeholder position: SL = entry*0.99,
  *   TP = entry*1.01, position_size_usdc 0, leverage 1 (spec §8.1 row 8).
+ *   Leverage is the risk engine's deterministic OUTPUT (never LLM input):
+ *   ATR is fetched once from Hyperliquid (same source as the compute_atr
+ *   tool) and fed to computeLeverage. Any ATR fetch failure degrades to
+ *   leverage 1 (conservative) instead of crashing the plan.
  * @param {BuildTradePlanParams} params - Plan assembly inputs.
- * @returns {TradePlan} Zod-validated trade plan.
+ * @returns {Promise<TradePlan>} Zod-validated trade plan.
  */
-function buildTradePlan(params: BuildTradePlanParams): TradePlan {
+async function buildTradePlan(params: BuildTradePlanParams): Promise<TradePlan> {
   const { asset, aggregation, equity, thresholds, autonomyDecision, iterations, totalMs } = params
 
   // Guard: invalid prices for a live trade → force NO_TRADE
@@ -182,8 +184,7 @@ function buildTradePlan(params: BuildTradePlanParams): TradePlan {
     aggregation.side !== "no_trade" &&
     (aggregation.entry_price <= 0 ||
       aggregation.stop_loss <= 0 ||
-      aggregation.take_profit <= 0 ||
-      aggregation.leverage_suggested <= 0)
+      aggregation.take_profit <= 0)
 
   const safeAggregation: PlanningAggregationResult = hasInvalidPrices
     ? {
@@ -208,6 +209,33 @@ function buildTradePlan(params: BuildTradePlanParams): TradePlan {
     thresholds.risk_per_trade_percent
   )
 
+  // reason: leverage is the risk engine's OUTPUT — never LLM input. ATR is
+  // fetched once (1h window, same source as the compute_atr tool); a fetch
+  // or ATR failure degrades to leverage 1 (conservative), never a crash.
+  let atr = 0
+  if (!noTrade) {
+    try {
+      const candles = await fetchCandlesForATR(asset, "1h", 20)
+      atr = computeATR(candles, 14)
+    } catch (err) {
+      log("warn", "planning.atr_failed", {
+        asset,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  const leverage =
+    noTrade || atr <= 0
+      ? 1
+      : computeLeverage({
+          entry,
+          atr,
+          // reason: aggregation confidence is 0-100; computeLeverage expects 0-1.
+          confidence: safeAggregation.confidence_score / 100,
+          maxLeverage: thresholds.max_leverage,
+          volTarget: Number(process.env.RISK_VOL_TARGET) || 0.05,
+        })
+
   return TradePlanSchema.parse({
     asset,
     // reason: TradePlanSchema.side only allows long|short — NO_TRADE falls
@@ -219,7 +247,7 @@ function buildTradePlan(params: BuildTradePlanParams): TradePlan {
     position_size_contracts: noTrade ? 0 : positionSizeContracts,
     stop_loss: stopLoss,
     take_profit: takeProfit,
-    leverage: noTrade ? 1 : capLeverage(safeAggregation.leverage_suggested, thresholds.max_leverage),
+    leverage,
     confidence_score: safeAggregation.confidence_score,
     confidence_breakdown: safeAggregation.confidence_breakdown,
     thesis: safeAggregation.thesis,
@@ -523,7 +551,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
           thresholds
         )
 
-  const tradePlan = buildTradePlan({
+  const tradePlan = await buildTradePlan({
     asset: params.asset,
     aggregation: effectiveAggregation,
     equity,

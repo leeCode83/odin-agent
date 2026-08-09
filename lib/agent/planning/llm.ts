@@ -54,8 +54,6 @@ const PlanningAggregationSanitizeSchema = z.object({
       signal_strength: z.number().transform(clamp(0, 100)).default(0),
     })
     .default({ factor_alignment: 0, historical_match: 0, signal_strength: 0 }),
-  // reason: leverage has its own semantic range (1-20 per the prompt), not 0-100.
-  leverage_suggested: z.number().transform(clamp(1, 20)).default(1),
   risk_flags: z.array(z.string()).default([]),
   consensus_alignment: z.number().transform(clamp(0, 100)).default(0),
   contradictions: z.array(z.string()).default([]),

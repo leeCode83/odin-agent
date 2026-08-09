@@ -149,31 +149,10 @@ describe("compute_position_size", () => {
   })
 })
 
-describe("cap_leverage", () => {
-  it("caps when llm suggested exceeds max allowed", async () => {
-    const [tool] = buildRiskEngineTools(CTX).filter((t) => t.name === "cap_leverage")
-    const params = tool.parameters.parse({ llmSuggested: 15, maxAllowed: 10 })
-    const result = await tool.execute(params)
-
-    expect(result.success).toBe(true)
-    expect(result.data).toEqual({ leverage: 10 })
-  })
-
-  it("keeps llm value within max allowed and rounds to 1 decimal", async () => {
-    const [tool] = buildRiskEngineTools(CTX).filter((t) => t.name === "cap_leverage")
-    const params = tool.parameters.parse({ llmSuggested: 3.3333, maxAllowed: 10 })
-    const result = await tool.execute(params)
-
-    expect(result.success).toBe(true)
-    expect(result.data).toEqual({ leverage: 3.3 })
-  })
-})
-
 describe("buildRiskEngineTools", () => {
-  it("returns 4 tools with metadata and described params", () => {
+  it("returns 3 tools with metadata and described params", () => {
     const tools = buildRiskEngineTools(CTX)
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "cap_leverage",
       "compute_atr",
       "compute_position_size",
       "compute_sltp",

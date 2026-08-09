@@ -45,7 +45,6 @@ export const PerspectiveReportSchema = z.object({
   errors: z.array(z.string()),
   suggested_stop_loss: z.number(),
   suggested_take_profit: z.number(),
-  suggested_leverage: z.number(),
   suggested_position_size_usdc: z.number(),
   risk_flags: z.array(z.string()),
 })
@@ -164,7 +163,6 @@ export type PlanningAggregationResult = {
   reasoning: string
   confidence_score: number
   confidence_breakdown: ConfidenceBreakdown
-  leverage_suggested: number
   risk_flags: string[]
   consensus_alignment: number
   contradictions: string[]

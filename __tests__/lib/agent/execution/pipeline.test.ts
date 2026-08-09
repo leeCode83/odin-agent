@@ -4,7 +4,7 @@ import type { TradePlan, DDReport } from "@/lib/agent/types"
 
 const mockExchangeClient = { updateLeverage: vi.fn(), order: vi.fn() }
 
-const { mockGetAgentSigner, mockGetExchangeClient, mockGetAssetIndex, mockBuildOrders, mockRecordGraphMemory, mockSubscribeFill } = vi.hoisted(() => ({
+const { mockGetAgentSigner, mockGetExchangeClient, mockGetAssetIndex, mockBuildOrders, mockRecordGraphMemory, mockSubscribeFill, mockFetchUserEquity, mockGetRiskThresholds } = vi.hoisted(() => ({
   mockGetAgentSigner: vi.fn(() => ({ address: "0xagent" })),
   mockGetExchangeClient: vi.fn(() => mockExchangeClient),
   mockGetAssetIndex: vi.fn().mockResolvedValue({ assetIndex: 0, szDecimals: 5 }),
@@ -15,6 +15,13 @@ const { mockGetAgentSigner, mockGetExchangeClient, mockGetAssetIndex, mockBuildO
   })),
   mockRecordGraphMemory: vi.fn(),
   mockSubscribeFill: vi.fn(),
+  mockFetchUserEquity: vi.fn().mockResolvedValue(500),
+  mockGetRiskThresholds: vi.fn().mockResolvedValue({
+    confidence_threshold: 30,
+    max_position_usdc: 3000,
+    max_leverage: 100,
+    risk_per_trade_percent: 10,
+  }),
 }))
 
 vi.mock("@/lib/agent/execution/client", () => ({
@@ -30,6 +37,15 @@ vi.mock("@/lib/agent/execution/ws-monitor", () => ({
 }))
 vi.mock("@/lib/db/graph-memory", () => ({
   recordGraphMemory: mockRecordGraphMemory,
+}))
+vi.mock("@/lib/data/hyperliquid", () => ({
+  fetchUserEquity: mockFetchUserEquity,
+}))
+vi.mock("@/lib/db/risk-thresholds", () => ({
+  getRiskThresholds: mockGetRiskThresholds,
+}))
+vi.mock("@/lib/agent/shared/logger", () => ({
+  createLogger: vi.fn(() => vi.fn()),
 }))
 
 const validTradePlan: TradePlan = {
@@ -73,6 +89,13 @@ const OLD_ENV = process.env
 beforeEach(() => {
   vi.clearAllMocks()
   process.env = { ...OLD_ENV, AGENT_PRIVATE_KEY: "0xagent-test-key" }
+  mockFetchUserEquity.mockResolvedValue(500)
+  mockGetRiskThresholds.mockResolvedValue({
+    confidence_threshold: 30,
+    max_position_usdc: 3000,
+    max_leverage: 100,
+    risk_per_trade_percent: 10,
+  })
   mockExchangeClient.updateLeverage = vi.fn()
   mockExchangeClient.order = vi.fn().mockResolvedValue({
     response: {
@@ -275,5 +298,38 @@ describe("runExecutionPipeline", () => {
       ]),
       grouping: "normalTpsl",
     })
+  })
+
+  it("rejects plan whose leverage exceeds risk threshold without calling the exchange", async () => {
+    mockGetRiskThresholds.mockResolvedValue({
+      confidence_threshold: 30,
+      max_position_usdc: 3000,
+      max_leverage: 2,
+      risk_per_trade_percent: 10,
+    })
+
+    await expect(
+      runExecutionPipeline({
+        tradePlan: validTradePlan,
+        walletAddress: "0xmaster",
+        userId: "user-1",
+      })
+    ).rejects.toThrow("risk gate")
+
+    expect(mockExchangeClient.updateLeverage).not.toHaveBeenCalled()
+    expect(mockExchangeClient.order).not.toHaveBeenCalled()
+  })
+
+  it("skips the risk size check when equity fetch fails but still places", async () => {
+    mockFetchUserEquity.mockRejectedValue(new Error("HL down"))
+
+    const output = await runExecutionPipeline({
+      tradePlan: validTradePlan,
+      walletAddress: "0xmaster",
+      userId: "user-1",
+    })
+
+    expect(output.execution.status).toBe("placed")
+    expect(mockExchangeClient.order).toHaveBeenCalled()
   })
 })

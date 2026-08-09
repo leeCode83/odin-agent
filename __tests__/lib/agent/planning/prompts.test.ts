@@ -57,14 +57,14 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain("Use at least 2 tools before returning")
   })
 
-  it("describes the return format with planning fields", () => {
+  it("describes the return format with planning fields (no leverage — risk engine owns it)", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
     expect(prompt).toContain('set "action" to "return"')
     expect(prompt).toContain('"side": "long" | "short" | "no_trade"')
     expect(prompt).toContain('"entry_price"')
     expect(prompt).toContain('"suggested_stop_loss"')
     expect(prompt).toContain('"suggested_take_profit"')
-    expect(prompt).toContain('"suggested_leverage"')
+    expect(prompt).not.toContain('"suggested_leverage"')
     expect(prompt).toContain('"suggested_position_size_usdc"')
     expect(prompt).toContain('"risk_flags"')
   })
@@ -150,12 +150,13 @@ describe("AGGREGATE_PROMPT", () => {
     expect(AGGREGATE_PROMPT).toContain("contradictions")
   })
 
-  it("includes final plan parameters", () => {
+  it("includes final plan parameters (no leverage — risk engine computes it deterministically)", () => {
     expect(AGGREGATE_PROMPT).toContain("entry_price")
     expect(AGGREGATE_PROMPT).toContain("stop_loss")
     expect(AGGREGATE_PROMPT).toContain("take_profit")
     expect(AGGREGATE_PROMPT).toContain("position_size_usdc")
-    expect(AGGREGATE_PROMPT).toContain("leverage_suggested")
+    expect(AGGREGATE_PROMPT).not.toContain("leverage_suggested")
+    expect(AGGREGATE_PROMPT).toMatch(/deterministically by the risk engine/i)
   })
 
   it("includes CoT instructions and negative constraints", () => {

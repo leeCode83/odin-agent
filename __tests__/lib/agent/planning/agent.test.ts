@@ -24,6 +24,8 @@ const aggregateMock = vi.hoisted(() => vi.fn())
 const runPerspectiveSubagentMock = vi.hoisted(() => vi.fn())
 const buildPlanningToolRegistryMock = vi.hoisted(() => vi.fn())
 const fetchUserEquityMock = vi.hoisted(() => vi.fn())
+const fetchCandlesForATRMock = vi.hoisted(() => vi.fn())
+const computeLeverageMock = vi.hoisted(() => vi.fn())
 const getRiskThresholdsMock = vi.hoisted(() => vi.fn())
 const envDefaultsMock = vi.hoisted(() => vi.fn())
 const recordDecisionMock = vi.hoisted(() => vi.fn())
@@ -39,7 +41,14 @@ vi.mock("@/lib/agent/planning/subagent", () => ({
 vi.mock("@/lib/agent/planning/tools", () => ({
   buildPlanningToolRegistry: buildPlanningToolRegistryMock,
 }))
-vi.mock("@/lib/data/hyperliquid", () => ({ fetchUserEquity: fetchUserEquityMock }))
+vi.mock("@/lib/data/hyperliquid", () => ({
+  fetchUserEquity: fetchUserEquityMock,
+  fetchCandlesForATR: fetchCandlesForATRMock,
+}))
+vi.mock("@/lib/agent/shared/risk-engine", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent/shared/risk-engine")>()
+  return { ...actual, computeLeverage: computeLeverageMock }
+})
 vi.mock("@/lib/db/risk-thresholds", () => ({
   getRiskThresholds: getRiskThresholdsMock,
   envDefaults: envDefaultsMock,
@@ -83,6 +92,17 @@ const THRESHOLDS = {
   risk_per_trade_percent: 1,
 }
 
+// reason: 20 constant-TR candles (high-low spread 1) → computeATR = 1 exactly,
+// so the leverage call args are fully deterministic.
+const CANDLES = Array.from({ length: 20 }, (_, i) => ({
+  timestamp: 1700000000000 + i * 3600_000,
+  open: 100,
+  high: 100.5,
+  low: 99.5,
+  close: 100,
+  volume: 1000,
+}))
+
 function makeReport(over: Partial<PerspectiveReport> = {}): PerspectiveReport {
   return {
     perspective: "conservative",
@@ -98,7 +118,6 @@ function makeReport(over: Partial<PerspectiveReport> = {}): PerspectiveReport {
     errors: [],
     suggested_stop_loss: 95,
     suggested_take_profit: 110,
-    suggested_leverage: 3,
     suggested_position_size_usdc: 500,
     risk_flags: [],
     ...over,
@@ -112,7 +131,6 @@ function makeAggregation(over: Partial<PlanningAggregationResult> = {}): Plannin
     reasoning: "Aggregated reasoning",
     confidence_score: 70,
     confidence_breakdown: { factor_alignment: 70, historical_match: 60, signal_strength: 80 },
-    leverage_suggested: 3,
     risk_flags: [],
     consensus_alignment: 80,
     contradictions: [],
@@ -133,6 +151,8 @@ describe("runPlanningAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fetchUserEquityMock.mockResolvedValue(10000)
+    fetchCandlesForATRMock.mockResolvedValue(CANDLES)
+    computeLeverageMock.mockReturnValue(3)
     getRiskThresholdsMock.mockResolvedValue(THRESHOLDS)
     envDefaultsMock.mockReturnValue(THRESHOLDS)
     planMock.mockResolvedValue(FULL_PLAN)
@@ -308,7 +328,16 @@ describe("runPlanningAgent", () => {
       expect(plan.position_size_usdc).toBe(100)
       // computePositionSize(equity=10000, entry=100, sl=95, risk=1%) => 20 contracts
       expect(plan.position_size_contracts).toBe(20)
+      // leverage is the risk engine's deterministic output — fed with the
+      // fetched ATR (constant-TR candles → atr 1) and post-multiplier confidence
       expect(plan.leverage).toBe(3)
+      expect(computeLeverageMock).toHaveBeenCalledWith({
+        entry: 100,
+        atr: 1,
+        confidence: 0.7,
+        maxLeverage: 10,
+        volTarget: 0.05,
+      })
       expect(plan.confidence_score).toBe(70)
       expect(plan.confidence_breakdown).toEqual({
         factor_alignment: 70,
@@ -407,6 +436,16 @@ describe("runPlanningAgent", () => {
       const out = await runPlanningAgent(INPUT)
 
       expect(out.report.autonomy_decision).toBe("approve")
+    })
+
+    it("degrades to leverage 1 when the ATR candle fetch fails", async () => {
+      fetchCandlesForATRMock.mockRejectedValue(new Error("hl down"))
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("complete")
+      expect(out.report.leverage).toBe(1)
+      expect(computeLeverageMock).not.toHaveBeenCalled()
     })
   })
 
@@ -599,6 +638,7 @@ describe("runPlanningAgent", () => {
       expect(plan.position_size_usdc).toBe(0)
       expect(plan.position_size_contracts).toBe(0)
       expect(plan.leverage).toBe(1)
+      expect(computeLeverageMock).not.toHaveBeenCalled()
       expect(plan.autonomy_decision).toBe("auto")
       // NO_TRADE is now persisted for graph memory learning
       expect(recordDecisionMock).toHaveBeenCalledTimes(1)

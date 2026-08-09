@@ -106,7 +106,6 @@ export async function runPerspectiveSubagent(params: {
     errors: report.errors,
     suggested_stop_loss: stash?.suggested_stop_loss ?? 0,
     suggested_take_profit: stash?.suggested_take_profit ?? 0,
-    suggested_leverage: stash?.suggested_leverage ?? 0,
     suggested_position_size_usdc: stash?.suggested_position_size_usdc ?? 0,
     risk_flags: stash?.risk_flags ?? [],
   }

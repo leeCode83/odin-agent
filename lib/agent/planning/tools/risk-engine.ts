@@ -1,8 +1,8 @@
 /**
  * @file planning/tools/risk-engine.ts
- * @description Deterministic risk-engine tools (no LLM): ATR, SL/TP, position
- * sizing, and leverage capping, wrapping the pure functions in
- * lib/agent/planning/risk-engine.ts behind ToolDefinitions.
+ * @description Deterministic risk-engine tools (no LLM): ATR, SL/TP, and
+ * position sizing, wrapping the pure functions in
+ * lib/agent/shared/risk-engine.ts behind ToolDefinitions.
  * @module planning/tools/risk-engine
  * @layer agent
  */
@@ -11,7 +11,7 @@ import { z } from "zod"
 import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import type { Side } from "@/lib/agent/types"
 import { fetchCandlesForATR, fetchMarkPrice } from "@/lib/data/hyperliquid"
-import { computeATR, computeSLTP, computePositionSize, capLeverage } from "@/lib/agent/planning/risk-engine"
+import { computeATR, computeSLTP, computePositionSize } from "@/lib/agent/shared/risk-engine"
 
 /**
  * @interface RiskEngineToolContext
@@ -37,9 +37,9 @@ function round2(n: number): number {
 
 /**
  * @function buildRiskEngineTools
- * @description Builds the 4 deterministic risk-engine tools bound to a context.
+ * @description Builds the 3 deterministic risk-engine tools bound to a context.
  * @param {RiskEngineToolContext} ctx - Context providing asset and equity fallbacks.
- * @returns {ToolDefinition[]} compute_atr, compute_sltp, compute_position_size, cap_leverage.
+ * @returns {ToolDefinition[]} compute_atr, compute_sltp, compute_position_size.
  */
 export function buildRiskEngineTools(ctx: RiskEngineToolContext): ToolDefinition[] {
   return [
@@ -138,30 +138,6 @@ export function buildRiskEngineTools(ctx: RiskEngineToolContext): ToolDefinition
           return {
             success: true,
             data: { positionSizeUsdc, positionSizeContracts },
-            metadata: { source: "risk-engine", latencyMs: Date.now() - start },
-          }
-        } catch (err) {
-          return {
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-            metadata: { source: "risk-engine", latencyMs: Date.now() - start },
-          }
-        }
-      },
-    },
-    {
-      name: "cap_leverage",
-      description: "Cap an LLM-suggested leverage value to the user's maximum allowed leverage from risk thresholds, rounded to 1 decimal place.",
-      parameters: z.object({
-        llmSuggested: z.number().positive().describe("Leverage suggested by the LLM"),
-        maxAllowed: z.number().positive().describe("Maximum leverage allowed by the user's risk thresholds"),
-      }),
-      execute: async (params) => {
-        const start = Date.now()
-        try {
-          return {
-            success: true,
-            data: { leverage: capLeverage(params.llmSuggested, params.maxAllowed) },
             metadata: { source: "risk-engine", latencyMs: Date.now() - start },
           }
         } catch (err) {

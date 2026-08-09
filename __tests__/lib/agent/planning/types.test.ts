@@ -43,7 +43,6 @@ describe("PerspectiveReportSchema", () => {
     errors: [],
     suggested_stop_loss: 62000,
     suggested_take_profit: 71000,
-    suggested_leverage: 5,
     suggested_position_size_usdc: 100,
     risk_flags: [],
   }
@@ -54,7 +53,6 @@ describe("PerspectiveReportSchema", () => {
     expect(report.score).toBe(75)
     expect(report.side).toBe("long")
     expect(report.signals).toHaveLength(1)
-    expect(report.suggested_leverage).toBe(5)
     expect(report.risk_flags).toHaveLength(0)
   })
 
@@ -169,7 +167,6 @@ describe("Planning swarm types", () => {
       reasoning: "Reasoning",
       confidence_score: 60,
       confidence_breakdown: { factor_alignment: 60, historical_match: 60, signal_strength: 60 },
-      leverage_suggested: 3,
       risk_flags: [],
       consensus_alignment: 80,
       contradictions: [],

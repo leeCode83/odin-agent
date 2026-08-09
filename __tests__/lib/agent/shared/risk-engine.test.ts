@@ -3,8 +3,8 @@ import {
   computeATR,
   computeSLTP,
   computePositionSize,
-  capLeverage,
-} from "@/lib/agent/planning/risk-engine"
+  computeLeverage,
+} from "@/lib/agent/shared/risk-engine"
 import type { CandleData } from "@/lib/data/types"
 
 // Mock hyperliquid module; hoisted before any imports resolve
@@ -14,7 +14,7 @@ vi.mock("@/lib/data/hyperliquid", () => ({
   fetchOnchainData: mockFetchOnchainData,
 }))
 
-import { computeEntryPrice } from "@/lib/agent/planning/risk-engine"
+import { computeEntryPrice } from "@/lib/agent/shared/risk-engine"
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -102,19 +102,65 @@ describe("computePositionSize", () => {
   })
 })
 
-// ── capLeverage ───────────────────────────────────────────────────────────
+// ── computeLeverage ───────────────────────────────────────────────────────
 
-describe("capLeverage", () => {
-  it("caps when llm suggested exceeds max allowed", () => {
-    expect(capLeverage(15, 10)).toBe(10)
+describe("computeLeverage", () => {
+  it("confidence 0 -> kappa floor 0.25 applies", () => {
+    // atrPct = 0.005, stopPct = 1.5*0.5/100 = 0.0075
+    // L_safe = 1/(2*0.0075*1.25) ≈ 53.33, kappa = 0.25
+    // L_vol = 0.25*(0.05/0.005) = 2.5 -> min(53.33, 2.5) -> clamp -> 2.5
+    expect(computeLeverage({ entry: 100, atr: 0.5, confidence: 0, maxLeverage: 10 })).toBe(2.5)
   })
 
-  it("returns llm value when within max allowed", () => {
-    expect(capLeverage(5, 10)).toBe(5)
+  it("confidence 1 -> kappa = 1.0", () => {
+    // atrPct = 0.01 -> L_vol = 1*(0.05/0.01) = 5
+    // L_safe = 1/(2*0.015*1.25) ≈ 26.67 -> min -> 5
+    expect(computeLeverage({ entry: 100, atr: 1, confidence: 1, maxLeverage: 10 })).toBe(5)
   })
 
-  it("rounds to 1 decimal place", () => {
-    expect(capLeverage(3.3333, 10)).toBe(3.3)
+  it("clamps confidence outside [0,1] to kappa bounds", () => {
+    // confidence 2 -> clamp01 -> 1 -> same as confidence 1
+    expect(computeLeverage({ entry: 100, atr: 1, confidence: 2, maxLeverage: 10 })).toBe(5)
+  })
+
+  it("tiny ATR -> L_vol huge -> clamps to maxLeverage", () => {
+    // atrPct = 0.0005, kappa = 0.85 -> L_vol = 0.85*(0.05/0.0005) = 85
+    // L_safe = 1/(2*0.00075*1.25) ≈ 533 -> min = 85 -> clamp(1, 20) = 20
+    expect(computeLeverage({ entry: 100, atr: 0.05, confidence: 0.8, maxLeverage: 20 })).toBe(20)
+  })
+
+  it("large ATR -> L_safe binds (result < L_vol path)", () => {
+    // volTarget 0.5: atrPct = 0.03 -> L_vol = 1*(0.5/0.03) ≈ 16.67
+    // stopPct = 0.045 -> L_safe = 1/(2*0.045*1.25) ≈ 8.89 -> min -> round -> 8.9
+    expect(
+      computeLeverage({ entry: 100, atr: 3, confidence: 1, volTarget: 0.5, maxLeverage: 10 })
+    ).toBe(8.9)
+  })
+
+  it("extreme large ATR -> floor of 1", () => {
+    // atrPct = 0.1 -> L_vol = 1*(0.05/0.1) = 0.5 -> clamp(0.5, 1, 10) = 1
+    expect(computeLeverage({ entry: 100, atr: 10, confidence: 1, maxLeverage: 10 })).toBe(1)
+  })
+
+  it("rounds to 1 decimal (3.333... -> 3.3)", () => {
+    // kappa = 0.25 + 0.75*(1/9) = 1/3 -> L_vol = (1/3)*(0.05/0.005) = 3.333...
+    // L_safe ≈ 53.33 -> min -> 3.333... -> round -> 3.3
+    expect(computeLeverage({ entry: 100, atr: 0.5, confidence: 1 / 9, maxLeverage: 10 })).toBe(3.3)
+  })
+
+  it("throws RangeError when entry <= 0", () => {
+    expect(() =>
+      computeLeverage({ entry: 0, atr: 5, confidence: 0.5, maxLeverage: 10 })
+    ).toThrow(RangeError)
+    expect(() =>
+      computeLeverage({ entry: -1, atr: 5, confidence: 0.5, maxLeverage: 10 })
+    ).toThrow(RangeError)
+  })
+
+  it("throws RangeError when atr <= 0", () => {
+    expect(() =>
+      computeLeverage({ entry: 100, atr: 0, confidence: 0.5, maxLeverage: 10 })
+    ).toThrow(RangeError)
   })
 })
 

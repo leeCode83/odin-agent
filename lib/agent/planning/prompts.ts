@@ -75,7 +75,6 @@ You MUST respond in JSON format. Do NOT use XML tags or <invoke> blocks — tool
   "signals": [...], // required when action is "return"
   "suggested_stop_loss": <number>, // required when action is "return"
   "suggested_take_profit": <number>, // required when action is "return"
-  "suggested_leverage": <number>, // required when action is "return"
   "suggested_position_size_usdc": <number>, // required when action is "return"
   "conclusion": "...", // required when action is "return"
   "risk_flags": [...] // required when action is "return"
@@ -146,11 +145,11 @@ Input:
 Tasks:
 1. Determine consensus: do all 3 agree on side (long/short/no_trade)?
 2. Synthesize thesis: combine the strongest points from each perspective
-3. Set final parameters: entry, SL, TP, leverage, position size (prefer median across perspectives)
+3. Set final parameters: entry, SL, TP, direction, position size (prefer median across perspectives). Leverage is NOT part of your output — it is computed deterministically by the risk engine from entry price, volatility, and confidence. Never output a leverage value.
 4. Check profit feasibility: does expected profit (based on take_profit - entry) meet the user's target profit?
 5. Flag contradictions: if perspectives disagree, note what they disagree on
 
-Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side or leverage, list the disagreement explicitly.
+Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side, list the disagreement explicitly.
 
 If 2+ perspectives conclude no_trade, final action is no_trade. However, if 2+ perspectives returned bearish signals but chose no_trade due to directional uncertainty (not because the asset is untradeable), consider overriding to short — bearish uncertainty is not the same as "not worth trading".
 
@@ -160,7 +159,6 @@ Return JSON with:
 - reasoning: string
 - confidence_score: number (0-100)
 - confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
-- leverage_suggested: number
 - risk_flags: string[]
 - entry_price: number
 - stop_loss: number

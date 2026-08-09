@@ -90,7 +90,6 @@ describe("buildPlanningToolRegistry", () => {
     expect(Object.keys(registry).sort()).toEqual([
       "analyze_funding_regime",
       "assess_cascade_risk",
-      "cap_leverage",
       "check_liquidation_zones",
       "compute_atr",
       "compute_position_size",
@@ -123,8 +122,6 @@ describe("buildPlanningToolRegistry", () => {
           return { entry: 100, atr: 10, side: "long" }
         case "compute_position_size":
           return { entry: 100, stopLoss: 95, riskPercent: 1 }
-        case "cap_leverage":
-          return { llmSuggested: 5, maxAllowed: 10 }
         case "get_orderbook_depth":
           return { asset: "ETH" }
         // reason: T3 tools take asset per call — their schemas require it, no ctx fallback (verified in funding.ts/liquidation.ts/web-search.ts)

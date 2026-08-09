@@ -11,6 +11,10 @@ import { getAgentSigner, getExchangeClient, getAssetIndex } from "./client"
 import { buildOrders } from "./orders"
 import { subscribeFill } from "./ws-monitor"
 import { recordGraphMemory } from "@/lib/db/graph-memory"
+import { getRiskThresholds } from "@/lib/db/risk-thresholds"
+import { fetchUserEquity } from "@/lib/data/hyperliquid"
+import { createLogger } from "@/lib/agent/shared/logger"
+import { verifyTradePlanAgainstRisk, type AccountRiskState } from "./risk-gate"
 import { withRetry, withTimeout } from "@/lib/utils"
 import type { ExecutionPipelineInput, ExecutionPipelineOutput, ExecutionResult } from "./types"
 
@@ -28,6 +32,8 @@ export class ExecutionError extends Error {
 
 const fillTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
 const hlTimeoutMs = Number(process.env.EXECUTION_FILL_TIMEOUT_MS) || 15_000
+
+const log = createLogger({ service: "execution" })
 
 /**
  * @function runExecutionPipeline
@@ -59,6 +65,19 @@ export async function runExecutionPipeline(
   const agentPk = process.env.AGENT_PRIVATE_KEY
   if (!agentPk) {
     throw new ExecutionError("Agent wallet not initialized. Call POST /api/agent/execution/init first")
+  }
+
+  const thresholds = await getRiskThresholds(userId)
+  let accountState: AccountRiskState = {}
+  try {
+    accountState = { equityUsdc: await fetchUserEquity(input.walletAddress) }
+  } catch (err) {
+    log("warn", "risk_gate_equity_unavailable", { userId, error: String(err) })
+  }
+  const riskCheck = verifyTradePlanAgainstRisk(validated, { thresholds, accountState })
+  if (!riskCheck.ok) {
+    log("error", "risk_gate_rejected", { asset: validated.asset, side: validated.side, reasons: riskCheck.reasons })
+    throw new ExecutionError(`TradePlan rejected by execution risk gate: ${riskCheck.reasons.join("; ")}`)
   }
 
   const { assetIndex, szDecimals } = await getAssetIndex(validated.asset)
