@@ -2,7 +2,9 @@ import { z } from "zod"
 
 /**
  * @interface DecisionNode
- * @description Represents a decision node in the ArangoDB graph.
+ * @description Represents a decision node in the ArangoDB graph. Carries the
+ *   optional per-perspective verdict breakdown used to score historical
+ *   perspective performance (see queryPerspectivePerformance).
  */
 export interface DecisionNode {
   _key?: string
@@ -15,6 +17,9 @@ export interface DecisionNode {
   tradePlan: unknown
   autonomyDecision: "auto" | "approve"
   timestamp: string
+  // reason: per-decision per-perspective verdicts; the planning layer owns the
+  // shape — kept `unknown` here so this DB layer never couples to planning.
+  perspectiveBreakdown?: unknown
 }
 
 /**

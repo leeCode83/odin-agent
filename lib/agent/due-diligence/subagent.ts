@@ -300,9 +300,13 @@ async function executeToolCall(
  *      message, appends {role:"tool"} results, and loops.
  *   5. If `action === "tool_call"` (backward-compat JSON convention), validates params,
  *      executes the tool, pushes the result into conversation history, and loops.
- *   6. If the loop budget (`maxLoops`) or wall-clock budget (`timeoutMs`) is
- *      exhausted, force-returns with whatever history was collected.
+ *   6. If the loop budget (`maxLoops`), tool-call budget (`maxToolCalls`), or
+ *      wall-clock budget (`timeoutMs`) is exhausted, force-returns with
+ *      whatever history was collected.
  *   7. Duplicate-action detection forces early stop if the same tool+params is repeated.
+ *   8. Wrap-up nudge: at ~80% of the loop budget the model is told its budget
+ *      is nearly spent and to prioritize required tools / return — prevents
+ *      tool-spamming from starving mandatory calls (compute_sltp etc.).
  *
  * @param {Object} params - Configuration for the subagent run.
  * @param {string} params.factor - The factor name (e.g. "technical").
@@ -310,6 +314,9 @@ async function executeToolCall(
  * @param {string} params.instruction - Natural-language instruction for the subagent.
  * @param {string} params.asset - Asset ticker or identifier.
  * @param {number} [params.maxLoops=3] - Maximum THINK→ACT iterations.
+ * @param {number} [params.maxToolCalls=10] - Maximum total tool executions across
+ *   the loop (bounds cost/latency independently of iteration count — one turn
+ *   can request several tools).
  * @param {number} [params.timeoutMs=60000] - Wall-clock timeout in milliseconds.
  * @param {number} [params.circuitBreakerThreshold=3] - Max consecutive errors for a single tool before circuit opens.
  * @param {(messages: Array<LlmThinkMessage>, options?: ThinkOptions) => Promise<ThinkResult>} params.llmThink
@@ -325,16 +332,23 @@ export async function runSubagent(params: {
   instruction: string
   asset: string
   maxLoops?: number
+  maxToolCalls?: number
   timeoutMs?: number
   circuitBreakerThreshold?: number
   llmThink: (messages: LlmThinkMessage[], options?: ThinkOptions) => Promise<ThinkResult>
   getSystemPrompt: (factor: string, tools: ToolRegistry, instruction: string) => string
 }): Promise<FactorReport> {
   const maxLoops = params.maxLoops ?? 3
+  const maxToolCalls = params.maxToolCalls ?? 10
   const timeoutMs = params.timeoutMs ?? 60000
   const circuitBreakerThreshold = params.circuitBreakerThreshold ?? 3
   const history: HistoryEntry[] = []
   const toolNames = Object.keys(params.tools)
+  // reason: wrap-up nudge at ~80% of the iteration budget — the model is told
+  // budget is nearly spent so it returns or fires REQUIRED tools (compute_sltp,
+  // compute_position_size) instead of spending the tail on exploratory calls
+  // (Vibe-Trading PR#148 pattern: "wrap-up nudge at 80% of iteration budget").
+  const wrapUpAt = Math.max(1, Math.floor(maxLoops * 0.8))
 
   // reason: an empty registry (e.g. technical without a candleMap) must not send a
   // `tools` field — pass no options so think() stays on the JSON-in-prompt convention.
@@ -370,6 +384,18 @@ export async function runSubagent(params: {
           remainingLoops: maxLoops - i - 1,
           availableTools: toolNames,
           history: summarizeHistory(history),
+          // reason: wrap-up nudge (Vibe-Trading PR#148) — at ~80% budget the
+          // model must stop exploring and either return or fire required tools.
+          ...(i === wrapUpAt
+            ? {
+                budgetWarning:
+                  "BUDGET WRAP-UP: only " +
+                  (maxLoops - i - 1) +
+                  " iteration(s) of tool budget remain. If your analysis is ready, return now. " +
+                  "If you still need data, call the REQUIRED tools first (get_mark_price, compute_sltp, " +
+                  "compute_position_size) — do NOT spend the last iterations on new exploratory tools.",
+              }
+            : {}),
         }),
       },
     ]
@@ -448,6 +474,14 @@ export async function runSubagent(params: {
           tool_call_id: tc.id,
           content: JSON.stringify({ success: result.success, error: result.error, data: summarizeData(result.data) }),
         })
+
+        // reason: tool-call budget (bounded-agentic-loop) — caps total tool
+        // executions independently of iteration count, since one turn can
+        // request several tools; stops cost/latency blowups from tool-spamming.
+        if (history.length >= maxToolCalls) {
+          stopReason = "tool_budget"
+          break reactLoop
+        }
       }
       continue
     }
@@ -480,6 +514,12 @@ export async function runSubagent(params: {
         stopReason = "circuit_open"
         break reactLoop
       }
+    }
+
+    // reason: tool-call budget — same bound as the native path (see above).
+    if (history.length >= maxToolCalls) {
+      stopReason = "tool_budget"
+      break reactLoop
     }
   }
 

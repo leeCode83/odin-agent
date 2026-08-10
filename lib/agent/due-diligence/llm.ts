@@ -181,7 +181,15 @@ export async function think(
     // reason: DeepSeek reasoning models emit valid JSON followed by trailing
     // prose — parseLlmJson already strips fences and extracts the first
     // balanced object; only truly unparseable output reaches this retry.
-    log("error", "think_json_parse_failed", { factor, rawPrefix: content.slice(0, 300) })
+    log("error", "think_json_parse_failed", {
+      factor,
+      rawPrefix: content.slice(0, 300),
+      // reason: diagnostics to track WHY the drift keeps failing — truncation
+      // (invoke open but never closed) vs malformed content (no invoke at all).
+      contentLength: content.length,
+      xmlInvokeOpen: /<invoke\s/i.test(content),
+      xmlInvokeClosed: /<\/invoke>/i.test(content),
+    })
     // reason: a blind re-call replays the same failure — feed the parse error and the
     // truncated raw output back so the model can correct the malformed JSON.
     const retryContent = `${requestMessages.find((m) => m.role === "user")?.content ?? ""}

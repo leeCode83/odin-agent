@@ -131,7 +131,16 @@ Dengan R:R 1:2, target 2% itu feasible. Tapi **tidak ada tool yang menghitung in
 
 ---
 
-## Masalah 5: Aggregator Override Terlalu Lunak
+## ✅ Masalah 5: Aggregator Override Terlalu Lunak
+
+> **Status: SELESAI — Solusi Ultimate: Deterministic Weighted Consensus + Override Cascade.** Keputusan side & confidence final kini output kode deterministik, bukan kebijakan LLM:
+> - **L1 Dynamic Weighting** (`consensus/weights.ts`) — bobot per perspektif dari win-rate historis graph memory (α-blend cold-start → uniform saat belum ada data; key hilang/`{}` di-normalisasi, tidak crash) + Selective Winner-Takes-All boost (pola Market Regime Council) yang revert otomatis (stateless).
+> - **L2 Weighted Scoring** (`consensus/scoring.ts`) — score(side) = Σ bobot × confidence + bonus agreement entry-spread <5% (mini TrustTrade claim-consensus).
+> - **L3 Strong-Minority Override** (`consensus/override.ts`) — di Rule 2: ≥2 no_trade + sinyal kuat (report confidence ≥ 70) + profit feasible → side di-rescue, confidence = max(override, aggregation); unanimous abstain & trade infeasible TIDAK PERNAH di-rescue. Gate memakai report confidence (bukan bobot × confidence — dengan 3 perspektif uniform, 1/3 × 85 ≈ 28 tak akan pernah menyentuh 70).
+> - **Aggregator diturunkan pangkat** — `AGGREGATE_PROMPT` tak lagi berisi "consider overriding to short"; side & confidence final ditentukan consensus layer, aggregator hanya sintesis thesis/median angka.
+> - **Demosi pada forced path** — setelah cap re-deploy, override diterapkan ke aggregation (side + confidence deterministik), jadi sinyal kuat tidak lagi mati di loop exhaustion.
+> - **Opsional B: profit-target scaling** — target user > 3×ATR di-cap ke target feasible, plan di-flag `profit_target_scaled` + `autonomy_decision: "approve"` (wajib persetujuan manusia) + `decisionPath` di output API.
+> - Gate: 1005/1005 test, tsc clean, lint 0 error.
 
 `AGGREGATE_PROMPT`:
 > *"If 2+ perspectives returned bearish signals but chose no_trade due to directional uncertainty (not because the asset is untradeable), **consider** overriding to short"*
@@ -241,6 +250,7 @@ Dua baris hardcode ini adalah bottleneck: semua kode di atasnya sudah siap untuk
 | **ATLAS/Adaptive-OPRO** (arxiv 2510.15949)          | Prompt optimization; static vs dynamic separation; LLM untuk reasoning, bukan kalkulasi     | Fix prompt defeatism |
 | **FINCON** (NeurIPS 2024)                           | Conceptual Verbal Reinforcement; manager-analyst hierarchy; deterministic risk layer        | Risk engine role     |
 | **crypto-trade-claude-code** (GitHub)               | "Leverage is output, never input"; code-enforced risk gate LLM can't argue past             | Leverage fix         |
+| **Market Regime Council** (arxiv 2605.24490)        | Selective Winner-Takes-All override berbasis performa, revert otomatis                      | Weighting L1 + WTA   |
 | **"To Trade or Not to Trade"** (arxiv 2507.08584)   | Risk-informed metrics improve trading decisions; builder-critic pattern                     | Feasibility calc     |
 
 ---

@@ -25,10 +25,12 @@ const runPerspectiveSubagentMock = vi.hoisted(() => vi.fn())
 const buildPlanningToolRegistryMock = vi.hoisted(() => vi.fn())
 const fetchUserEquityMock = vi.hoisted(() => vi.fn())
 const fetchCandlesForATRMock = vi.hoisted(() => vi.fn())
+const fetchMarkPriceMock = vi.hoisted(() => vi.fn())
 const computeLeverageMock = vi.hoisted(() => vi.fn())
 const getRiskThresholdsMock = vi.hoisted(() => vi.fn())
 const envDefaultsMock = vi.hoisted(() => vi.fn())
 const recordDecisionMock = vi.hoisted(() => vi.fn())
+const queryPerspectivePerformanceMock = vi.hoisted(() => vi.fn())
 
 vi.mock("@/lib/agent/planning/llm", () => ({
   plan: planMock,
@@ -44,6 +46,7 @@ vi.mock("@/lib/agent/planning/tools", () => ({
 vi.mock("@/lib/data/hyperliquid", () => ({
   fetchUserEquity: fetchUserEquityMock,
   fetchCandlesForATR: fetchCandlesForATRMock,
+  fetchMarkPrice: fetchMarkPriceMock,
 }))
 vi.mock("@/lib/agent/shared/risk-engine", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/agent/shared/risk-engine")>()
@@ -53,7 +56,12 @@ vi.mock("@/lib/db/risk-thresholds", () => ({
   getRiskThresholds: getRiskThresholdsMock,
   envDefaults: envDefaultsMock,
 }))
-vi.mock("@/lib/db/graph-memory", () => ({ recordDecision: recordDecisionMock }))
+vi.mock("@/lib/db/graph-memory", () => ({
+  recordDecision: recordDecisionMock,
+  // reason: cold-start default — no history → uniform weights; individual
+  // tests override with performance data to exercise dynamic weighting.
+  queryPerspectivePerformance: queryPerspectivePerformanceMock,
+}))
 
 const DD_REPORT: DDReport = {
   asset: "BTC",
@@ -152,6 +160,10 @@ describe("runPlanningAgent", () => {
     vi.clearAllMocks()
     fetchUserEquityMock.mockResolvedValue(10000)
     fetchCandlesForATRMock.mockResolvedValue(CANDLES)
+    // reason: markPrice 1 + ATR 1 (constant-TR candles) → max feasible target
+    // = 3×ATR% = 300% > INPUT target 100% → profit-target scaling stays OFF for
+    // the default suite; scaling tests override this mock explicitly.
+    fetchMarkPriceMock.mockResolvedValue(1)
     computeLeverageMock.mockReturnValue(3)
     getRiskThresholdsMock.mockResolvedValue(THRESHOLDS)
     envDefaultsMock.mockReturnValue(THRESHOLDS)
@@ -164,19 +176,28 @@ describe("runPlanningAgent", () => {
     )
     buildPlanningToolRegistryMock.mockReturnValue({})
     recordDecisionMock.mockResolvedValue("key-1")
+    // reason: cold-start default — no historical performance → uniform weights.
+    queryPerspectivePerformanceMock.mockResolvedValue(null)
   })
 
   describe("step 0 — setup and pre-fetches", () => {
-    it("pre-fetches equity once and passes it to the tool registry", async () => {
+    it("pre-fetches equity, mark price, and ATR once and passes them to the tool registry", async () => {
       await runPlanningAgent(INPUT)
 
       expect(fetchUserEquityMock).toHaveBeenCalledTimes(1)
       expect(fetchUserEquityMock).toHaveBeenCalledWith("0xabc")
+      expect(fetchMarkPriceMock).toHaveBeenCalledTimes(1)
+      expect(fetchMarkPriceMock).toHaveBeenCalledWith("BTC")
+      expect(fetchCandlesForATRMock).toHaveBeenCalledTimes(1)
       expect(buildPlanningToolRegistryMock).toHaveBeenCalledWith({
         walletAddress: "0xabc",
         userId: "user-1",
         asset: "BTC",
         equity: 10000,
+        // reason: pre-fetched once per run — tools serve these from ctx
+        // instead of re-fetching (latency fix).
+        markPrice: 1,
+        atr: 1,
       })
     })
 
@@ -789,6 +810,189 @@ describe("runPlanningAgent", () => {
       expect((err as PlanningError).detail?.reports).toHaveLength(3)
       expect((err as PlanningError).detail?.ddReport).toBe(DD_REPORT)
       expect(recordDecisionMock).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("L3 strong-minority override & L1 dynamic weighting", () => {
+    it("rescues the strong minority signal through the forced path (SHORT survives)", async () => {
+      runPerspectiveSubagentMock.mockImplementation(
+        async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) => {
+          if (perspective === "aggressive") {
+            return makeReport({ perspective, side: "short", confidence: 85, score: 85 })
+          }
+          return makeReport({ perspective, side: "no_trade", confidence: 0, score: 0 })
+        }
+      )
+      aggregateMock.mockResolvedValue(
+        makeAggregation({
+          side: "no_trade",
+          confidence_score: 50,
+          profit_feasible: true,
+          no_trade_reason: "aggregator stayed abstinent",
+        })
+      )
+
+      const out = await runPlanningAgent(INPUT)
+
+      // reason: iteration 1 → override → RE-DEPLOY of abstainers; iteration 2
+      // hits the per-perspective cap → forced → the override applies to the
+      // aggregation: side short, confidence max(85, 50) = 85.
+      expect(out.iterations).toBe(2)
+      expect(out.status).toBe("partial")
+      expect(out.report.action).toBe("SHORT")
+      expect(out.report.confidence_score).toBe(85)
+      expect(out.report.side).toBe("short")
+      expect(out.consensus?.overrideRule).toMatchObject({
+        applied: true,
+        side: "short",
+        confidence: 85,
+        triggeredBy: "aggressive",
+      })
+    })
+
+    it("never rescues when profit feasibility fails — NO_TRADE stands", async () => {
+      runPerspectiveSubagentMock.mockImplementation(
+        async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) => {
+          if (perspective === "aggressive") {
+            return makeReport({ perspective, side: "short", confidence: 85, score: 85 })
+          }
+          return makeReport({ perspective, side: "no_trade", confidence: 0, score: 0 })
+        }
+      )
+      aggregateMock.mockResolvedValue(
+        makeAggregation({ side: "no_trade", confidence_score: 50, profit_feasible: false })
+      )
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.report.action).toBe("NO_TRADE")
+      expect(out.consensus?.overrideRule.applied).toBe(false)
+    })
+
+    it("derives weights from graph-memory performance history", async () => {
+      queryPerspectivePerformanceMock.mockResolvedValue({
+        conservative: { correct: 1, total: 10 },
+        balance: { correct: 2, total: 10 },
+        aggressive: { correct: 9, total: 10 },
+      })
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(queryPerspectivePerformanceMock).toHaveBeenCalledWith("user-1")
+      // reason: α = 1 − e^(−10/20) ≈ 0.393; aggressive winRate 0.9 → weight
+      // ≈ 0.393×0.9 + 0.607×0.333 ≈ 0.556 — clearly above conservative ≈ 0.241.
+      expect(out.consensus?.weights.aggressive).toBeGreaterThan(0.5)
+      expect(out.consensus?.weights.aggressive).toBeGreaterThan(
+        out.consensus?.weights.conservative ?? 0
+      )
+      expect(out.status).toBe("complete")
+    })
+
+    it("persists the per-perspective breakdown with the decision (Phase 2 feed)", async () => {
+      await runPlanningAgent(INPUT)
+
+      expect(recordDecisionMock).toHaveBeenCalledTimes(1)
+      const doc = recordDecisionMock.mock.calls[0][0] as Record<string, unknown>
+      const breakdown = doc.perspectiveBreakdown as unknown[]
+      expect(breakdown).toHaveLength(3)
+      expect(breakdown[0]).toMatchObject({ perspective: "conservative", side: "long" })
+    })
+
+    it("degrades to uniform weights when history is unavailable", async () => {
+      queryPerspectivePerformanceMock.mockRejectedValue(new Error("db down"))
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.consensus?.weights).toEqual({
+        conservative: 1 / 3,
+        balance: 1 / 3,
+        aggressive: 1 / 3,
+      })
+    })
+
+    it("handles an EMPTY performance record ({} — no decisions yet, production 500 regression)", async () => {
+      // reason: queryPerspectivePerformance returns {} when the user has no
+      // decisions with a perspectiveBreakdown — the exact production crash
+      // (Cannot read properties of undefined (reading 'total')).
+      queryPerspectivePerformanceMock.mockResolvedValue({})
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("complete")
+      expect(out.consensus?.weights).toEqual({
+        conservative: 1 / 3,
+        balance: 1 / 3,
+        aggressive: 1 / 3,
+      })
+    })
+  })
+
+  describe("Option B — profit-target scaling & decisionPath", () => {
+    it("scales an infeasible target to 3×ATR and requires approval (status approval_required)", async () => {
+      // reason: mark price 100, ATR 1 (constant-TR candles) → max feasible
+      // target = 3×1% = 3% < INPUT target 100% → scaling engages.
+      fetchMarkPriceMock.mockResolvedValue(100)
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.report.profit_target_scaled).toBe(true)
+      expect(out.report.profit_target_percent).toBe(3)
+      expect(out.report.profit_target_original_percent).toBe(100)
+      expect(out.report.autonomy_decision).toBe("approve")
+      expect(out.report.risk_flags).toContain("profit_target_scaled_from_100_to_3")
+      expect(out.status).toBe("approval_required")
+      // reason: the scaled target reaches the swarm LLM calls so feasibility
+      // is judged against the achievable target, not the original ask.
+      expect(aggregateMock).toHaveBeenCalledWith(
+        expect.objectContaining({ targetProfitPercent: 3 })
+      )
+      expect(runPerspectiveSubagentMock).toHaveBeenCalledWith(
+        expect.objectContaining({ targetProfitPercent: 3 })
+      )
+    })
+
+    it("keeps the user target when it is ATR-feasible (no scaling, no forced approval)", async () => {
+      // reason: mark price 1 → max feasible target = 300% > INPUT 100% → no
+      // scaling; the happy path keeps autonomy auto (confidence 70 ≥ 70).
+      fetchMarkPriceMock.mockResolvedValue(1)
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.report.profit_target_scaled).toBeUndefined()
+      expect(out.report.autonomy_decision).toBe("auto")
+      expect(out.status).toBe("complete")
+      expect(out.decisionPath).toBe("consensus")
+    })
+
+    it("reports decisionPath forced when the re-deploy cap forces acceptance", async () => {
+      // reason: low-confidence reports → low-consensus set is non-empty →
+      // per-perspective re-deploy counts rise and the cap fires by iteration 2.
+      runPerspectiveSubagentMock.mockImplementation(
+        async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) =>
+          makeReport({ perspective, confidence: 40 })
+      )
+      aggregateMock.mockResolvedValue(makeAggregation({ confidence_score: 30, profit_feasible: false }))
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.status).toBe("partial")
+      expect(out.iterations).toBe(2)
+      expect(out.decisionPath).toBe("forced")
+    })
+
+    it("reports decisionPath no_trade for a unanimous abstention", async () => {
+      runPerspectiveSubagentMock.mockImplementation(
+        async ({ perspective }: { perspective: PerspectiveReport["perspective"] }) =>
+          makeReport({ perspective, side: "no_trade" })
+      )
+      aggregateMock.mockResolvedValue(
+        makeAggregation({ side: "no_trade", entry_price: 0, position_size_usdc: 0, confidence_score: 40 })
+      )
+
+      const out = await runPlanningAgent(INPUT)
+
+      expect(out.report.action).toBe("NO_TRADE")
+      expect(out.decisionPath).toBe("no_trade")
     })
   })
 })

@@ -40,6 +40,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 50, executeMs: 200, aggregateMs: 100, evaluateMs: 50, totalMs: 500 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({
@@ -67,6 +68,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     await runPlanningPipeline({ asset: "BTC", userId: "user-1", walletAddress: "0x123", ddReport: { asset: "BTC" } as unknown as DDReport })
@@ -82,6 +84,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     await runPlanningPipeline({
@@ -103,6 +106,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 3,
       status: "partial",
+      decisionPath: "forced",
     })
 
     const result = await runPlanningPipeline({
@@ -171,6 +175,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "approval_required",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({
@@ -191,6 +196,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     await expect(
@@ -204,6 +210,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({
@@ -230,6 +237,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({
@@ -259,6 +267,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({
@@ -287,6 +296,7 @@ describe("runPlanningPipeline", () => {
       timing: { planMs: 0, executeMs: 0, aggregateMs: 0, evaluateMs: 0, totalMs: 0 },
       iterations: 1,
       status: "complete",
+      decisionPath: "consensus",
     })
 
     const result = await runPlanningPipeline({

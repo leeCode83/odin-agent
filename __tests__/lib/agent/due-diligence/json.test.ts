@@ -98,7 +98,36 @@ describe("parseInvokeXml", () => {
     expect(parseInvokeXml("")).toBeNull()
   })
 
-  it("returns null for malformed blocks", () => {
-    expect(parseInvokeXml('<invoke name="get_rsi">')).toBeNull()
+  it("auto-closes truncated blocks missing </invoke> (max_tokens cutoff)", () => {
+    // reason: production drift — the model starts a second tool call and the
+    // response is cut off; the dangling block must not be discarded.
+    const calls = parseInvokeXml('<invoke name="get_rsi"><parameter name="timeframe">1h</parameter>')
+    expect(calls).toEqual([{ toolName: "get_rsi", params: { timeframe: "1h" } }])
+  })
+
+  it("parses the observed production drift: { + <tool_calls> wrapper + truncated second block", () => {
+    // reason: replication of the recurring think_json_parse_failed log — a
+    // JSON brace prefix, Claude wrapper, one complete block, one truncated.
+    const content =
+      '{\n\n<tool_calls>\n<invoke name="analyze_funding_regime">\n<parameter name="asset" string="true">BTC</parameter>\n</invoke>\n' +
+      '<invoke name="detect_oi_funding_divergence">\n<parameter name="asset" string="true">BTC</parameter>\n'
+    const calls = parseInvokeXml(content)
+    expect(calls).not.toBeNull()
+    expect(calls).toHaveLength(2)
+    expect(calls?.[0]).toEqual({ toolName: "analyze_funding_regime", params: { asset: "BTC" } })
+    expect(calls?.[1].toolName).toBe("detect_oi_funding_divergence")
+  })
+
+  it("ignores invisible characters between tag and attribute (zero-width space)", () => {
+    // reason: \u200B is not JS \s — before normalization it broke `\s+` and
+    // silently killed the whole block despite looking valid in logs.
+    const calls = parseInvokeXml('<invoke\u200b name="get_fear_greed">\n</invoke>')
+    expect(calls).toEqual([{ toolName: "get_fear_greed", params: {} }])
+  })
+
+  it("accepts single-quoted tool names", () => {
+    expect(parseInvokeXml("<invoke name='get_rsi'>\n</invoke>")).toEqual([
+      { toolName: "get_rsi", params: {} },
+    ])
   })
 })

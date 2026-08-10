@@ -828,3 +828,77 @@ describe("Circuit Breaker", () => {
     expect(mockThink).toHaveBeenCalledTimes(4)
   })
 })
+
+describe("Tool Budget & Wrap-Up Nudge", () => {
+  it("breaks the loop with stopReason tool_budget when maxToolCalls is exceeded", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => ({
+        success: true,
+        data: {},
+        metadata: { source: "test", latencyMs: 0 },
+      })),
+    }
+
+    const mockThink = vi.fn()
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 1 }, reasoning: "1" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 2 }, reasoning: "2" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 3 }, reasoning: "3" })
+      .mockResolvedValueOnce({ action: "tool_call", toolName: "test_tool", params: { try: 4 }, reasoning: "4" })
+
+    const report = await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      maxLoops: 10,
+      maxToolCalls: 2,
+    })
+
+    // reason: 2 tool executions hit the budget → break → force-return call
+    // (non-return) → null path keeps stopReason = "tool_budget".
+    expect(report.stopReason).toBe("tool_budget")
+    expect(mockThink).toHaveBeenCalledTimes(3)
+  })
+
+  it("injects the wrap-up budgetWarning at ~80% of the loop budget", async () => {
+    const tools: ToolRegistry = {
+      test_tool: makeTool("test_tool", async () => ({
+        success: true,
+        data: {},
+        metadata: { source: "test", latencyMs: 0 },
+      })),
+    }
+
+    let warningSeen = false
+    let callCount = 0
+    const mockThink = vi.fn(async (messages: Array<{ role: string; content?: string | null }>) => {
+      const content = messages.find((m) => m.role === "user")?.content ?? ""
+      if (typeof content === "string" && content.includes("budgetWarning")) {
+        warningSeen = true
+        expect(content).toContain("BUDGET WRAP-UP")
+        expect(content).toContain("compute_sltp")
+      }
+      callCount++
+      // reason: distinct params every call — identical fingerprints would trip
+      // duplicate detection and break the loop before the wrap-up iteration.
+      return { action: "tool_call" as const, toolName: "test_tool", params: { try: callCount }, reasoning: "keep going" }
+    })
+
+    await runSubagent({
+      factor: "technical",
+      tools,
+      instruction: "test",
+      asset: "BTC",
+      llmThink: mockThink,
+      getSystemPrompt: () => "sys",
+      maxLoops: 5,
+    })
+
+    // reason: wrapUpAt = max(1, floor(5 × 0.8)) = 4 → the 5th iteration (index
+    // 4) carries the nudge; the loop runs all 5 iterations then force-returns.
+    expect(warningSeen).toBe(true)
+    expect(mockThink).toHaveBeenCalledTimes(6) // 5 loop iterations + 1 force return
+  })
+})

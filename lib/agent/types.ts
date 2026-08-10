@@ -134,5 +134,11 @@ export const TradePlanSchema = z.object({
   consensus_alignment: z.number().min(0).max(100).optional(),
   processingTimeMs: z.number().optional(),
   iterations: z.number().optional(),
+  // reason: Option B (profit-target scaling) — when the user's target exceeds
+  // the ATR-feasible max, the effective target is capped and these fields
+  // document the deviation; the plan then requires human approval.
+  profit_target_percent: z.number().min(0).optional(),
+  profit_target_original_percent: z.number().min(0).optional(),
+  profit_target_scaled: z.boolean().optional(),
 })
 export type TradePlan = z.infer<typeof TradePlanSchema>

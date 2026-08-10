@@ -101,6 +101,27 @@ describe("get_mark_price", () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe("rate limited")
   })
+
+  it("serves the pre-fetched ctx.markPrice WITHOUT a fetch (latency fix)", async () => {
+    const ctxTool = (name: string) =>
+      buildMarketDataTools({ ...CTX, markPrice: 65000 }).find((t) => t.name === name)!
+    const params = ctxTool("get_mark_price").parameters.parse({ asset: "BTC" })
+    const result = await ctxTool("get_mark_price").execute(params)
+
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ markPrice: 65000 })
+    expect(mockFetchMarkPrice).not.toHaveBeenCalled()
+  })
+
+  it("falls back to fetching when ctx.markPrice is 0/absent", async () => {
+    const ctxTool = (name: string) =>
+      buildMarketDataTools({ ...CTX, markPrice: 0 }).find((t) => t.name === name)!
+    const params = ctxTool("get_mark_price").parameters.parse({ asset: "BTC" })
+    const result = await ctxTool("get_mark_price").execute(params)
+
+    expect(result.success).toBe(true)
+    expect(mockFetchMarkPrice).toHaveBeenCalledWith("BTC")
+  })
 })
 
 describe("get_candles", () => {

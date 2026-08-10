@@ -314,8 +314,11 @@ describe("buildDDFactorContext", () => {
 })
 
 describe("AGGREGATE_PROMPT", () => {
-  it("includes the 2+ no_trade consensus rule", () => {
-    expect(AGGREGATE_PROMPT).toContain("If 2+ perspectives conclude no_trade, final action is no_trade")
+  it("delegates the final side decision to the deterministic consensus layer", () => {
+    // reason: L3 fix (Problem 5) — the aggregator is demoted from decision
+    // maker to synthesis; "consider overriding to short" is gone.
+    expect(AGGREGATE_PROMPT).toContain("The final side and confidence are NOT decided here")
+    expect(AGGREGATE_PROMPT).not.toContain("consider overriding")
   })
 
   it("includes profit_feasible and no_trade_reason fields", () => {

@@ -19,10 +19,16 @@ import { computeATR, computeSLTP, computePositionSize } from "@/lib/agent/shared
  * @property {string} asset - Default asset ticker used when a tool's params omit asset.
  * @property {number} [equity] - Account equity in USDC, pre-fetched by the orchestrator;
  *   used by compute_position_size when params omit equity.
+ * @property {number} [markPrice] - Pre-fetched mark price; compute_atr uses it
+ *   instead of re-fetching (one fetch per run).
+ * @property {number} [atr] - Pre-fetched 1h ATR(14); compute_atr with the default
+ *   period serves it from context instead of re-fetching candles.
  */
 export interface RiskEngineToolContext {
   asset: string
   equity?: number
+  markPrice?: number
+  atr?: number
 }
 
 /**
@@ -54,9 +60,17 @@ export function buildRiskEngineTools(ctx: RiskEngineToolContext): ToolDefinition
         const start = Date.now()
         try {
           const asset = params.asset ?? ctx.asset
-          const candles = await fetchCandlesForATR(asset, "1h", 20)
-          const atr = computeATR(candles, params.period)
-          const markPrice = await fetchMarkPrice(asset)
+          // reason: serve the pre-fetched ATR(14)/mark price when available
+          // (one fetch per run for all 3 perspectives) — re-fetch only for a
+          // non-default period or when the pre-fetch failed.
+          const atr =
+            params.period === 14 && ctx.atr !== undefined && ctx.atr > 0
+              ? ctx.atr
+              : computeATR(await fetchCandlesForATR(asset, "1h", 20), params.period)
+          const markPrice =
+            ctx.markPrice !== undefined && ctx.markPrice > 0
+              ? ctx.markPrice
+              : await fetchMarkPrice(asset)
           return {
             success: true,
             data: {

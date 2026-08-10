@@ -18,7 +18,7 @@
  * }); // => 100
  */
 
-export type StopReason = 'llm_return' | 'max_loops' | 'timeout' | 'circuit_open' | 'duplicate';
+export type StopReason = 'llm_return' | 'max_loops' | 'timeout' | 'circuit_open' | 'duplicate' | 'tool_budget';
 
 export interface ExecutionSignals {
   totalToolCalls: number;
@@ -44,6 +44,7 @@ const STOP_REASON_PENALTY: Record<StopReason, number> = {
   timeout: 30,
   circuit_open: 40,
   duplicate: 50,
+  tool_budget: 20,
 };
 
 /**

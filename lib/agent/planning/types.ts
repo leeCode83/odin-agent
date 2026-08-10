@@ -110,6 +110,15 @@ export interface ConsensusResult {
   // RE-DEPLOY decision (from computeNoTradeDecision). Null when the decision
   // is ACCEPT or FAILED.
   noTradeReasonDetail: NoTradeReasonDetail | null
+  // reason: dynamic weighting (L1) — the weights applied to each perspective
+  // for this evaluation (performance-derived, uniform during cold-start).
+  weights: PerspectiveWeights
+  // reason: weighted scoring (L2) — per-side score = Σ (weight × confidence),
+  // used by the strong-minority override (L3) and surfaced for transparency.
+  sideScores: SideScores
+  // reason: strong-minority override (L3) — whether a minority signal rescued
+  // the side decision from a no_trade majority, and with what confidence.
+  overrideRule: OverrideRuleDetail
 }
 
 /**
@@ -143,6 +152,64 @@ export type NoTradeReasonDetail = {
   avgConfidence: number
   highestConfidence: number
 }
+
+/**
+ * @type PerspectiveWeights
+ * @description Per-perspective consensus weights (Σ = 1). Derived from
+ *   historical performance when enough outcomes exist, uniform during
+ *   cold-start (no history yet). Consumed by the weighted scoring layer.
+ */
+export type PerspectiveWeights = Record<Perspective, number>
+
+/**
+ * @type SideScores
+ * @description Per-side weighted consensus scores. score(side) = Σ over
+ *   perspectives siding with `side` of (weight × confidence). The no_trade
+ *   score is included so callers can see how much conviction the abstentions
+ *   carried, not just the traded sides.
+ */
+export type SideScores = Record<"long" | "short" | "no_trade", number>
+
+/**
+ * @type PerspectivePerformance
+ * @description Historical reliability of one perspective from graph memory:
+ *   how many closed decisions it was on the right side of, out of how many
+ *   it participated in (side != no_trade).
+ */
+export interface PerspectivePerformance {
+  correct: number
+  total: number
+}
+
+/**
+ * @interface ConsensusWeightConfig
+ * @description Tunables for the dynamic weighting layer (L1). Plain constants,
+ *   no config framework — callers pass the defaults from the consensus module.
+ */
+export interface ConsensusWeightConfig {
+  /** Cold-start blend speed: α = 1 − e^(−t/λ), t = samples seen. Higher λ = slower trust. */
+  coldStartLambda: number
+  /** Max closed decisions considered per perspective performance query. */
+  historyLimit: number
+  /** Selective-WTA: boost the best perspective when best ≥ θ × second-best. */
+  wtaThreshold: number
+  /** Selective-WTA: temporary weight assigned to the dominant perspective. */
+  wtaWeight: number
+  /** Selective-WTA: minimum samples before the boost may apply. */
+  wtaMinSamples: number
+}
+
+/**
+ * @type OverrideRuleDetail
+ * @description Result of the strong-minority override check (L3). When
+ *   `applied` is true, the side decision was rescued from a no_trade majority
+ *   by a strong minority signal; `confidence` is the deterministic
+ *   post-override confidence; `triggeredBy` names the perspective that
+ *   carried the signal.
+ */
+export type OverrideRuleDetail =
+  | { applied: true; side: "long" | "short"; confidence: number; triggeredBy: string }
+  | { applied: false }
 
 /**
  * @interface DDCoverage
@@ -185,6 +252,10 @@ export interface PlanningAgentOutput {
     totalMs: number
   }
   iterations: number
+  // reason: how the final decision was reached — "consensus" (Layer 1 ACCEPT),
+  // "forced" (re-deploy cap), "exhausted" (loop deadline), "no_trade".
+  // Disambiguates a NO_TRADE born from loop exhaustion vs consensus.
+  decisionPath: "consensus" | "forced" | "exhausted" | "no_trade"
   // reason: approval_required = penalized (partial DD) run whose plan needs
   // human approval; distinct from "partial" (loop exhaustion) and the
   // per-plan autonomy_decision "approve" (which can also occur on full DD).
@@ -196,6 +267,12 @@ export interface PlanningAgentOutput {
   consensus?: {
     perspectiveBreakdown: PerspectiveBreakdownEntry[]
     noTradeReasonDetail: NoTradeReasonDetail | null
+    // reason: dynamic weighting (L1) + weighted scoring (L2) + override (L3)
+    // surfaced to API consumers alongside the breakdown, so the deterministic
+    // layers are auditable end-to-end.
+    weights: PerspectiveWeights
+    sideScores: SideScores
+    overrideRule: OverrideRuleDetail
   }
 }
 

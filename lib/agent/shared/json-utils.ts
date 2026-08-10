@@ -150,23 +150,45 @@ function decodeXmlEntities(raw: string): string {
 }
 
 /**
+ * @function normalizeXmlInput
+ * @description Sanitizes raw LLM output before XML tool-call extraction:
+ *   strips control/invisible characters that are not JS `\s` (zero-width
+ *   spaces, soft hyphens, BOM, line/paragraph separators — reasoning models
+ *   drift into these, breaking `\s+` in the invoke regex), trims surrounding
+ *   whitespace, and removes a leading `{`/`}` (models sometimes emit a
+ *   JSON/XML hybrid starting with a brace).
+ * @param {string} content - The raw LLM output text.
+ * @returns {string} Sanitized text ready for regex extraction.
+ */
+function normalizeXmlInput(content: string): string {
+  return content
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, "")
+    .trim()
+    .replace(/^[{}]+/, "")
+}
+
+/**
  * @function parseInvokeXml
  * @description Extracts Claude-style `<invoke name="...">` tool-call blocks
  *   from LLM output — the format DeepSeek reasoning models drift into instead
- *   of emitting JSON or native tool_calls. Values carrying the `string="false"`
- *   attribute are coerced to numbers (or booleans) so zod params validation
- *   accepts them as-is.
+ *   of emitting JSON or native tool_calls. Tolerates single-quoted names, a
+ *   leading `{`/`<tool_calls>` wrapper, invisible characters (normalized
+ *   away), and truncated blocks missing `</invoke>` (auto-closed at end of
+ *   input, parameters parsed best-effort). Values carrying the
+ *   `string="false"` attribute are coerced to numbers (or booleans) so zod
+ *   params validation accepts them as-is.
  * @param {string} content - The raw LLM output text.
  * @returns {XmlInvokeCall[] | null} Parsed tool calls, or null when no
  *   `<invoke>` block exists (so callers can distinguish "no XML" from
  *   "empty XML").
  */
 export function parseInvokeXml(content: string): XmlInvokeCall[] | null {
-  const blockRe = /<invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/invoke>/gi
-  const paramRe = /<parameter\s+name="([^"]+)"(?:\s+string="([^"]*)")?\s*>([\s\S]*?)<\/parameter>/gi
+  const normalized = normalizeXmlInput(content)
+  const blockRe = /<invoke\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/invoke>/gi
+  const paramRe = /<parameter\s+name=["']([^"']+)["'](?:\s+string="([^"]*)")?\s*>([\s\S]*?)<\/parameter>/gi
   const calls: XmlInvokeCall[] = []
 
-  for (const block of content.matchAll(blockRe)) {
+  for (const block of normalized.matchAll(blockRe)) {
     const toolName = block[1].trim()
     const inner = block[2]
     const params: Record<string, unknown> = {}
@@ -187,6 +209,29 @@ export function parseInvokeXml(content: string): XmlInvokeCall[] | null {
       params[key] = value
     }
 
+    calls.push({ toolName, params })
+  }
+
+  // reason: truncated output (max_tokens hit mid-block) never yields the
+  // closing `</invoke>` — auto-close any dangling `<invoke name="...">` at
+  // end of input so the tool call is executed (read-only tools, safe) instead
+  // of discarding the whole response into a retry.
+  const openRe = /<invoke\s+name=["']([^"']+)["']\s*>/gi
+  const closedPositions = new Set<number>()
+  for (const block of normalized.matchAll(blockRe)) {
+    closedPositions.add(block.index ?? -1)
+  }
+  for (const open of normalized.matchAll(openRe)) {
+    if (closedPositions.has(open.index ?? -1)) continue
+    const toolName = open[1].trim()
+    const inner = normalized.slice((open.index ?? 0) + open[0].length)
+    const params: Record<string, unknown> = {}
+    for (const p of inner.matchAll(paramRe)) {
+      const key = p[1].trim()
+      // reason: truncated blocks can't be reliably type-hinted — keep values
+      // as text; tool zod schemas tolerate strings via coercion where needed.
+      params[key] = decodeXmlEntities(p[3].trim())
+    }
     calls.push({ toolName, params })
   }
 

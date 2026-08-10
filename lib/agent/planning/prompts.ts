@@ -237,7 +237,7 @@ Tasks:
 
 Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side, list the disagreement explicitly.
 
-If 2+ perspectives conclude no_trade, final action is no_trade. However, if 2+ perspectives returned bearish signals but chose no_trade due to directional uncertainty (not because the asset is untradeable), consider overriding to short — bearish uncertainty is not the same as "not worth trading".
+The final side and confidence are NOT decided here — the deterministic consensus layer evaluates the perspective reports, weights them by historical reliability, and may override a no_trade majority when a strong minority signal qualifies. Never attempt to override the side yourself; your job is synthesis only. If 2+ perspectives concluded no_trade, reflect that in the reasoning and contradictions rather than forcing a trade.
 
 Return JSON with:
 - side: "long" | "short" | "no_trade"

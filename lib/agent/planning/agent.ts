@@ -16,10 +16,15 @@ import { buildPlanningToolRegistry } from "@/lib/agent/planning/tools"
 import { evaluateConsensus } from "@/lib/agent/planning/evaluate"
 import { autonomyGate } from "@/lib/agent/planning/gate"
 import { computeATR, computeLeverage, computePositionSize } from "@/lib/agent/shared/risk-engine"
-import { recordDecision } from "@/lib/db/graph-memory"
+import { recordDecision, queryPerspectivePerformance } from "@/lib/db/graph-memory"
+import {
+  computePerspectiveWeights,
+  applyWta,
+  DEFAULT_WEIGHT_CONFIG,
+} from "@/lib/agent/planning/consensus/weights"
 import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
-import { fetchUserEquity, fetchCandlesForATR } from "@/lib/data/hyperliquid"
+import { fetchUserEquity, fetchCandlesForATR, fetchMarkPrice } from "@/lib/data/hyperliquid"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import { TradePlanSchema } from "@/lib/agent/types"
 import { log } from "@/lib/agent/planning/log"
@@ -30,6 +35,7 @@ import type {
   PlanningAggregationResult,
   PlanningSubagentPlan,
   Perspective,
+  PerspectiveBreakdownEntry,
   PerspectiveReport,
   ConsensusResult,
 } from "@/lib/agent/planning/types"
@@ -163,6 +169,16 @@ interface BuildTradePlanParams {
   autonomyDecision: AutonomyDecision
   iterations: number
   totalMs: number
+  /** Pre-fetched ATR(14) — skips the internal fetch; undefined → fetch fallback. */
+  atr?: number
+  /** Pre-fetched mark price — used with `atr` for leverage sizing. */
+  markPrice?: number
+  /** Option B: user target was scaled down to the ATR-feasible target. */
+  targetProfitScaled?: boolean
+  /** Effective target percent used for the plan (scaled or user value). */
+  targetProfitPercent?: number
+  /** The user's original target before scaling. */
+  targetProfitOriginalPercent?: number
 }
 
 /**
@@ -171,14 +187,27 @@ interface BuildTradePlanParams {
  *   NO_TRADE encodes a zero-size placeholder position: SL = entry*0.99,
  *   TP = entry*1.01, position_size_usdc 0, leverage 1 (spec §8.1 row 8).
  *   Leverage is the risk engine's deterministic OUTPUT (never LLM input):
- *   ATR is fetched once from Hyperliquid (same source as the compute_atr
- *   tool) and fed to computeLeverage. Any ATR fetch failure degrades to
- *   leverage 1 (conservative) instead of crashing the plan.
+ *   ATR is taken from the pre-fetched value when provided (fetched once per
+ *   run by the orchestrator) or fetched once here (same source as the
+ *   compute_atr tool) and fed to computeLeverage. Any ATR failure degrades
+ *   to leverage 1 (conservative) instead of crashing the plan.
  * @param {BuildTradePlanParams} params - Plan assembly inputs.
  * @returns {Promise<TradePlan>} Zod-validated trade plan.
  */
 async function buildTradePlan(params: BuildTradePlanParams): Promise<TradePlan> {
-  const { asset, aggregation, equity, thresholds, autonomyDecision, iterations, totalMs } = params
+  const {
+    asset,
+    aggregation,
+    equity,
+    thresholds,
+    autonomyDecision,
+    iterations,
+    totalMs,
+    atr: prefetchedAtr,
+    targetProfitScaled,
+    targetProfitPercent,
+    targetProfitOriginalPercent,
+  } = params
 
   // Guard: invalid prices for a live trade → force NO_TRADE
   const hasInvalidPrices =
@@ -211,18 +240,23 @@ async function buildTradePlan(params: BuildTradePlanParams): Promise<TradePlan> 
   )
 
   // reason: leverage is the risk engine's OUTPUT — never LLM input. ATR is
-  // fetched once (1h window, same source as the compute_atr tool); a fetch
-  // or ATR failure degrades to leverage 1 (conservative), never a crash.
+  // taken from the orchestrator's pre-fetch when provided (one fetch per run)
+  // or fetched once here (1h window, same source as the compute_atr tool); a
+  // fetch or ATR failure degrades to leverage 1 (conservative), never a crash.
   let atr = 0
   if (!noTrade) {
-    try {
-      const candles = await fetchCandlesForATR(asset, "1h", 20)
-      atr = computeATR(candles, 14)
-    } catch (err) {
-      log("warn", "planning.atr_failed", {
-        asset,
-        error: err instanceof Error ? err.message : String(err),
-      })
+    if (prefetchedAtr !== undefined && prefetchedAtr > 0) {
+      atr = prefetchedAtr
+    } else {
+      try {
+        const candles = await fetchCandlesForATR(asset, "1h", 20)
+        atr = computeATR(candles, 14)
+      } catch (err) {
+        log("warn", "planning.atr_failed", {
+          asset,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
   }
   const leverage =
@@ -254,12 +288,26 @@ async function buildTradePlan(params: BuildTradePlanParams): Promise<TradePlan> 
     thesis: safeAggregation.thesis,
     reasoning: safeAggregation.reasoning,
     autonomy_decision: autonomyDecision,
-    risk_flags: safeAggregation.risk_flags,
+    risk_flags: targetProfitScaled
+      ? [
+          ...safeAggregation.risk_flags,
+          `profit_target_scaled_from_${targetProfitOriginalPercent}_to_${targetProfitPercent}`,
+        ]
+      : safeAggregation.risk_flags,
     graph_patterns_used: [],
     consensus_alignment: safeAggregation.consensus_alignment,
     processingTimeMs: totalMs,
     iterations,
     timestamp: new Date().toISOString(),
+    // reason: Option B metadata — effective vs original target, exposed so
+    // the approval UI can show why the target deviated from the user's ask.
+    ...(targetProfitScaled
+      ? {
+          profit_target_percent: targetProfitPercent,
+          profit_target_original_percent: targetProfitOriginalPercent,
+          profit_target_scaled: true,
+        }
+      : {}),
   })
 }
 
@@ -267,15 +315,21 @@ async function buildTradePlan(params: BuildTradePlanParams): Promise<TradePlan> 
  * @function persistDecision
  * @description Non-blocking persistence of an accepted decision to the graph
  *   database. Failures are logged, never fatal (mirrors the DD agent's
- *   recordDDReport pattern, agent.ts:228-234).
+ *   recordDDReport pattern, agent.ts:228-234). Persists the per-perspective
+ *   breakdown (Phase 2 feed for dynamic perspective weighting — the outcome
+ *   join needs it to score who was right).
  * @param {TradePlan} plan - The accepted trade plan.
  * @param {PlanningAgentInput} params - Run input (user/wallet context).
+ * @param {"accepted" | "forced" | "no_trade"} [outcome] - How the plan was reached.
+ * @param {PerspectiveBreakdownEntry[]} [perspectiveBreakdown] - Per-perspective
+ *   verdicts from the final consensus evaluation.
  * @returns {void}
  */
 function persistDecision(
   plan: TradePlan,
   params: PlanningAgentInput,
-  outcome?: "accepted" | "forced" | "no_trade"
+  outcome?: "accepted" | "forced" | "no_trade",
+  perspectiveBreakdown?: PerspectiveBreakdownEntry[]
 ): void {
   const isNoTrade = plan.action === "NO_TRADE" || outcome === "no_trade"
   recordDecision({
@@ -288,6 +342,9 @@ function persistDecision(
     tradePlan: plan,
     autonomyDecision: plan.autonomy_decision,
     timestamp: new Date().toISOString(),
+    // reason: optional — only persisted when consensus ran; feeds
+    // queryPerspectivePerformance for dynamic weighting (Phase 2).
+    ...(perspectiveBreakdown ? { perspectiveBreakdown } : {}),
   } as unknown as Parameters<typeof recordDecision>[0]).catch((e) =>
     console.warn("[PlanningAgent] Failed to persist decision:", e)
   )
@@ -368,8 +425,59 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   const degradedFactors = extractDegradedFactors(ddReport.factorReports ?? [])
 
   // reason: equity is pre-fetched once (spec §16.4) — no get_equity tool —
-  // and shared through the tool registry ctx + position sizing.
-  const equity = await fetchUserEquity(params.walletAddress).catch(() => 0)
+  // and shared through the tool registry ctx + position sizing. A failure is
+  // logged and degrades to 0 (tools report "equity not available") rather than
+  // crashing the run.
+  const equity = await fetchUserEquity(params.walletAddress).catch(() => {
+    log("warn", "planning.equity_failed", { walletAddress: params.walletAddress })
+    return 0
+  })
+
+  // reason: mark price + ATR(14) are pre-fetched ONCE per run and served from
+  // the tool-registry context (get_mark_price / compute_atr read ctx first) —
+  // 3 perspectives × N tool calls previously re-fetched the same data every
+  // call. Failures degrade to 0 (tools fall back to their own fetches).
+  const [prefetchedMarkPrice, prefetchedAtr] = await Promise.all([
+    fetchMarkPrice(params.asset).catch(() => 0),
+    fetchCandlesForATR(params.asset, "1h", 20)
+      .then((candles) => computeATR(candles, 14))
+      .catch(() => 0),
+  ])
+
+  // reason: Option B (profit-target scaling) — when the user's target profit
+  // exceeds the maximum realistic move (3×ATR), the effective target used for
+  // feasibility and planning is capped at 3×ATR and the plan is flagged for
+  // HUMAN approval (deviating from the user's instruction requires consent).
+  // Scaling is skipped entirely when ATR/mark price are unavailable.
+  const maxFeasibleTargetPercent =
+    prefetchedMarkPrice > 0 && prefetchedAtr > 0
+      ? Math.round(((3 * prefetchedAtr) / prefetchedMarkPrice) * 100 * 100) / 100
+      : null
+  const targetProfitScaled =
+    maxFeasibleTargetPercent !== null && params.targetProfitPercent > maxFeasibleTargetPercent
+  const targetProfitPercent = targetProfitScaled
+    ? (maxFeasibleTargetPercent as number)
+    : params.targetProfitPercent
+  if (targetProfitScaled) {
+    log("warn", "planning.target_scaled", {
+      asset: params.asset,
+      from: params.targetProfitPercent,
+      to: targetProfitPercent,
+      atrPercentOfPrice: Math.round(((prefetchedAtr / prefetchedMarkPrice) * 10000) / 100),
+    })
+  }
+
+  // reason: L1 dynamic weighting (Phase 2) — perspective weights come from
+  // historical performance in graph memory; any failure degrades to cold-start
+  // uniform weights (never crashes the run). The WTA boost is applied here so
+  // the whole loop (and every re-deploy) sees the same weights.
+  const perspectivePerf = await queryPerspectivePerformance(params.userId).catch(() => null)
+  const weights = applyWta(
+    computePerspectiveWeights(perspectivePerf, DEFAULT_WEIGHT_CONFIG),
+    perspectivePerf,
+    DEFAULT_WEIGHT_CONFIG
+  )
+  log("info", "planning.weights", { weights, hasHistory: perspectivePerf !== null })
 
   let allReports: PerspectiveReport[] = []
   let aggregation: PlanningAggregationResult | null = null
@@ -401,13 +509,13 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     if (iteration === 0) {
       const planned = await plan({
         ddReport,
-        targetProfitPercent: params.targetProfitPercent,
+        targetProfitPercent,
       })
       subagentPlans = planned.length > 0 ? planned : fallbackPlan(params.asset)
     } else {
       const replanned = await rePlan({
         ddReport,
-        targetProfitPercent: params.targetProfitPercent,
+        targetProfitPercent,
         lowConsensusPerspectives: lastLowConsensus,
         previousReports: allReports.filter((r) => lastLowConsensus.includes(r.perspective)),
       })
@@ -429,6 +537,11 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       userId: params.userId,
       asset: params.asset,
       equity,
+      // reason: pre-fetched once per run — tools serve these from ctx instead
+      // of re-fetching (latency fix: 3 perspectives × N calls previously
+      // re-fetched the same mark price and candles).
+      markPrice: prefetchedMarkPrice > 0 ? prefetchedMarkPrice : undefined,
+      atr: prefetchedAtr > 0 ? prefetchedAtr : undefined,
     })
     const newReports = await Promise.all(
       subagentPlans.map((sp) =>
@@ -437,7 +550,7 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
           instruction: sp.instruction,
           asset: params.asset,
           ddReport,
-          targetProfitPercent: params.targetProfitPercent,
+          targetProfitPercent,
           tools,
         })
       )
@@ -445,17 +558,35 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     timing.executeMs += Date.now() - execT0
 
     // Map-dedupe by perspective — latest report per perspective wins, so
-    // evaluateConsensus always sees the freshest 3 reports.
+    // evaluateConsensus always sees the freshest 3 reports. MUST run before
+    // the fail-fast check below: the tail builds the best-effort plan from
+    // allReports, so the deadline break must not discard the fresh reports.
     allReports = Array.from(
       new Map([...allReports, ...newReports].map((r) => [r.perspective, r])).values()
     )
+
+    // reason: fail-fast mid-iteration (latency bound) — if the global loop
+    // deadline passed during EXECUTE (the most expensive phase), skip
+    // AGGREGATE + EVALUATE entirely: the tail builds a best-effort plan from
+    // the reports already collected instead of spending another 60s+ on LLM
+    // calls the deadline would discard anyway.
+    if (Date.now() - t0 > (Number(process.env.PLANNING_LOOP_TIMEOUT_MS) || PLANNING_LOOP_TIMEOUT_MS)) {
+      log("warn", "planning.timeout_post_execute", {
+        iteration,
+        elapsedMs: Date.now() - t0,
+        collectedReports: newReports.length,
+      })
+      finalIterations = iteration + 1
+      outcome = "exhausted"
+      break
+    }
 
     // --- AGGREGATE ---
     const aggT0 = Date.now()
     const agg = await aggregate({
       reports: allReports,
       ddReport,
-      targetProfitPercent: params.targetProfitPercent,
+      targetProfitPercent,
     })
     if (agg) {
       aggregation = agg
@@ -477,7 +608,8 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     const evaluation = evaluateConsensus(
       allReports,
       aggregation,
-      degradedFactors.length > 0 ? degradedFactors : undefined
+      degradedFactors.length > 0 ? degradedFactors : undefined,
+      weights
     )
     timing.evaluateMs += Date.now() - evalT0
     latestConsensus = evaluation
@@ -554,21 +686,43 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // applies only when some deployed factors failed (3/4 → 0.75, 2/4 → 0.5).
   const ddConfidenceMultiplier = Math.min(1, usableFactorCount / plannedFactorCount)
   const finalAggregation = aggregation ?? fallbackAggregation(allReports)
+  // reason: L3 strong-minority override — when consensus rescued a side from
+  // the no_trade majority (RE-DEPLOY → cap → forced), the LLM aggregation may
+  // still say no_trade. Override its side with the deterministic side and take
+  // max(override.confidence, aggregation confidence) so the forced path
+  // carries the rescued signal instead of killing it. The DD penalty below
+  // still applies to the final confidence (graceful degradation unchanged).
+  const overrideAggregation: PlanningAggregationResult =
+    latestConsensus?.overrideRule.applied === true
+      ? {
+          ...finalAggregation,
+          side: latestConsensus.overrideRule.side,
+          confidence_score: Math.max(
+            latestConsensus.overrideRule.confidence,
+            finalAggregation.confidence_score
+          ),
+        }
+      : finalAggregation
   const effectiveAggregation: PlanningAggregationResult =
     ddConfidenceMultiplier < 1
       ? {
-          ...finalAggregation,
-          confidence_score: Math.round(finalAggregation.confidence_score * ddConfidenceMultiplier),
+          ...overrideAggregation,
+          confidence_score: Math.round(overrideAggregation.confidence_score * ddConfidenceMultiplier),
         }
-      : finalAggregation
+      : overrideAggregation
+  // reason: scaled profit target deviates from the user's explicit instruction
+  // — the plan MUST go through human approval regardless of the confidence
+  // gate (Option B: fallback ATR target + approval).
   const autonomyDecision: AutonomyDecision =
     outcome === "no_trade"
       ? "auto"
-      : autonomyGate(
-          effectiveAggregation.confidence_score,
-          effectiveAggregation.position_size_usdc,
-          thresholds
-        )
+      : targetProfitScaled
+        ? "approve"
+        : autonomyGate(
+            effectiveAggregation.confidence_score,
+            effectiveAggregation.position_size_usdc,
+            thresholds
+          )
 
   const tradePlan = await buildTradePlan({
     asset: params.asset,
@@ -578,31 +732,58 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     autonomyDecision,
     iterations: finalIterations,
     totalMs,
+    // reason: pre-fetched values avoid a second ATR fetch inside buildTradePlan
+    // (0 → buildTradePlan falls back to its own fetch, preserving old behavior).
+    atr: prefetchedAtr > 0 ? prefetchedAtr : undefined,
+    markPrice: prefetchedMarkPrice > 0 ? prefetchedMarkPrice : undefined,
+    // reason: Option B target-scaling metadata rides on the plan so the API
+    // and dashboard can show "target scaled from X% to Y%, awaiting approval".
+    targetProfitScaled,
+    targetProfitPercent,
+    targetProfitOriginalPercent: params.targetProfitPercent,
   })
 
-  // reason: approval_required = penalized (partial DD) run that still needs
-  // human approval — distinct from "partial" (loop exhaustion) and from
-  // complete runs that happen to carry autonomy_decision "approve".
+  // reason: approval_required = run that still needs human approval — partial
+  // DD penalty OR scaled profit target; distinct from "partial" (loop
+  // exhaustion) and from complete runs that happen to carry "approve".
   const status: PlanningAgentOutput["status"] =
     tradePlan.action === "NO_TRADE" || outcome === "no_trade"
       ? "no_trade"
-      : ddConfidenceMultiplier < 1 && autonomyDecision === "approve"
+      : (ddConfidenceMultiplier < 1 || targetProfitScaled) && autonomyDecision === "approve"
         ? "approval_required"
         : outcome === "accepted"
           ? "complete"
           : "partial"
 
   if (outcome === "accepted" || outcome === "forced" || outcome === "no_trade") {
-    persistDecision(tradePlan, params, outcome)
+    persistDecision(
+      tradePlan,
+      params,
+      outcome,
+      // reason: Phase 2 feed — the per-perspective verdicts are persisted with
+      // the decision so queryPerspectivePerformance can score who was right.
+      latestConsensus?.perspectiveBreakdown
+    )
   }
 
-  log("info", "planning.completed", { asset: params.asset, status, outcome })
+  log("info", "planning.completed", { asset: params.asset, status, outcome, targetProfitScaled })
 
   return {
     report: tradePlan,
     timing: { ...timing, totalMs },
     iterations: finalIterations,
     status,
+    // reason: how the final decision was reached — "consensus" (ACCEPT via
+    // Layer 1), "forced" (re-deploy cap), "exhausted" (timeout), "no_trade".
+    // Disambiguates a NO_TRADE that came from loop exhaustion vs consensus.
+    decisionPath:
+      outcome === "accepted"
+        ? "consensus"
+        : outcome === "no_trade"
+          ? "no_trade"
+          : outcome === "forced"
+            ? "forced"
+            : "exhausted",
     // reason: spread keeps the key ABSENT when consensus never ran (dd-gate
     // failure path throws earlier) — same omit-when-absent contract as ddCoverage.
     ...(latestConsensus
@@ -610,6 +791,9 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
           consensus: {
             perspectiveBreakdown: latestConsensus.perspectiveBreakdown,
             noTradeReasonDetail: latestConsensus.noTradeReasonDetail,
+            weights: latestConsensus.weights,
+            sideScores: latestConsensus.sideScores,
+            overrideRule: latestConsensus.overrideRule,
           },
         }
       : {}),

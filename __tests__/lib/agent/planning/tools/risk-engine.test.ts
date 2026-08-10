@@ -65,6 +65,28 @@ describe("compute_atr", () => {
     expect(mockFetchCandlesForATR).toHaveBeenCalledWith("ETH", "1h", 20)
   })
 
+  it("serves pre-fetched ctx.atr/markPrice WITHOUT fetches (latency fix, default period)", async () => {
+    const ctxTool = (name: string) =>
+      buildRiskEngineTools({ ...CTX, atr: 25, markPrice: 500 }).find((t) => t.name === name)!
+    const params = ctxTool("compute_atr").parameters.parse({ asset: "BTC" })
+    const result = await ctxTool("compute_atr").execute(params)
+
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ atr: 25, atrPercentOfEntry: 5, source: "hyperliquid" })
+    expect(mockFetchCandlesForATR).not.toHaveBeenCalled()
+    expect(mockFetchMarkPrice).not.toHaveBeenCalled()
+  })
+
+  it("re-fetches when the pre-fetched ATR is 0/absent", async () => {
+    const ctxTool = (name: string) =>
+      buildRiskEngineTools({ ...CTX, atr: 0, markPrice: 200 }).find((t) => t.name === name)!
+    const params = ctxTool("compute_atr").parameters.parse({ asset: "BTC" })
+    const result = await ctxTool("compute_atr").execute(params)
+
+    expect(result.success).toBe(true)
+    expect(mockFetchCandlesForATR).toHaveBeenCalledWith("BTC", "1h", 20)
+  })
+
   it("returns success:false when mark price fetch fails", async () => {
     mockFetchMarkPrice.mockRejectedValue(new Error("API down"))
     const [tool] = buildRiskEngineTools(CTX).filter((t) => t.name === "compute_atr")

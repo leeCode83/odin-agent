@@ -8,6 +8,7 @@
 import { createHash } from "crypto"
 import type { GraphPattern, TradePlan } from "@/lib/agent/types"
 import { DDReportSchema, type DDReport } from "@/lib/agent/types"
+import type { Perspective, PerspectivePerformance } from "@/lib/agent/planning/types"
 import { GraphCollectionNames } from "@/lib/db/arango-types"
 import type { DecisionNode, SignalNode, OutcomeNode, DDReportNode } from "@/lib/db/arango-types"
 import { getDb } from "@/lib/db/arango-client"
@@ -50,6 +51,99 @@ export async function queryGraphPatterns(
     return results || []
   } catch {
     return []
+  }
+}
+
+/**
+ * @function outcomeSide
+ * @description The market direction a closed decision realized: the decision
+ *   side on profit, the opposite side on loss.
+ * @param {"profit" | "loss"} result - Realized outcome result.
+ * @param {"long" | "short"} decisionSide - Side the decision took.
+ * @returns {"long" | "short"} The realized direction.
+ */
+function outcomeSide(result: "profit" | "loss", decisionSide: "long" | "short"): "long" | "short" {
+  if (result === "profit") return decisionSide
+  // reason: a loss on a long means short was right, and vice versa.
+  return decisionSide === "long" ? "short" : "long"
+}
+
+/**
+ * @function queryPerspectivePerformance
+ * @description Computes per-perspective historical performance from graph
+ *   memory: for the most recent closed decisions, how often each perspective
+ *   was on the realized side of the market. Pure data mapping — no LLM.
+ * @param {string} userId - The user ID.
+ * @param {number} [limit=20] - Window of recent closed decisions to consider
+ *   (matches ConsensusWeightConfig.historyLimit).
+ * @returns {Promise<Record<Perspective, PerspectivePerformance> | null>}
+ *   Per-perspective { correct, total } — {} when no eligible decisions exist,
+ *   null when the DB is unavailable or the query fails.
+ */
+export async function queryPerspectivePerformance(
+  userId: string,
+  limit: number = 20
+): Promise<Record<Perspective, PerspectivePerformance> | null> {
+  const db = getDb()
+  if (!db) return null
+
+  const { DECISIONS, EDGE_RESULTED_IN } = GraphCollectionNames
+  // reason: filter + LIMIT run before the outcome join — the cheap per-decision
+  // window (userId, side, breakdown present, newest N) first, then 1..1 OUTBOUND
+  // to realized outcomes; avoids traversing every historical decision.
+  const aqlQuery = `
+    FOR d IN @@decisions
+    FILTER d.userId == @userId AND d.side IN ["long", "short"] AND HAS(d, "perspectiveBreakdown")
+    SORT d.timestamp DESC
+    LIMIT @limit
+    FOR o IN 1..1 OUTBOUND d @@resultedIn
+      FILTER o.result IN ["profit", "loss"]
+      RETURN { decision: d, outcome: o }
+  `
+
+  try {
+    // reason: AQL filters side to long/short and result to profit/loss — narrow
+    // the row types so the mapping below needs no casts.
+    type PerfRow = {
+      decision: DecisionNode & { side: "long" | "short" }
+      outcome: OutcomeNode & { result: "profit" | "loss" }
+    }
+    const cursor = await db.query<PerfRow>(aqlQuery, {
+      "@decisions": DECISIONS,
+      "@resultedIn": EDGE_RESULTED_IN,
+      userId,
+      limit,
+    })
+    const rows = (await cursor.all()) || []
+    if (rows.length === 0) return {} as Record<Perspective, PerspectivePerformance>
+
+    const perf: Record<Perspective, PerspectivePerformance> = {
+      conservative: { correct: 0, total: 0 },
+      balance: { correct: 0, total: 0 },
+      aggressive: { correct: 0, total: 0 },
+    }
+
+    for (const { decision, outcome } of rows) {
+      const realized = outcomeSide(outcome.result, decision.side)
+      const breakdown = decision.perspectiveBreakdown
+      if (!Array.isArray(breakdown)) continue
+      for (const raw of breakdown) {
+        if (typeof raw !== "object" || raw === null) continue
+        const entry = raw as Record<string, unknown>
+        const side = entry.side
+        // reason: no_trade perspectives abstained — skipped, not counted against them.
+        if (side !== "long" && side !== "short") continue
+        const name = entry.perspective
+        if (name !== "conservative" && name !== "balance" && name !== "aggressive") continue
+        perf[name].total += 1
+        if (side === realized) perf[name].correct += 1
+      }
+    }
+    return perf
+  } catch (err) {
+    // reason: non-fatal — the weighting layer falls back to uniform weights on null.
+    console.warn("[graph-memory] queryPerspectivePerformance failed:", err)
+    return null
   }
 }
 

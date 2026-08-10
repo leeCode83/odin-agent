@@ -183,3 +183,142 @@ describe("readRecentDDReport", () => {
     expect(result).toBeNull()
   })
 })
+
+describe("queryPerspectivePerformance", () => {
+  const breakdownDecision = (perspectiveBreakdown: unknown, side: "long" | "short") => ({
+    userId: "user-1",
+    side,
+    timestamp: "2026-08-01T00:00:00.000Z",
+    perspectiveBreakdown,
+  })
+
+  it("returns null when ArangoDB is unavailable", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(null)
+
+    const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+    const result = await queryPerspectivePerformance("user-1")
+
+    expect(result).toBeNull()
+  })
+
+  it("returns null and warns when the query throws", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    mockDatabaseInstance.query.mockRejectedValue(new Error("db error"))
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
+
+    try {
+      const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+      const result = await queryPerspectivePerformance("user-1")
+
+      expect(result).toBeNull()
+      expect(warnSpy).toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it("counts each perspective against the realized side of a profit decision", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    mockDatabaseInstance.query.mockResolvedValue(mockCursor)
+    mockCursor.all.mockResolvedValue([
+      {
+        decision: breakdownDecision(
+          [
+            { perspective: "conservative", side: "short" },
+            { perspective: "balance", side: "no_trade" },
+            { perspective: "aggressive", side: "short" },
+          ],
+          "short"
+        ),
+        outcome: { result: "profit" },
+      },
+    ])
+
+    const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+    const result = await queryPerspectivePerformance("user-1")
+
+    expect(result).toEqual({
+      conservative: { correct: 1, total: 1 },
+      balance: { correct: 0, total: 0 },
+      aggressive: { correct: 1, total: 1 },
+    })
+  })
+
+  it("credits a perspective that sided against a losing decision", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    mockDatabaseInstance.query.mockResolvedValue(mockCursor)
+    mockCursor.all.mockResolvedValue([
+      {
+        decision: breakdownDecision([{ perspective: "aggressive", side: "short" }], "long"),
+        outcome: { result: "loss" },
+      },
+    ])
+
+    const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+    const result = await queryPerspectivePerformance("user-1")
+
+    expect(result).toEqual({
+      conservative: { correct: 0, total: 0 },
+      balance: { correct: 0, total: 0 },
+      aggressive: { correct: 1, total: 1 },
+    })
+  })
+
+  it("returns {} when no eligible decisions exist", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    mockDatabaseInstance.query.mockResolvedValue(mockCursor)
+    mockCursor.all.mockResolvedValue([])
+
+    const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+    const result = await queryPerspectivePerformance("user-1")
+
+    expect(result).toEqual({})
+  })
+
+  it("passes the limit as a bind variable", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    mockDatabaseInstance.query.mockResolvedValue(mockCursor)
+    mockCursor.all.mockResolvedValue([])
+
+    const { queryPerspectivePerformance } = await import("@/lib/db/graph-memory")
+    await queryPerspectivePerformance("user-1")
+
+    expect(mockDatabaseInstance.query).toHaveBeenCalledWith(
+      expect.stringContaining("LIMIT @limit"),
+      expect.objectContaining({ limit: 20 })
+    )
+  })
+})
+
+describe("recordDecision", () => {
+  it("persists perspectiveBreakdown when provided", async () => {
+    const { getDb } = await import("@/lib/db/arango-client")
+    vi.mocked(getDb).mockReturnValue(mockDatabaseInstance as never)
+    const save = vi.fn().mockResolvedValue({ _key: "dec-1" })
+    mockDatabaseInstance.collection.mockReturnValue({ save })
+
+    const { recordDecision } = await import("@/lib/db/graph-memory")
+    const breakdown = [{ perspective: "conservative", side: "short" }]
+    const key = await recordDecision({
+      userId: "user-1",
+      asset: "BTC",
+      category: "trade",
+      decision: "sell",
+      side: "short",
+      confidence: 70,
+      tradePlan: {},
+      autonomyDecision: "auto",
+      timestamp: "2026-08-01T00:00:00.000Z",
+      perspectiveBreakdown: breakdown,
+    })
+
+    expect(key).toBe("dec-1")
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ perspectiveBreakdown: breakdown }))
+  })
+})

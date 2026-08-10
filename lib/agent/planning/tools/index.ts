@@ -23,12 +23,19 @@ import { buildWebSearchTools } from "./web-search"
  * @property {string} userId - User ID.
  * @property {string} asset - Default asset ticker for tools whose params omit asset.
  * @property {number} equity - Pre-fetched account equity in USDC (spec 16.4: no get_equity tool).
+ * @property {number} [markPrice] - Pre-fetched mark price (same pattern as equity):
+ *   tools use it as the primary source and only fetch as a fallback. One fetch
+ *   per run instead of one per tool call across 3 perspectives × N calls.
+ * @property {number} [atr] - Pre-fetched 1h ATR(14) for the asset; compute_atr
+ *   with the default period serves it from context instead of re-fetching.
  */
 export interface PlanningToolContext {
   walletAddress: string
   userId: string
   asset: string
   equity: number
+  markPrice?: number
+  atr?: number
 }
 
 /**

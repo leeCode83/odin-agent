@@ -13,8 +13,22 @@ import type {
   PerspectiveReport,
   PerspectiveBreakdownEntry,
   NoTradeReasonDetail,
+  PerspectiveWeights,
   PlanningAggregationResult,
 } from "@/lib/agent/planning/types"
+import { computeAgreementBoostedScores } from "@/lib/agent/planning/consensus/scoring"
+import { evaluateOverride } from "@/lib/agent/planning/consensus/override"
+
+/**
+ * @constant UNIFORM_WEIGHTS
+ * @description Cold-start perspective weights (no history yet) — every
+ *   perspective counts equally. Matches computePerspectiveWeights(null).
+ */
+const UNIFORM_WEIGHTS: PerspectiveWeights = {
+  conservative: 1 / 3,
+  balance: 1 / 3,
+  aggressive: 1 / 3,
+}
 
 /**
  * @constant NO_TRADE_MAJORITY
@@ -218,6 +232,12 @@ function buildPerspectiveBreakdown(
  *   5. Exactly 2/3 same side + aggregation.confidence_score ≥ 50 → ACCEPT
  *   6. No aggregation / confidence < 50 / no majority → RE-DEPLOY
  *   7. Fallback → RE-DEPLOY (message explains why nothing above matched)
+ * L3 strong-minority override: inside Rule 2, a weighted side score ≥ 70
+ * backed by a strong perspective signal and feasible R:R rescues the side
+ * from the no_trade majority — the verdict becomes RE-DEPLOY and the result
+ * carries the override detail so the orchestrator can apply it to the
+ * aggregation when the re-deploy cap forces acceptance. Unanimous refusals
+ * are never rescued.
  * Degraded-DD signaling (F3): when `degradedFactors` is non-empty, every
  * result is marked `degraded: true`, NO_TRADE reasons get the failed-factors
  * suffix, and RE-DEPLOY messages are labeled "[degraded DD]" so retries for
@@ -228,12 +248,15 @@ function buildPerspectiveBreakdown(
  *   (null when aggregation failed).
  * @param {string[]} [degradedFactors] - Names of DD factors that failed
  *   (score null or missing). Omit when DD was complete.
+ * @param {PerspectiveWeights} [weights] - Per-perspective weights for the
+ *   weighted scoring layer (L1). Defaults to uniform (cold-start).
  * @returns {ConsensusResult} The evaluation outcome.
  */
 export function evaluateConsensus(
   reports: PerspectiveReport[],
   aggregation: PlanningAggregationResult | null,
-  degradedFactors?: string[]
+  degradedFactors?: string[],
+  weights: PerspectiveWeights = UNIFORM_WEIGHTS
 ): ConsensusResult {
   const contradictions = aggregation?.contradictions ?? []
   const degraded = degradedFactors !== undefined && degradedFactors.length > 0
@@ -243,6 +266,10 @@ export function evaluateConsensus(
       ? ` [insufficient data: failed factors: ${degradedFactors.join(", ")}]`
       : ""
   const breakdown = buildPerspectiveBreakdown(reports, degraded)
+  // reason: L2 — weighted side scores (weight × confidence per side, boosted
+  // by cross-perspective numerical agreement). Single source consumed by the
+  // L3 override below and surfaced on every result for transparency.
+  const sideScores = computeAgreementBoostedScores(reports, weights)
   // reason: confidence falls back to score; nulls are dropped so the
   // decision only counts confidences that actually exist (1-3 elements).
   const confidences = reports
@@ -259,6 +286,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: null,
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -286,6 +316,42 @@ export function evaluateConsensus(
         ...degradedFlag,
         perspectiveBreakdown: breakdown,
         noTradeReasonDetail: { ...noTradeDetail, rule: "NO_TRADE_UNANIMOUS" },
+        weights,
+        sideScores,
+        overrideRule: { applied: false },
+      }
+    }
+    // reason: L3 strong-minority override — a weighted side score ≥ threshold
+    // backed by a strong perspective signal and feasible R:R rescues the side
+    // decision from the no_trade majority. The decision becomes RE-DEPLOY so
+    // the loop gives the abstainers one more pass; when the per-perspective
+    // cap forces acceptance, the orchestrator applies this override to the
+    // aggregation (side + deterministic confidence) instead of the LLM's
+    // no_trade. Unanimous refusals never reach this check (evaluateOverride
+    // has no long/short candidate, and the unanimity branch above already
+    // returned).
+    const overrideDetail = evaluateOverride(
+      reports,
+      sideScores,
+      aggregation?.profit_feasible === true,
+      STRONG_SIGNAL_CONFIDENCE
+    )
+    if (overrideDetail.applied) {
+      return {
+        decision: "RE-DEPLOY",
+        lowConsensusPerspectives: reports
+          .filter((r) => r.side === "no_trade")
+          .map((r) => r.perspective),
+        contradictions,
+        message: (degraded ? "[degraded DD] " : "") +
+          `Strong minority ${overrideDetail.side} signal (confidence ${overrideDetail.confidence}, ${overrideDetail.triggeredBy}) overrides the no_trade majority — re-deploying abstainers.`,
+        noTradeReason,
+        ...degradedFlag,
+        perspectiveBreakdown: breakdown,
+        noTradeReasonDetail: null,
+        weights,
+        sideScores,
+        overrideRule: overrideDetail,
       }
     }
     // reason: strong-minority / middle means the swarm is not unanimous
@@ -307,6 +373,9 @@ export function evaluateConsensus(
         ...degradedFlag,
         perspectiveBreakdown: breakdown,
         noTradeReasonDetail: noTradeDetail,
+        weights,
+        sideScores,
+        overrideRule: { applied: false },
       }
     }
     return {
@@ -320,6 +389,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: noTradeDetail,
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -334,6 +406,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: computeNoTradeDecision(confidences),
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -351,6 +426,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: null,
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -368,6 +446,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: null,
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -388,6 +469,9 @@ export function evaluateConsensus(
       ...degradedFlag,
       perspectiveBreakdown: breakdown,
       noTradeReasonDetail: computeNoTradeDecision(confidences),
+      weights,
+      sideScores,
+      overrideRule: { applied: false },
     }
   }
 
@@ -401,5 +485,8 @@ export function evaluateConsensus(
     ...degradedFlag,
     perspectiveBreakdown: breakdown,
     noTradeReasonDetail: computeNoTradeDecision(confidences),
+    weights,
+    sideScores,
+    overrideRule: { applied: false },
   }
 }

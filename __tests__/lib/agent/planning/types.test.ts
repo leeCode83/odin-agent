@@ -9,6 +9,9 @@ import {
   PlanningSubagentPlan,
   ReDeployEntry,
   ConsensusResult,
+  PerspectiveWeights,
+  SideScores,
+  OverrideRuleDetail,
 } from "@/lib/agent/planning/types"
 import { TradePlanSchema } from "@/lib/agent/types"
 import type { DDReport } from "@/lib/agent/types"
@@ -103,7 +106,7 @@ describe("Planning swarm types", () => {
     }>()
   })
 
-  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason, degraded, perspectiveBreakdown, noTradeReasonDetail", () => {
+  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason, degraded, perspectiveBreakdown, noTradeReasonDetail, weights, sideScores, overrideRule", () => {
     expectTypeOf<ConsensusResult>().toEqualTypeOf<{
       decision: "ACCEPT" | "RE-DEPLOY" | "NO_TRADE" | "FAILED"
       lowConsensusPerspectives: string[]
@@ -125,6 +128,11 @@ describe("Planning swarm types", () => {
         avgConfidence: number
         highestConfidence: number
       } | null
+      weights: Record<"conservative" | "balance" | "aggressive", number>
+      sideScores: Record<"long" | "short" | "no_trade", number>
+      overrideRule:
+        | { applied: true; side: "long" | "short"; confidence: number; triggeredBy: string }
+        | { applied: false }
     }>()
   })
 
@@ -138,7 +146,7 @@ describe("Planning swarm types", () => {
     }>()
   })
 
-  it("PlanningAgentOutput has report, timing, iterations, status", () => {
+  it("PlanningAgentOutput has report, timing, iterations, status, consensus (incl. weights, sideScores, overrideRule)", () => {
     expectTypeOf<PlanningAgentOutput>().toEqualTypeOf<{
       report: {
         asset: string
@@ -165,9 +173,13 @@ describe("Planning swarm types", () => {
         consensus_alignment?: number
         processingTimeMs?: number
         iterations?: number
+        profit_target_percent?: number
+        profit_target_original_percent?: number
+        profit_target_scaled?: boolean
       }
       timing: { planMs: number; executeMs: number; aggregateMs: number; evaluateMs: number; totalMs: number }
       iterations: number
+      decisionPath: "consensus" | "forced" | "exhausted" | "no_trade"
       status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
       consensus?: {
         perspectiveBreakdown: Array<{
@@ -184,6 +196,11 @@ describe("Planning swarm types", () => {
           avgConfidence: number
           highestConfidence: number
         } | null
+        weights: Record<"conservative" | "balance" | "aggressive", number>
+        sideScores: Record<"long" | "short" | "no_trade", number>
+        overrideRule:
+          | { applied: true; side: "long" | "short"; confidence: number; triggeredBy: string }
+          | { applied: false }
       }
     }>()
   })
@@ -265,6 +282,111 @@ describe("TradePlanSchema (swarm extension)", () => {
     expect(result.consensus_alignment).toBeUndefined()
     expect(result.processingTimeMs).toBeUndefined()
     expect(result.iterations).toBeUndefined()
+  })
+})
+
+describe("Consensus-layer types (L1 weights / L2 scores / L3 override)", () => {
+  // reason: tiny pure helper mirroring the L1 contract (Σ weight = 1) so the
+  // test asserts normalization + sum without depending on the implementation.
+  const normalizeToUnit = (weights: Record<string, number>): number => {
+    const total = Object.values(weights).reduce((sum, w) => sum + w, 0)
+    return Object.values(weights).reduce((sum, w) => sum + w / total, 0)
+  }
+
+  it("PerspectiveWeights has exactly the 3 perspective keys, numeric values, and normalizes to Σ=1", () => {
+    const weights: PerspectiveWeights = { conservative: 0.4, balance: 0.35, aggressive: 0.25 }
+    expect(Object.keys(weights).sort()).toEqual(["aggressive", "balance", "conservative"])
+    for (const value of Object.values(weights)) {
+      expect(typeof value).toBe("number")
+    }
+    expect(normalizeToUnit(weights)).toBeCloseTo(1, 10)
+  })
+
+  it("SideScores always has long, short and no_trade keys with numeric values", () => {
+    const scores: SideScores = { long: 12.5, short: 8, no_trade: 3.25 }
+    expect(Object.keys(scores).sort()).toEqual(["long", "no_trade", "short"])
+    for (const value of Object.values(scores)) {
+      expect(typeof value).toBe("number")
+    }
+  })
+
+  it("OverrideRuleDetail applied variant has side, confidence and triggeredBy", () => {
+    const applied: OverrideRuleDetail = { applied: true, side: "long", confidence: 0.7, triggeredBy: "aggressive" }
+    expect(applied.applied).toBe(true)
+    expect(["long", "short"]).toContain(applied.side)
+    expect(typeof applied.confidence).toBe("number")
+    expect(typeof applied.triggeredBy).toBe("string")
+  })
+
+  it("OverrideRuleDetail not-applied variant carries no side/confidence/triggeredBy", () => {
+    const notApplied: OverrideRuleDetail = { applied: false }
+    expect(notApplied.applied).toBe(false)
+    expect("side" in notApplied).toBe(false)
+    expect("confidence" in notApplied).toBe(false)
+    expect("triggeredBy" in notApplied).toBe(false)
+  })
+
+  it("ConsensusResult round-trips weights, sideScores and overrideRule through JSON", () => {
+    const consensus: ConsensusResult = {
+      decision: "ACCEPT",
+      lowConsensusPerspectives: [],
+      contradictions: [],
+      message: "Consensus reached",
+      perspectiveBreakdown: [],
+      noTradeReasonDetail: null,
+      weights: { conservative: 0.4, balance: 0.35, aggressive: 0.25 },
+      sideScores: { long: 12.5, short: 8, no_trade: 3.25 },
+      overrideRule: { applied: false },
+    }
+    const roundTripped = JSON.parse(JSON.stringify(consensus)) as ConsensusResult
+    expect(roundTripped.weights).toEqual({ conservative: 0.4, balance: 0.35, aggressive: 0.25 })
+    expect(roundTripped.sideScores).toEqual({ long: 12.5, short: 8, no_trade: 3.25 })
+    expect(roundTripped.overrideRule).toEqual({ applied: false })
+  })
+
+  it("PlanningAgentOutput.consensus round-trips the 3 new fields and the applied override variant", () => {
+    const output: PlanningAgentOutput = {
+      report: {
+        asset: "BTC",
+        side: "long",
+        entry_price: 65000,
+        position_size_usdc: 100,
+        position_size_contracts: 0.0015,
+        stop_loss: 62000,
+        take_profit: 71000,
+        leverage: 5,
+        confidence_score: 78,
+        confidence_breakdown: { factor_alignment: 80, historical_match: 50, signal_strength: 70 },
+        thesis: "BTC bullish",
+        reasoning: "Momentum",
+        autonomy_decision: "auto",
+        risk_flags: [],
+        graph_patterns_used: [],
+        timestamp: "2026-07-16T10:00:00Z",
+        action: "LONG",
+      },
+      timing: { planMs: 100, executeMs: 50, aggregateMs: 20, evaluateMs: 30, totalMs: 200 },
+      iterations: 1,
+      decisionPath: "consensus",
+      status: "complete",
+      consensus: {
+        perspectiveBreakdown: [],
+        noTradeReasonDetail: null,
+        weights: { conservative: 0.5, balance: 0.3, aggressive: 0.2 },
+        sideScores: { long: 20, short: 5, no_trade: 2 },
+        overrideRule: { applied: true, side: "long", confidence: 0.6, triggeredBy: "aggressive" },
+      },
+    }
+    const roundTripped = JSON.parse(JSON.stringify(output)) as PlanningAgentOutput
+    expect(roundTripped.consensus).toBeDefined()
+    expect(roundTripped.consensus?.weights).toEqual({ conservative: 0.5, balance: 0.3, aggressive: 0.2 })
+    expect(roundTripped.consensus?.sideScores).toEqual({ long: 20, short: 5, no_trade: 2 })
+    expect(roundTripped.consensus?.overrideRule).toEqual({
+      applied: true,
+      side: "long",
+      confidence: 0.6,
+      triggeredBy: "aggressive",
+    })
   })
 })
 

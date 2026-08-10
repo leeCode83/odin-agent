@@ -20,10 +20,13 @@ import type { RiskThresholds } from "@/lib/agent/types"
  * @description Context passed to market-data tool builders.
  * @property {string} asset - Default asset ticker used when a tool's params omit asset.
  * @property {string} userId - Default user ID used when get_risk_thresholds params omit userId.
+ * @property {number} [markPrice] - Pre-fetched mark price; get_mark_price serves
+ *   it without a fetch (same pattern as the pre-fetched equity).
  */
 export interface MarketDataToolContext {
   asset: string
   userId: string
+  markPrice?: number
 }
 
 /**
@@ -46,7 +49,12 @@ export function buildMarketDataTools(ctx: MarketDataToolContext): ToolDefinition
         const start = Date.now()
         try {
           const asset = params.asset ?? ctx.asset
-          const markPrice = await fetchMarkPrice(asset)
+          // reason: serve the pre-fetched mark price when available (one fetch
+          // per run for all 3 perspectives × N calls) — fetch only as fallback.
+          const markPrice =
+            ctx.markPrice !== undefined && ctx.markPrice > 0
+              ? ctx.markPrice
+              : await fetchMarkPrice(asset)
           return {
             success: true,
             data: { markPrice },
