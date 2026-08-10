@@ -88,7 +88,9 @@ Hasil: 2:1 setiap kali DD report partial. Sistem tidak punya mekanisme untuk mem
 
 ---
 
-## Masalah 3: Tools Kurang — LLM Menebak Angka Finansial
+## ✅ Masalah 3: Tools Kurang — LLM Menebak Angka Finansial
+
+> **Status: SELESAI (T11-T13).** Prompt kini mengikat tiap field ke tool wajib (`entry_price` → `get_mark_price`, SL/TP → `compute_sltp`, position size → `compute_position_size`; tool gagal → `no_trade`). SDB Verifier (`lib/agent/planning/verifier.ts`) memvalidasi hasil return secara deterministik: entry_price tanpa `get_mark_price` → force `no_trade`, mismatch > 0.1% → override ke mark price, SL/TP/size override dari hasil tool terakhir yang sukses. Native tool calling diaktifkan di planning subagent (ThinkOptions diteruskan ke DD `think()`).
 
 Paper **ATLAS** dan **FINCON** menekankan: **LLM untuk reasoning, bukan kalkulasi**. Semua perhitungan finansial harus deterministik.
 
@@ -108,7 +110,9 @@ Konsep fundamental: **tool enforcement**. Harusnya ada aturan keras: *"Untuk men
 
 ---
 
-## Masalah 4: Tidak Ada Profit Feasibility Calculator
+## ✅ Masalah 4: Tidak Ada Profit Feasibility Calculator
+
+> **Status: SELESAI (T14-T16).** Tool `compute_profit_feasibility` ditambahkan (R:R, break-even win rate, expected move vs 3×ATR). Aggregator meng-override `profit_feasible` secara deterministik dengan `computeProfitFeasibility` (R:R ≥ 1.5 + target ≤ jarak TP) — penilaian LLM tidak lagi dipercaya.
 
 Skenario user: target profit 2% untuk BTC. ATR BTC 1h ≈ $1200, mark price ≈ $87,000.
 
