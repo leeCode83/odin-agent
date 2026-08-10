@@ -84,9 +84,11 @@ const CATEGORY_TO_HTTP_STATUS: Record<PlanningErrorCategory, number> = {
  *   status "approval_required" so the plan flows to the approval path.
  *   If a valid ddReport is provided, it skips the DD execution phase; else a
  *   fresh cached DD report (F2) is reused before falling back to running the
- *   DD agent. When the pipeline reports ddCoverage it is echoed back.
+ *   DD agent. When the pipeline reports ddCoverage it is echoed back, and
+ *   consensus details (2c: perspectiveBreakdown + noTradeReasonDetail) are
+ *   echoed when consensus evaluation ran.
  * @param {NextRequest} req - Request with { asset, userId, walletAddress, targetProfitPercent?, ddReport? }.
- * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status, ddCoverage? },
+ * @returns {Promise<NextResponse>} 200 { report, timing, iterations, status, ddCoverage?, consensus? },
  *   400 on invalid input, 503 PLANNING_UNAVAILABLE, 422/502/500 per taxonomy.
  */
 export async function POST(req: NextRequest) {
@@ -215,6 +217,9 @@ export async function POST(req: NextRequest) {
       // the NO_TRADE-derived mapping for mocks/older pipeline results.
       status: output.status ?? (validated.action === "NO_TRADE" ? "no_trade" : "complete"),
       ...(output.ddCoverage ? { ddCoverage: output.ddCoverage } : {}),
+      // reason: transparency (2c) — echo consensus only when the pipeline
+      // produced it (key absent when consensus never ran).
+      ...(output.consensus ? { consensus: output.consensus } : {}),
     })
   } catch (err) {
     console.error("Planning pipeline error:", err)

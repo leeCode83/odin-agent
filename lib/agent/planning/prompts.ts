@@ -10,6 +10,7 @@
 
 import { describeZodSchema } from "@/lib/agent/due-diligence/prompts"
 import type { CompactDDReport } from "./utils"
+import type { DDReport } from "@/lib/agent/types"
 
 /**
  * @function makePlanningSystemPrompt
@@ -81,7 +82,17 @@ You MUST respond in JSON format. Do NOT use XML tags or <invoke> blocks — tool
   "risk_flags": [...] // required when action is "return"
 }
 \`\`\`
-Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels. If market data is unavailable, set entry_price to 0 and side to no_trade.
+Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels.
+
+Failure policy — tools and APIs can fail. When a tool or API fails:
+1. Try a reasonable fallback indicator or derived value first (e.g., mark price from a different source, ATR from an alternate timeframe).
+2. Explicitly note the fallback in the reasoning field and mark the analysis degraded.
+3. Only when data is genuinely unavailable AFTER fallback may you set side to no_trade.
+
+Failure states to distinguish:
+- DATA_UNAVAILABLE: no data at all, even after fallback → you may set side to no_trade.
+- DATA_STALE: data is old but present → analyze it anyway, note the staleness, mark the analysis degraded.
+- PARTIAL_DATA: some factors are missing → analyze what exists, note the gap, mark the analysis degraded.
 
 Direction guidance: When bearish signals dominate (multiple bearish direction signals with strength > 60), the correct side is "short", not "no_trade". no_trade means the asset is not worth trading in either direction — it does NOT mean "uncertain about direction". If the DDReport shows bearish signals, consider short as the primary action. Use compute_atr and compute_sl_tp to validate short entry/exit levels the same way you would for long.
 
@@ -95,7 +106,7 @@ Hard rules — never guess trading numbers:
 - "entry_price" MUST come from calling "get_mark_price" (never guessed)
 - "suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp" (with "compute_atr" output as input)
 - "suggested_position_size_usdc" MUST come from calling "compute_position_size"
-- If a required tool's result is unavailable or failed, return "side": "no_trade" instead of inventing numbers.
+- If a required tool's result is unavailable or failed, try a reasonable fallback indicator or derived value first and mark the analysis degraded; return "side": "no_trade" only when data is genuinely unavailable after fallback, instead of inventing numbers.
 
 When returning, the "signals" field MUST be an array of objects with:
 - name (string): signal name
@@ -140,24 +151,50 @@ Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", 
  *   rePlan / aggregate). Replaces the hardcoded "4 factors" sentence that
  *   PLAN_PROMPT used to carry, so the coverage statement stays accurate when
  *   factors are optional, fail, or new ones get added.
- * @param {CompactDDReport} ddReport - Compacted DD report. The
+ * @param {DDReport|CompactDDReport} ddReport - DD report. The
  *   `factorCoverage` field is OPTIONAL — the contract guarantees it exists
  *   only when the DD report producer emits it. When missing, this helper falls
  *   back to `Object.keys(ddReport.sections ?? {})` as the planned factors and
  *   derives usability from section scores (`typeof score === "number"`).
+ * @param {"risk"|"market"} [focus] - Optional ordering focus: "risk" lists
+ *   risk-related factors (risk-analysis, volatility, funding, liquidation)
+ *   before technical/sentiment ones; "market" lists technical/sentiment
+ *   factors first; omitted keeps the planned order unchanged (backward
+ *   compatible).
  * @returns {string} One coverage sentence:
  *   - all succeeded: "DDReport covers N factors: a, b."
  *   - degraded: "DDReport covers M of N planned factors: a, b. Failed: c."
  *   - unknown: "DDReport coverage unavailable." (never throws)
  */
-export function buildDDFactorContext(ddReport: CompactDDReport): string {
+// reason: keyword lists drive focus ordering — name-based so future factor
+// names (risk-analysis, volatility, funding, liquidation zones) stay covered
+// without schema changes.
+const RISK_FACTOR_KEYWORDS = ["risk", "volatil", "funding", "liquidat"]
+const MARKET_FACTOR_KEYWORDS = ["technical", "sentiment"]
+
+// reason: stable partition — the focused group leads, the rest keep their
+// original relative order; undefined focus returns the input unchanged.
+function orderFactorsByFocus(factors: string[], focus?: "risk" | "market"): string[] {
+  if (focus === undefined) return factors
+  const keywords = focus === "risk" ? RISK_FACTOR_KEYWORDS : MARKET_FACTOR_KEYWORDS
+  const isFocused = (factor: string) => keywords.some((keyword) => factor.toLowerCase().includes(keyword))
+  return [...factors.filter(isFocused), ...factors.filter((factor) => !isFocused(factor))]
+}
+
+export function buildDDFactorContext(
+  ddReport: DDReport | CompactDDReport,
+  focus?: "risk" | "market"
+): string {
   // reason: factorCoverage is optional — read it defensively so this never
   // crashes while the field is absent from CompactDDReport.
   const coverage = (ddReport as CompactDDReport & {
     factorCoverage?: { plannedFactors: string[]; usableCount: number }
   }).factorCoverage
 
-  const plannedFactors = coverage?.plannedFactors ?? Object.keys(ddReport.sections ?? {})
+  const plannedFactors = orderFactorsByFocus(
+    coverage?.plannedFactors ?? Object.keys(ddReport.sections ?? {}),
+    focus
+  )
   if (plannedFactors.length === 0) return "DDReport coverage unavailable."
 
   // reason: sections is typed with known optional keys; index it via a record

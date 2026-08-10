@@ -31,6 +31,7 @@ import type {
   PlanningSubagentPlan,
   Perspective,
   PerspectiveReport,
+  ConsensusResult,
 } from "@/lib/agent/planning/types"
 
 /**
@@ -376,6 +377,10 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   let lastLowConsensus: string[] = []
 
   let outcome: "accepted" | "forced" | "no_trade" | "exhausted" = "exhausted"
+  // reason: transparency (2c) — keep the final consensus evaluation around for
+  // the output (per-perspective breakdown + no-trade rule detail). evaluation
+  // is loop-scoped, so mirror the last one here.
+  let latestConsensus: ConsensusResult | null = null
   // reason: loop exhausts only when RE-DEPLOY keeps coming back with an empty
   // low-consensus set (aggregation failure with fully aligned reports) — the
   // per-perspective cap otherwise forces acceptance by iteration 2.
@@ -475,10 +480,13 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       degradedFactors.length > 0 ? degradedFactors : undefined
     )
     timing.evaluateMs += Date.now() - evalT0
+    latestConsensus = evaluation
     log("info", "consensus.evaluated", {
       iteration,
       decision: evaluation.decision,
       message: evaluation.message,
+      perspectiveBreakdown: evaluation.perspectiveBreakdown,
+      noTradeReasonDetail: evaluation.noTradeReasonDetail,
     })
 
     if (evaluation.decision === "ACCEPT") {
@@ -595,5 +603,15 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     timing: { ...timing, totalMs },
     iterations: finalIterations,
     status,
+    // reason: spread keeps the key ABSENT when consensus never ran (dd-gate
+    // failure path throws earlier) — same omit-when-absent contract as ddCoverage.
+    ...(latestConsensus
+      ? {
+          consensus: {
+            perspectiveBreakdown: latestConsensus.perspectiveBreakdown,
+            noTradeReasonDetail: latestConsensus.noTradeReasonDetail,
+          },
+        }
+      : {}),
   }
 }

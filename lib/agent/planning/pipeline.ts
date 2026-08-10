@@ -9,7 +9,11 @@
 
 import { runPlanningAgent } from "@/lib/agent/planning/agent"
 import { log } from "@/lib/agent/planning/log"
-import type { DDCoverage } from "@/lib/agent/planning/types"
+import type {
+  DDCoverage,
+  PerspectiveBreakdownEntry,
+  NoTradeReasonDetail,
+} from "@/lib/agent/planning/types"
 import { TradePlanSchema } from "@/lib/agent/types"
 import type { TradePlan, DDReport } from "@/lib/agent/types"
 import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
@@ -63,7 +67,9 @@ export class PlanningError extends Error {
  *   execution timings, and the agent-level run status (complete / no_trade /
  *   partial / approval_required) so the route layer can surface it.
  *   `ddCoverage` is present only when the upstream DD report was partial —
- *   omitted entirely (key absent) when every factor scored.
+ *   omitted entirely (key absent) when every factor scored. `consensus`
+ *   carries the per-perspective breakdown and no-trade rule detail (2c);
+ *   omitted when consensus never ran.
  */
 export interface PlanningPipelineResult {
   report: TradePlan
@@ -75,6 +81,11 @@ export interface PlanningPipelineResult {
   // reason: degraded-DD signaling (F3) — see DDCoverage; used by the route
   // layer to tell consumers the plan was made on incomplete analysis.
   ddCoverage?: DDCoverage
+  // reason: transparency (2c) — mirrors agent output for API consumers.
+  consensus?: {
+    perspectiveBreakdown: PerspectiveBreakdownEntry[]
+    noTradeReasonDetail: NoTradeReasonDetail | null
+  }
 }
 
 /**
@@ -114,7 +125,9 @@ function computeDDCoverage(ddReport: DDReport): DDCoverage | undefined {
  * @param {number} [input.targetProfitPercent] - Target profit percent; defaults to 100.
  * @param {DDReport} input.ddReport - The due diligence report to base the plan on.
  * @returns {Promise<PlanningPipelineResult>} The validated trade plan and execution timings.
- *   Includes `ddCoverage` when the DD report was partial (some factors failed).
+ *   Includes `ddCoverage` when the DD report was partial (some factors failed)
+ *   and `consensus` (per-perspective breakdown + no-trade rule detail) when
+ *   consensus evaluation ran.
  * @throws {PlanningError} When the agent fails or the plan fails validation.
  */
 export async function runPlanningPipeline(input: {
@@ -136,7 +149,7 @@ export async function runPlanningPipeline(input: {
       log("info", "planning.degraded_dd", { failedFactors: ddCoverage.failedFactors })
     }
 
-    const { report, status } = await runPlanningAgent({
+    const { report, status, consensus } = await runPlanningAgent({
       asset,
       userId,
       walletAddress,
@@ -156,6 +169,8 @@ export async function runPlanningPipeline(input: {
       // reason: spread keeps the key ABSENT (not undefined) when not degraded —
       // contract F3: "omit the field entirely when nothing failed".
       ...(ddCoverage ? { ddCoverage } : {}),
+      // reason: same omit-when-absent contract for consensus (2c).
+      ...(consensus ? { consensus } : {}),
     }
   } catch (err) {
     // reason: carry over structured detail/processingTimeMs/errorCategory from

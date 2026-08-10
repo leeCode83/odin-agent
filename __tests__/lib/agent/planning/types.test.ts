@@ -103,7 +103,7 @@ describe("Planning swarm types", () => {
     }>()
   })
 
-  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason, degraded", () => {
+  it("ConsensusResult has decision, lowConsensusPerspectives, contradictions, message, noTradeReason, degraded, perspectiveBreakdown, noTradeReasonDetail", () => {
     expectTypeOf<ConsensusResult>().toEqualTypeOf<{
       decision: "ACCEPT" | "RE-DEPLOY" | "NO_TRADE" | "FAILED"
       lowConsensusPerspectives: string[]
@@ -111,6 +111,20 @@ describe("Planning swarm types", () => {
       message: string
       noTradeReason?: string
       degraded?: boolean
+      perspectiveBreakdown: Array<{
+        perspective: "conservative" | "balance" | "aggressive"
+        side: "long" | "short" | "no_trade"
+        confidence: number
+        reason: string
+        fundingFlag: boolean
+        toolsFailed: string[]
+        degraded: boolean
+      }>
+      noTradeReasonDetail: {
+        rule: "NO_TRADE_LOW_AVG" | "NO_TRADE_UNANIMOUS_WEAK" | "RE_DEPLOY_STRONG_MINORITY" | "RE_DEPLOY_MIDDLE" | "NO_TRADE_UNANIMOUS"
+        avgConfidence: number
+        highestConfidence: number
+      } | null
     }>()
   })
 
@@ -155,6 +169,22 @@ describe("Planning swarm types", () => {
       timing: { planMs: number; executeMs: number; aggregateMs: number; evaluateMs: number; totalMs: number }
       iterations: number
       status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
+      consensus?: {
+        perspectiveBreakdown: Array<{
+          perspective: "conservative" | "balance" | "aggressive"
+          side: "long" | "short" | "no_trade"
+          confidence: number
+          reason: string
+          fundingFlag: boolean
+          toolsFailed: string[]
+          degraded: boolean
+        }>
+        noTradeReasonDetail: {
+          rule: "NO_TRADE_LOW_AVG" | "NO_TRADE_UNANIMOUS_WEAK" | "RE_DEPLOY_STRONG_MINORITY" | "RE_DEPLOY_MIDDLE" | "NO_TRADE_UNANIMOUS"
+          avgConfidence: number
+          highestConfidence: number
+        } | null
+      }
     }>()
   })
 
@@ -237,3 +267,4 @@ describe("TradePlanSchema (swarm extension)", () => {
     expect(result.iterations).toBeUndefined()
   })
 })
+

@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect } from "vitest"
-import { evaluateConsensus } from "@/lib/agent/planning/evaluate"
+import {
+  evaluateConsensus,
+  computeNoTradeDecision,
+} from "@/lib/agent/planning/evaluate"
 import type {
   PerspectiveReport,
   PlanningAggregationResult,
@@ -93,11 +96,11 @@ describe("evaluateConsensus", () => {
     expect(result.decision).toBe("FAILED")
   })
 
-  it("RULE 2 — ≥2 reports side no_trade → NO_TRADE with aggregation reason", () => {
+  it("RULE 2 — ≥2 reports side no_trade with low-avg confidence → NO_TRADE with aggregation reason", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade" }),
-      makeReport({ perspective: "balance", side: "no_trade" }),
-      makeReport({ perspective: "aggressive", side: "long" }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 35 }),
     ]
 
     const result = evaluateConsensus(
@@ -107,13 +110,14 @@ describe("evaluateConsensus", () => {
 
     expect(result.decision).toBe("NO_TRADE")
     expect(result.noTradeReason).toBe("ATR too flat")
+    expect(result.noTradeReasonDetail?.rule).toBe("NO_TRADE_LOW_AVG")
   })
 
   it("RULE 2 — NO_TRADE with null aggregation has no noTradeReason", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade" }),
-      makeReport({ perspective: "balance", side: "no_trade" }),
-      makeReport({ perspective: "aggressive", side: "short" }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "aggressive", side: "short", confidence: 35 }),
     ]
 
     const result = evaluateConsensus(reports, null)
@@ -124,9 +128,9 @@ describe("evaluateConsensus", () => {
 
   it("RULE 2 ordering — no_trade majority beats funding flags (rule 2 before rule 3)", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade", risk_flags: ["funding_rate_extreme"] }),
-      makeReport({ perspective: "balance", side: "no_trade", risk_flags: ["funding_rate_extreme"] }),
-      makeReport({ perspective: "aggressive", side: "long", risk_flags: [] }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35, risk_flags: ["funding_rate_extreme"] }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 35, risk_flags: ["funding_rate_extreme"] }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 35, risk_flags: [] }),
     ]
 
     const result = evaluateConsensus(
@@ -301,9 +305,9 @@ describe("evaluateConsensus", () => {
 
   it("DEGRADED — NO_TRADE reason suffixed with failed factors and result marked degraded", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade" }),
-      makeReport({ perspective: "balance", side: "no_trade" }),
-      makeReport({ perspective: "aggressive", side: "long" }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 35 }),
     ]
 
     const result = evaluateConsensus(
@@ -339,9 +343,9 @@ describe("evaluateConsensus", () => {
 
   it("NOT degraded — NO_TRADE reason unsuffixed and result unflagged (regression)", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade" }),
-      makeReport({ perspective: "balance", side: "no_trade" }),
-      makeReport({ perspective: "aggressive", side: "long" }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 35 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 35 }),
     ]
 
     const result = evaluateConsensus(
@@ -369,5 +373,209 @@ describe("evaluateConsensus", () => {
 
     expect(result.decision).toBe("FAILED")
     expect(result.noTradeReason).toBeUndefined()
+  })
+
+  it("RULE 2b — 2 no_trade + one confidence ≥ 70 → RE-DEPLOY (strong minority)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 75 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 30 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("RE-DEPLOY")
+    expect(result.noTradeReasonDetail?.rule).toBe("RE_DEPLOY_STRONG_MINORITY")
+  })
+
+  it("RULE 2c — 2 no_trade + all confidences < 50 → NO_TRADE (unanimous weak)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 45 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 45 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 45 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReasonDetail?.rule).toBe("NO_TRADE_UNANIMOUS_WEAK")
+  })
+
+  it("RULE 2 unanimous — all 3 no_trade with strong confidence → NO_TRADE (unanimous abstention)", () => {
+    // reason: every perspective abstains, so there is no strong minority
+    // signal to re-deploy toward — strong unanimous no_trade stays NO_TRADE.
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 70 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 70 }),
+      makeReport({ perspective: "aggressive", side: "no_trade", confidence: 70 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReasonDetail?.rule).toBe("NO_TRADE_UNANIMOUS")
+  })
+
+  it("RULE 2 unanimous — all 3 no_trade with middle confidence → NO_TRADE (unanimous abstention)", () => {
+    // reason: same guard — 2b RE-DEPLOY only rescues a strong signal held by
+    // a NON-no_trade perspective; unanimous abstention honors the refusal.
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 55 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 60 }),
+      makeReport({ perspective: "aggressive", side: "no_trade", confidence: 65 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReasonDetail?.rule).toBe("NO_TRADE_UNANIMOUS")
+  })
+
+  it("RULE 2 — 2 no_trade + average confidence < 40 → NO_TRADE (low avg)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 30 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("NO_TRADE")
+    expect(result.noTradeReasonDetail?.rule).toBe("NO_TRADE_LOW_AVG")
+  })
+
+  it("RULE 2 middle — 2 no_trade + one confidence ≥ 50 & < 70 → RE-DEPLOY (middle)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 60 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 30 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 30 }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({ side: "no_trade" }))
+
+    expect(result.decision).toBe("RE-DEPLOY")
+    expect(result.noTradeReasonDetail?.rule).toBe("RE_DEPLOY_MIDDLE")
+  })
+
+  it("perspectiveBreakdown — 3 entries, one per perspective report", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", side: "long" }),
+      makeReport({ perspective: "balance", side: "long" }),
+      makeReport({ perspective: "aggressive", side: "long" }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "long", confidence_score: 80 })
+    )
+
+    expect(result.decision).toBe("ACCEPT")
+    expect(result.perspectiveBreakdown).toHaveLength(3)
+    expect(result.perspectiveBreakdown.map((e) => e.perspective).sort()).toEqual(
+      ["aggressive", "balance", "conservative"]
+    )
+  })
+
+  it("noTradeReasonDetail — null on ACCEPT, rule set on NO_TRADE", () => {
+    const acceptReports = [
+      makeReport({ perspective: "conservative", side: "long" }),
+      makeReport({ perspective: "balance", side: "long" }),
+      makeReport({ perspective: "aggressive", side: "long" }),
+    ]
+    const accept = evaluateConsensus(
+      acceptReports,
+      makeAggregation({ side: "long", confidence_score: 80 })
+    )
+
+    expect(accept.decision).toBe("ACCEPT")
+    expect(accept.noTradeReasonDetail).toBeNull()
+
+    const noTradeReports = [
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 45 }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 45 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 45 }),
+    ]
+    const noTrade = evaluateConsensus(noTradeReports, makeAggregation({ side: "no_trade" }))
+
+    expect(noTrade.decision).toBe("NO_TRADE")
+    expect(noTrade.noTradeReasonDetail?.rule).toBe("NO_TRADE_UNANIMOUS_WEAK")
+    expect(noTrade.noTradeReasonDetail?.avgConfidence).toBe(45)
+    expect(noTrade.noTradeReasonDetail?.highestConfidence).toBe(45)
+  })
+
+  it("perspectiveBreakdown — entry fields: confidence fallback, reason, fundingFlag, toolsFailed, degraded", () => {
+    const reports = [
+      makeReport({
+        perspective: "conservative",
+        side: "long",
+        confidence: null,
+        score: 62,
+        reasoning: "trend intact",
+        risk_flags: ["funding overheat"],
+        errors: ["tool-a", "tool-b"],
+      }),
+      makeReport({ perspective: "balance", side: "long", confidence: 65 }),
+      makeReport({ perspective: "aggressive", side: "long", confidence: 70 }),
+    ]
+
+    const result = evaluateConsensus(
+      reports,
+      makeAggregation({ side: "long", confidence_score: 80 }),
+      ["technical"]
+    )
+
+    expect(result.decision).toBe("ACCEPT")
+    expect(result.degraded).toBe(true)
+    const conservative = result.perspectiveBreakdown.find(
+      (e) => e.perspective === "conservative"
+    )
+    expect(conservative?.side).toBe("long")
+    expect(conservative?.confidence).toBe(62)
+    expect(conservative?.reason).toBe("trend intact")
+    expect(conservative?.fundingFlag).toBe(true)
+    expect(conservative?.toolsFailed).toEqual(["tool-a", "tool-b"])
+    expect(conservative?.degraded).toBe(true)
+  })
+})
+
+describe("computeNoTradeDecision", () => {
+  it("[80, 30, 30] → RE_DEPLOY_STRONG_MINORITY with correct stats", () => {
+    const detail = computeNoTradeDecision([80, 30, 30])
+
+    expect(detail.rule).toBe("RE_DEPLOY_STRONG_MINORITY")
+    expect(detail.avgConfidence).toBeCloseTo(46.67, 2)
+    expect(detail.highestConfidence).toBe(80)
+  })
+
+  it("[30, 30, 30] → NO_TRADE_LOW_AVG (avg < 40)", () => {
+    const detail = computeNoTradeDecision([30, 30, 30])
+
+    expect(detail.rule).toBe("NO_TRADE_LOW_AVG")
+    expect(detail.avgConfidence).toBe(30)
+    expect(detail.highestConfidence).toBe(30)
+  })
+
+  it("[45, 45, 45] → NO_TRADE_UNANIMOUS_WEAK (avg ≥ 40, all < 50)", () => {
+    const detail = computeNoTradeDecision([45, 45, 45])
+
+    expect(detail.rule).toBe("NO_TRADE_UNANIMOUS_WEAK")
+    expect(detail.avgConfidence).toBe(45)
+    expect(detail.highestConfidence).toBe(45)
+  })
+
+  it("[55, 50, 52] → RE_DEPLOY_MIDDLE", () => {
+    const detail = computeNoTradeDecision([55, 50, 52])
+
+    expect(detail.rule).toBe("RE_DEPLOY_MIDDLE")
+    expect(detail.avgConfidence).toBeCloseTo(52.33, 2)
+    expect(detail.highestConfidence).toBe(55)
+  })
+
+  it("single-element array handled (avg/max over non-empty array)", () => {
+    const detail = computeNoTradeDecision([75])
+
+    expect(detail.rule).toBe("RE_DEPLOY_STRONG_MINORITY")
+    expect(detail.avgConfidence).toBe(75)
+    expect(detail.highestConfidence).toBe(75)
   })
 })

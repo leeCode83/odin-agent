@@ -211,6 +211,85 @@ describe("POST /api/agent/planning", () => {
     expect(data).not.toHaveProperty("ddCoverage")
   })
 
+  it("passes consensus through to the response when the pipeline reports it", async () => {
+    const consensus = {
+      perspectiveBreakdown: [
+        {
+          perspective: "conservative",
+          side: "no_trade",
+          confidence: 30,
+          reason: "Funding divergence",
+          fundingFlag: true,
+          toolsFailed: [],
+          degraded: false,
+        },
+      ],
+      noTradeReasonDetail: {
+        rule: "NO_TRADE_LOW_AVG",
+        avgConfidence: 30,
+        highestConfidence: 30,
+      },
+    }
+    mockRunPlanningPipeline.mockResolvedValue({
+      report: NO_TRADE_PLAN,
+      timing: VALID_TIMING,
+      status: "no_trade",
+      consensus,
+    })
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data.consensus).toEqual(consensus)
+    expect(data.consensus.perspectiveBreakdown).toHaveLength(1)
+    expect(data.consensus.noTradeReasonDetail.rule).toBe("NO_TRADE_LOW_AVG")
+  })
+
+  it("omits consensus from the response when the pipeline does not report it", async () => {
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data).not.toHaveProperty("consensus")
+  })
+
+  it("returns noTradeReasonDetail for NO_TRADE with status no_trade", async () => {
+    const consensus = {
+      perspectiveBreakdown: [
+        {
+          perspective: "balance",
+          side: "no_trade",
+          confidence: 35,
+          reason: "No viable entry",
+          fundingFlag: false,
+          toolsFailed: ["get_mark_price"],
+          degraded: true,
+        },
+      ],
+      noTradeReasonDetail: {
+        rule: "NO_TRADE_UNANIMOUS_WEAK",
+        avgConfidence: 35,
+        highestConfidence: 35,
+      },
+    }
+    mockRunPlanningPipeline.mockResolvedValue({
+      report: NO_TRADE_PLAN,
+      timing: VALID_TIMING,
+      status: "no_trade",
+      consensus,
+    })
+
+    const res = await post({ asset: "BTC", userId: "user-1", walletAddress: "0x123" })
+    const data = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(data.report.action).toBe("NO_TRADE")
+    expect(data.status).toBe("no_trade")
+    expect(data.consensus.noTradeReasonDetail).not.toBeNull()
+    expect(data.consensus.noTradeReasonDetail.rule).toBe("NO_TRADE_UNANIMOUS_WEAK")
+  })
+
   it("passes a provided ddReport to the pipeline without calling runDDAgent", async () => {
     const customDD = {
       aggregated_thesis: "BTC has upside",

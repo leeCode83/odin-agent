@@ -103,6 +103,45 @@ export interface ConsensusResult {
   // failed) — marks consensus results so NO_TRADE/RE-DEPLOY aren't mistaken
   // for real market conviction. Omitted entirely when DD was complete.
   degraded?: boolean
+  // reason: transparency — every perspective's verdict, one entry each, so
+  // callers can see WHO voted what and why instead of just the aggregate.
+  perspectiveBreakdown: PerspectiveBreakdownEntry[]
+  // reason: transparency — the deterministic rule that produced a NO_TRADE /
+  // RE-DEPLOY decision (from computeNoTradeDecision). Null when the decision
+  // is ACCEPT or FAILED.
+  noTradeReasonDetail: NoTradeReasonDetail | null
+}
+
+/**
+ * @type PerspectiveBreakdownEntry
+ * @description Per-perspective verdict used for consensus transparency:
+ *   each planning subagent's side, confidence, reason, funding flag, failed
+ *   tools, and degradation status.
+ */
+export type PerspectiveBreakdownEntry = {
+  perspective: "conservative" | "balance" | "aggressive"
+  side: "long" | "short" | "no_trade"
+  confidence: number
+  reason: string
+  fundingFlag: boolean
+  toolsFailed: string[]
+  degraded: boolean
+}
+
+/**
+ * @type NoTradeReasonDetail
+ * @description The deterministic rule behind a NO_TRADE / RE-DEPLOY decision,
+ *   with the confidence statistics that triggered it.
+ */
+export type NoTradeReasonDetail = {
+  rule:
+    | "NO_TRADE_LOW_AVG"
+    | "NO_TRADE_UNANIMOUS_WEAK"
+    | "RE_DEPLOY_STRONG_MINORITY"
+    | "RE_DEPLOY_MIDDLE"
+    | "NO_TRADE_UNANIMOUS"
+  avgConfidence: number
+  highestConfidence: number
 }
 
 /**
@@ -150,6 +189,14 @@ export interface PlanningAgentOutput {
   // human approval; distinct from "partial" (loop exhaustion) and the
   // per-plan autonomy_decision "approve" (which can also occur on full DD).
   status: "complete" | "no_trade" | "partial" | "failed" | "approval_required"
+  // reason: transparency (2c) — per-perspective breakdown and the rule that
+  // produced the NO_TRADE / RE-DEPLOY decision, surfaced to API consumers.
+  // Present on every run that reached evaluateConsensus (all except dd-gate
+  // failures); omitted when consensus never ran.
+  consensus?: {
+    perspectiveBreakdown: PerspectiveBreakdownEntry[]
+    noTradeReasonDetail: NoTradeReasonDetail | null
+  }
 }
 
 /**

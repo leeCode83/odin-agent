@@ -75,10 +75,31 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain('"suggested_position_size_usdc" MUST come from calling "compute_position_size"')
   })
 
-  it("returns no_trade instead of inventing numbers when a required tool fails", () => {
+  it("returns no_trade only after fallback instead of inventing numbers when a required tool fails", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
-    expect(prompt).toContain('If a required tool\'s result is unavailable or failed, return "side": "no_trade"')
+    expect(prompt).toContain('If a required tool\'s result is unavailable or failed, try a reasonable fallback')
+    expect(prompt).toContain('return "side": "no_trade" only when data is genuinely unavailable after fallback')
     expect(prompt).toContain("instead of inventing numbers")
+  })
+
+  it("replaces the unconditional no_trade escape hatch with a graduated failure policy", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).not.toContain("set entry_price to 0 and side to no_trade")
+    expect(prompt).not.toContain('If a required tool\'s result is unavailable or failed, return "side": "no_trade"')
+  })
+
+  it("instructs fallback before no_trade and degraded marking", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("reasonable fallback indicator or derived value")
+    expect(prompt).toContain("fallback")
+    expect(prompt).toContain("degraded")
+  })
+
+  it("distinguishes DATA_UNAVAILABLE, DATA_STALE, and PARTIAL_DATA failure states", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("DATA_UNAVAILABLE")
+    expect(prompt).toContain("DATA_STALE")
+    expect(prompt).toContain("PARTIAL_DATA")
   })
 
   it("carries the required-tools hard rules for all 3 perspectives", () => {
@@ -182,6 +203,42 @@ describe("buildDDFactorContext", () => {
     sections: {},
     risk_flags: [],
     ...overrides,
+  })
+
+  // reason: mixed-order fixture — risk (volatility, funding) and market
+  // (technical, sentiment) factors interleaved so risk / market / default
+  // ordering produce three distinct outputs.
+  const mixedReport = makeReport({
+    sections: {
+      fundamental: { score: 60, summary: "Fair value", signals: [] },
+      volatility: { score: 70, summary: "Elevated vol", signals: [] },
+      technical: { score: 55, summary: "Bullish trend", signals: [] },
+      funding: { score: 50, summary: "Neutral funding", signals: [] },
+      sentiment: { score: 45, summary: "Neutral", signals: [] },
+      onchain: { score: 65, summary: "Accumulation", signals: [] },
+    },
+    factorCoverage: {
+      plannedFactors: ["fundamental", "volatility", "technical", "funding", "sentiment", "onchain"],
+      usableCount: 6,
+    },
+  })
+
+  it("orders risk factors before market factors when focus is risk", () => {
+    expect(buildDDFactorContext(mixedReport, "risk")).toBe(
+      "DDReport covers 6 factors: volatility, funding, fundamental, technical, sentiment, onchain."
+    )
+  })
+
+  it("orders market factors before risk factors when focus is market", () => {
+    expect(buildDDFactorContext(mixedReport, "market")).toBe(
+      "DDReport covers 6 factors: technical, sentiment, fundamental, volatility, funding, onchain."
+    )
+  })
+
+  it("keeps the original planned order when focus is omitted", () => {
+    expect(buildDDFactorContext(mixedReport)).toBe(
+      "DDReport covers 6 factors: fundamental, volatility, technical, funding, sentiment, onchain."
+    )
   })
 
   it("emits the all-succeeded form when every planned factor is usable", () => {

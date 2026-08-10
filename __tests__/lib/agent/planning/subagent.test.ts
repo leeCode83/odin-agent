@@ -1,15 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { z } from "zod"
-import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
+import { runPerspectiveSubagent, TOOL_PRIORITY, orderToolsByPriority } from "@/lib/agent/planning/subagent"
 import type { DDReport } from "@/lib/agent/types"
 import type { ToolDefinition, ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import type { SubAgentThought } from "@/lib/agent/due-diligence/subagent"
 
 const thinkMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<SubAgentThought>>())
+const buildDDFactorContextMock = vi.hoisted(() => vi.fn(() => "DDReport coverage focus."))
 
 vi.mock("@/lib/agent/due-diligence/llm", () => ({
   think: thinkMock,
 }))
+
+// reason: stub only buildDDFactorContext — makePlanningSystemPrompt stays real so
+// the system-prompt assertions keep exercising the actual prompt builder.
+vi.mock("@/lib/agent/planning/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/agent/planning/prompts")>()
+  return { ...actual, buildDDFactorContext: buildDDFactorContextMock }
+})
 
 function makeTool(name: string, execute?: ToolDefinition["execute"]): ToolDefinition {
   return {
@@ -363,5 +371,144 @@ describe("runPerspectiveSubagent", () => {
     const [messages] = thinkMock.mock.calls[0]
     const systemPrompt = (messages as Array<{ role: string; content: string }>)[0].content
     expect(systemPrompt).not.toContain("Note: DD analysis incomplete")
+  })
+})
+
+describe("TOOL_PRIORITY", () => {
+  it("has an entry for every perspective", () => {
+    expect(Object.keys(TOOL_PRIORITY).sort()).toEqual(["aggressive", "balance", "conservative"])
+    for (const perspective of ["conservative", "balance", "aggressive"] as const) {
+      expect(TOOL_PRIORITY[perspective].length).toBeGreaterThan(0)
+    }
+  })
+
+  it("lists risk-related tool names before market-data ones for conservative", () => {
+    const order = TOOL_PRIORITY.conservative
+    expect(order.indexOf("compute_atr")).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf("get_mark_price")).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf("compute_atr")).toBeLessThan(order.indexOf("get_mark_price"))
+    expect(order.indexOf("assess_cascade_risk")).toBeLessThan(order.indexOf("get_mark_price"))
+  })
+
+  it("lists market-data tool names before risk-related ones for aggressive", () => {
+    const order = TOOL_PRIORITY.aggressive
+    expect(order.indexOf("get_mark_price")).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf("compute_atr")).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf("get_mark_price")).toBeLessThan(order.indexOf("compute_atr"))
+    expect(order.indexOf("web_search")).toBeLessThan(order.indexOf("compute_atr"))
+  })
+})
+
+describe("orderToolsByPriority", () => {
+  it("puts risk-engine tools first for conservative", () => {
+    expect(orderToolsByPriority(["get_mark_price", "compute_atr"], "conservative")).toEqual([
+      "compute_atr",
+      "get_mark_price",
+    ])
+  })
+
+  it("puts market-data tools first for aggressive", () => {
+    expect(orderToolsByPriority(["compute_atr", "get_mark_price", "web_search"], "aggressive")).toEqual([
+      "get_mark_price",
+      "web_search",
+      "compute_atr",
+    ])
+  })
+
+  it("appends unknown tools after the priority-ordered ones", () => {
+    expect(
+      orderToolsByPriority(["compute_atr", "compute_profit_feasibility", "get_mark_price"], "conservative")
+    ).toEqual(["compute_atr", "get_mark_price", "compute_profit_feasibility"])
+  })
+
+  it("skips priority names absent from the given tools", () => {
+    expect(orderToolsByPriority(["get_mark_price"], "conservative")).toEqual(["get_mark_price"])
+  })
+
+  it("returns an empty array for empty input", () => {
+    expect(orderToolsByPriority([], "balance")).toEqual([])
+  })
+})
+
+describe("runPerspectiveSubagent tool ordering", () => {
+  beforeEach(() => {
+    thinkMock.mockClear()
+  })
+
+  it("reorders the registry by perspective priority before the subagent run", async () => {
+    const tools: ToolRegistry = {
+      get_mark_price: makeTool("get_mark_price"),
+      compute_atr: makeTool("compute_atr"),
+    }
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "conservative",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    const options = thinkMock.mock.calls[0][1] as
+      | { tools?: Array<{ function: { name: string } }> }
+      | undefined
+    expect(options?.tools?.map((t) => t.function.name)).toEqual(["compute_atr", "get_mark_price"])
+    const [messages] = thinkMock.mock.calls[0]
+    const systemPrompt = (messages as Array<{ role: string; content: string }>)[0].content
+    expect(systemPrompt.indexOf("- compute_atr(")).toBeLessThan(systemPrompt.indexOf("- get_mark_price("))
+  })
+})
+
+describe("runPerspectiveSubagent focus context", () => {
+  beforeEach(() => {
+    buildDDFactorContextMock.mockClear()
+  })
+
+  it("passes focus 'risk' to buildDDFactorContext for conservative", async () => {
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "conservative",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools: { compute_atr: makeTool("compute_atr") },
+    })
+
+    expect(buildDDFactorContextMock).toHaveBeenCalledWith(expect.anything(), "risk")
+  })
+
+  it("passes focus 'market' to buildDDFactorContext for aggressive", async () => {
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "aggressive",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools: { compute_atr: makeTool("compute_atr") },
+    })
+
+    expect(buildDDFactorContextMock).toHaveBeenCalledWith(expect.anything(), "market")
+  })
+
+  it("calls buildDDFactorContext with a single argument for balance", async () => {
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "balance",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools: { compute_atr: makeTool("compute_atr") },
+    })
+
+    expect(buildDDFactorContextMock).toHaveBeenCalledWith(expect.anything())
+    expect(buildDDFactorContextMock.mock.calls[0]).toHaveLength(1)
   })
 })

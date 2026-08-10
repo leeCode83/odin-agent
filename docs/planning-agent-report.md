@@ -17,7 +17,14 @@ Yang hilang: **tidak ada tool "hitung leverage optimal"** — padahal setiap tra
 
 ---
 
-## Masalah 2: NO_TRADE Dominan — Dua Perspektif Memilih Diam
+## ✅ Masalah 2: NO_TRADE Dominan — Dua Perspektif Memilih Diam
+
+> **Status: SELESAI (2a-2d).** Implementasi hybrid Rule 2 + transparansi konsensus + prioritas tool per perspektif:
+> - **2a** — Escape hatch diganti kebijakan gradasi: fallback dulu, degradasi dicatat, `no_trade` hanya jika data benar-benar tidak ada SETELAH fallback. Failure state dibedakan: DATA_UNAVAILABLE / DATA_STALE / PARTIAL_DATA (prompts.ts).
+> - **2b** — Rule 2 dipecah jadi hybrid berbasis confidence (`computeNoTradeDecision`): avg < 40 → NO_TRADE; ada sinyal kuat ≥ 70 dari perspektif non-no_trade → RE-DEPLOY (2b); semua < 50 → NO_TRADE (2c); sisanya RE-DEPLOY (middle). Absten unanimous (3/3 no_trade) selalu NO_TRADE — tidak ada sinyal minoritas untuk diselamatkan (rule baru `NO_TRADE_UNANIMOUS`).
+> - **2c** — `evaluateConsensus` kini mengembalikan `perspectiveBreakdown` (per perspektif: side, confidence, reasoning, fundingFlag, toolsFailed, degraded) + `noTradeReasonDetail` (rule + avg/highest confidence). Diteruskan ke log, output pipeline, dan respons API `/api/agent/planning` (key di-omit jika konsensus tidak jalan).
+> - **2d** — `buildDDFactorContext(report, focus)`: perspektif conservative membaca faktor risiko duluan, aggressive faktor market duluan. Tool registry diurutkan per perspektif (`TOOL_PRIORITY`, `orderToolsByPriority` di subagent.ts).
+> - Gate: 925/925 test (35 baru), tsc clean, lint 0 error.
 
 **Data flow:**
 ```
