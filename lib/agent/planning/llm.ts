@@ -6,6 +6,7 @@ import type { DDReport } from "@/lib/agent/types"
 import { PLAN_PROMPT, AGGREGATE_PROMPT, REPLAN_PROMPT, buildDDFactorContext } from "./prompts"
 import { compactDDReport } from "./utils"
 import { getClient, DEEPSEEK_BASE_URL, DEEPSEEK_THINK_MODEL } from "@/lib/agent/shared/llm-client"
+import { computeProfitFeasibility } from "@/lib/agent/shared/feasibility"
 
 export { getClient, DEEPSEEK_BASE_URL, DEEPSEEK_THINK_MODEL }
 
@@ -231,7 +232,9 @@ export async function rePlan(params: {
  * @description Orchestrator AGGREGATE step (spec §7.4): merges the three
  *   PerspectiveReports into one final trade plan with consensus metrics,
  *   profit feasibility, and an optional no-trade reason. Output is sanitized
- *   (bounded numbers clamped 0-100, `side` validated against the enum).
+ *   (bounded numbers clamped 0-100, `side` validated against the enum) and
+ *   `profit_feasible` is overwritten deterministically — the LLM's guess is
+ *   never trusted for feasibility.
  * @param {Object} params - Aggregate parameters.
  * @param {PerspectiveReport[]} params.reports - Perspective subagent reports.
  * @param {DDReport} params.ddReport - Due diligence report from the DD agent.
@@ -244,7 +247,7 @@ export async function aggregate(params: {
   targetProfitPercent: number
 }): Promise<PlanningAggregationResult | null> {
   const compact = compactDDReport(params.ddReport)
-  return callPlanningLLM({
+  const result = await callPlanningLLM({
     phase: "aggregate",
     systemPrompt: AGGREGATE_PROMPT,
     userContent: JSON.stringify({
@@ -256,4 +259,21 @@ export async function aggregate(params: {
     parse: sanitizeAggregation,
     fallback: null,
   })
+  if (!result) return null
+
+  // reason: the LLM's profit_feasible is pure judgment with no formula — it is
+  // overwritten by deterministic geometry math (R:R ≥ min, target percent ≤ TP
+  // distance). The LLM's original value is deliberately dropped, not kept.
+  if (result.side === "no_trade") {
+    return { ...result, profit_feasible: false }
+  }
+
+  const { feasible } = computeProfitFeasibility({
+    entryPrice: result.entry_price,
+    stopLoss: result.stop_loss,
+    takeProfit: result.take_profit,
+    side: result.side,
+    targetProfitPercent: params.targetProfitPercent,
+  })
+  return { ...result, profit_feasible: feasible }
 }

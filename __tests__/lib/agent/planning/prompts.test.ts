@@ -58,6 +58,38 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain("Use at least 2 tools before returning")
   })
 
+  it("binds entry_price to get_mark_price with no-trade fallback", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain('"entry_price" MUST come from calling "get_mark_price"')
+    expect(prompt).toContain("never guessed")
+  })
+
+  it("binds SL/TP to compute_sltp fed by compute_atr", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("balance", tools, "Validate")
+    expect(prompt).toContain('"suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp"')
+    expect(prompt).toContain('"compute_atr"')
+  })
+
+  it("binds position size to compute_position_size", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("aggressive", tools, "Validate")
+    expect(prompt).toContain('"suggested_position_size_usdc" MUST come from calling "compute_position_size"')
+  })
+
+  it("returns no_trade instead of inventing numbers when a required tool fails", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain('If a required tool\'s result is unavailable or failed, return "side": "no_trade"')
+    expect(prompt).toContain("instead of inventing numbers")
+  })
+
+  it("carries the required-tools hard rules for all 3 perspectives", () => {
+    for (const perspective of ["conservative", "balance", "aggressive"] as const) {
+      const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })(perspective, tools, "Validate")
+      expect(prompt).toContain('"entry_price" MUST come from calling "get_mark_price"')
+      expect(prompt).toContain('"suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp"')
+      expect(prompt).toContain('"suggested_position_size_usdc" MUST come from calling "compute_position_size"')
+    }
+  })
+
   it("describes the return format with planning fields (no leverage — risk engine owns it)", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
     expect(prompt).toContain('set "action" to "return"')

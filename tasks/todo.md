@@ -392,3 +392,57 @@ TDD rule: Write failing test first (RED) â†’ verify failure â†’ minimal implemen
 - [ ] No dead code in `lib/agent/planning/`
 - [ ] DD Agent + Execution Agent tests still pass (no regression)
 - [ ] POST /api/agent/planning accepts `{ asset, userId, walletAddress, targetProfitPercent }` and auto-runs DD internally
+
+---
+
+## Problems 3 & 4 — Tool Enforcement + Profit Feasibility (T11-T18)
+
+### T11 — Forward ThinkOptions through planning llmThink [DONE]
+**Status:** Completed by subagent A.
+- `lib/agent/planning/subagent.ts`: `llmThink` signature `(messages, options?: ThinkOptions)`; calls `think(withReport, options)`; stale JSON-in-prompt comment removed.
+- Tests: `__tests__/lib/agent/planning/subagent.test.ts` +2 (options forwarded / no options when empty registry).
+
+### T12 — Per-field required-tools enforcement in prompt [DONE]
+**Status:** Completed by subagent A.
+- `lib/agent/planning/prompts.ts` line 92: replaced soft rule with per-field bindings — `entry_price` MUST come from `get_mark_price`; SL/TP MUST come from `compute_sltp`; position size MUST come from `compute_position_size`; tool failure ? `no_trade`.
+- Tests: `__tests__/lib/agent/planning/prompts.test.ts` +5 (all 3 perspectives).
+
+### T13 — SDB Verifier: post-return deterministic validation [DONE]
+**Status:** Completed by subagent A.
+- NEW `lib/agent/planning/verifier.ts`: pure `verifyReportAgainstTools(report, toolHistory)` — entry_price hard-enforced (no successful `get_mark_price` with trade proposed ? force `no_trade` + risk flag; mismatch > 0.1% ? override to mark price); SL/TP + position size override-if-available (last successful call); skip when `side === "no_trade"` or `score === null`; dedupe risk flags; round 2 decimals.
+- `lib/agent/due-diligence/subagent.ts`: `HistoryEntry` exported; `toolHistory` attached in BOTH llm_return paths (main loop + force-return).
+- `lib/agent/due-diligence/types.ts`: optional `toolHistory?: HistoryEntry[]` on `FactorReport`.
+- `lib/agent/planning/subagent.ts`: merged report runs through `verifyReportAgainstTools(merged, report.toolHistory ?? [])`.
+- Tests: NEW `__tests__/lib/agent/planning/verifier.test.ts` 15 tests; subagent.test.ts +2 integration.
+
+### T14 — Pure `computeProfitFeasibility` [DONE]
+**Status:** Completed by subagent B.
+- NEW `lib/agent/shared/feasibility.ts`: risk=|entry-SL|, reward=|TP-entry|, R:R=reward/risk (round 2), breakEvenWinRate=1/(1+R:R), expectedMovePercent=(atr/entry)*100 (optional), feasible = R:R = minRiskRewardRatio (default 1.5) AND targetProfitPercent = TP distance AND (if atr) target = 3×ATR; `reasons: string[]`.
+- Tests: NEW `__tests__/lib/agent/shared/feasibility.test.ts` 10 tests.
+
+### T15 — Tool `compute_profit_feasibility` [DONE]
+**Status:** Completed by subagent B.
+- NEW `lib/agent/planning/tools/feasibility.ts`: `buildFeasibilityTools()` (no ctx — pure tool) returns `compute_profit_feasibility`; registered in `lib/agent/planning/tools/index.ts`.
+- Tests: NEW `__tests__/lib/agent/planning/tools/feasibility.test.ts` 6 tests; index.test.ts updated.
+
+### T16 — Deterministic `profit_feasible` override in aggregator [DONE]
+**Status:** Completed by subagent B.
+- `lib/agent/planning/llm.ts` `aggregate()`: after sanitizeAggregation, `profit_feasible` overridden via `computeProfitFeasibility` (R:R + target-distance checks only, no ATR at aggregation); `no_trade` ? false; LLM value untrusted (`// reason:` comment). `targetProfitPercent` already threaded — no signature change.
+- Tests: `__tests__/lib/agent/planning/llm.test.ts` +3 (LLM-true/math-false, LLM-false/math-true, no_trade?false); 1 existing case adjusted (target 100?10).
+
+### T17 — Integration test [SKIPPED — covered]
+**Status:** Cancelled. Composition proven transitively: verifier wiring covered in subagent.test.ts (+2), deterministic override in llm.test.ts (+3). Separate composition file = mock-plumbing duplication, no new signal. Re-add if regression observed in the seam.
+
+### T18 — Full gate + todo update [DONE]
+**Status:** Completed.
+- `npm test`: 78 files, 890/890 pass.
+- `npm run typecheck`: clean.
+- `npm run lint`: 0 errors, 1 pre-existing warning (`app/api/agent/paper-trading/route.ts` unused `Duration` — out of scope, pre-existing).
+
+### Acceptance gate (Problems 3 & 4)
+- [x] LLM cannot return `entry_price` without a `get_mark_price` result (verifier forces no_trade)
+- [x] SL/TP/position-size bound to `compute_sltp`/`compute_position_size` results when called
+- [x] Prompt binds each trading field to its required tool
+- [x] `profit_feasible` is deterministic math, never LLM judgment
+- [x] New tool `compute_profit_feasibility` available to perspectives
+- [x] Full suite + lint + typecheck green

@@ -390,7 +390,9 @@ describe("aggregate", () => {
       choices: [{ message: { content: JSON.stringify(validAggregationJson) } }],
     })
 
-    const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 100 })
+    // reason: target 10% fits the 12.5% TP distance (64000->72000), so the
+    // deterministic override keeps profit_feasible true — same as the LLM said.
+    const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 10 })
     expect(result).not.toBeNull()
     expect(result!.side).toBe("long")
     expect(result!.thesis).toBe("BTC trending up")
@@ -471,6 +473,66 @@ describe("aggregate", () => {
     })
     const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 100 })
     expect(result).toBeNull()
+  })
+
+  it("overrides LLM profit_feasible true -> false when R:R is below 1.5", async () => {
+    // reason: entry 64000 / SL 60000 / TP 65000 -> R:R 0.25, below the 1.5 minimum.
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              ...validAggregationJson,
+              profit_feasible: true,
+              stop_loss: 60000,
+              take_profit: 65000,
+            }),
+          },
+        },
+      ],
+    })
+
+    const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 10 })
+    expect(result).not.toBeNull()
+    expect(result!.profit_feasible).toBe(false)
+  })
+
+  it("overrides LLM profit_feasible false -> true when math passes", async () => {
+    // reason: R:R 2.67 and target 10% within the 12.5% TP distance -> math says feasible.
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ ...validAggregationJson, profit_feasible: false }),
+          },
+        },
+      ],
+    })
+
+    const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 10 })
+    expect(result).not.toBeNull()
+    expect(result!.profit_feasible).toBe(true)
+  })
+
+  it("forces profit_feasible false for no_trade side", async () => {
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              ...validAggregationJson,
+              side: "no_trade",
+              profit_feasible: true,
+              no_trade_reason: "Funding overheated",
+            }),
+          },
+        },
+      ],
+    })
+
+    const result = await aggregate({ reports, ddReport: mockDDReport, targetProfitPercent: 10 })
+    expect(result!.side).toBe("no_trade")
+    expect(result!.profit_feasible).toBe(false)
   })
 
   it("returns null on invalid JSON", async () => {

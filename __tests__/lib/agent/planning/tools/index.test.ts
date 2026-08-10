@@ -85,7 +85,7 @@ beforeEach(() => {
 })
 
 describe("buildPlanningToolRegistry", () => {
-  it("merges risk-engine + market-data + T3 tools into one registry", () => {
+  it("merges risk-engine + feasibility + market-data + T3 tools into one registry", () => {
     const registry = buildPlanningToolRegistry(CTX)
     expect(Object.keys(registry).sort()).toEqual([
       "analyze_funding_regime",
@@ -93,6 +93,7 @@ describe("buildPlanningToolRegistry", () => {
       "check_liquidation_zones",
       "compute_atr",
       "compute_position_size",
+      "compute_profit_feasibility",
       "compute_sltp",
       "detect_oi_funding_divergence",
       "get_candles",
@@ -122,6 +123,8 @@ describe("buildPlanningToolRegistry", () => {
           return { entry: 100, atr: 10, side: "long" }
         case "compute_position_size":
           return { entry: 100, stopLoss: 95, riskPercent: 1 }
+        case "compute_profit_feasibility":
+          return { entryPrice: 100, stopLoss: 95, takeProfit: 110, side: "long", targetProfitPercent: 5 }
         case "get_orderbook_depth":
           return { asset: "ETH" }
         // reason: T3 tools take asset per call — their schemas require it, no ctx fallback (verified in funding.ts/liquidation.ts/web-search.ts)

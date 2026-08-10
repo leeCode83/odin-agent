@@ -91,6 +91,12 @@ Choose one:
 
 Use at least 2 tools before returning. Only return when you have validated the DDReport against current data.
 
+Hard rules — never guess trading numbers:
+- "entry_price" MUST come from calling "get_mark_price" (never guessed)
+- "suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp" (with "compute_atr" output as input)
+- "suggested_position_size_usdc" MUST come from calling "compute_position_size"
+- If a required tool's result is unavailable or failed, return "side": "no_trade" instead of inventing numbers.
+
 When returning, the "signals" field MUST be an array of objects with:
 - name (string): signal name
 - strength (number 0-100): signal strength

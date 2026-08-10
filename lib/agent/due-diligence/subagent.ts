@@ -115,7 +115,7 @@ export type ThinkOptions = {
 }
 
 /** @typedef {Object} HistoryEntry - One tool invocation recorded during the ReAct loop. */
-type HistoryEntry = {
+export type HistoryEntry = {
   toolName: string
   result: { success: boolean; error?: string; errorKind?: "transient" | "permanent"; metadata: { source: string; latencyMs: number }; data?: unknown }
 }
@@ -393,6 +393,9 @@ export async function runSubagent(params: {
           return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
         }),
         stopReason: "llm_return",
+        // reason: surface the raw tool ledger so the planning verifier can
+        // hard-enforce deterministic values against actual tool results.
+        toolHistory: history,
       }
     }
 
@@ -521,6 +524,9 @@ export async function runSubagent(params: {
           return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
         }),
         stopReason: "llm_return",
+        // reason: same ledger surfacing as the main llm_return path — the
+        // force-return report feeds the planning verifier identically.
+        toolHistory: history,
       }
     }
   } catch {

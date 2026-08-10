@@ -12,10 +12,11 @@
 import type { DDReport } from "@/lib/agent/types"
 import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import type { Perspective, PerspectiveReport } from "@/lib/agent/planning/types"
-import type { SubAgentThought, LlmThinkMessage, ThinkResult } from "@/lib/agent/due-diligence/subagent"
+import type { SubAgentThought, LlmThinkMessage, ThinkOptions, ThinkResult } from "@/lib/agent/due-diligence/subagent"
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { think } from "@/lib/agent/due-diligence/llm"
 import { makePlanningSystemPrompt } from "@/lib/agent/planning/prompts"
+import { verifyReportAgainstTools } from "@/lib/agent/planning/verifier"
 import { compactDDReport } from "@/lib/agent/planning/utils"
 import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
 
@@ -35,6 +36,9 @@ import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
  *     passed in so the prompt carries the degraded-DD note (F3).
  *   - The `FactorReport` returned by `runSubagent` is merged with the stashed
  *     planning fields; missing extras fall back to defaults (`no_trade`, 0, []).
+ *   - The merged report then passes through `verifyReportAgainstTools` (T13):
+ *     the tool ledger (`factor.toolHistory`) hard-enforces entry price from
+ *     `get_mark_price` and overrides SL/TP/size from the risk-engine tools.
  * @param {Object} params - Perspective subagent configuration.
  * @param {Perspective} params.perspective - The perspective to emulate.
  * @param {string} params.instruction - Orchestrator instruction scoping the analysis.
@@ -63,17 +67,19 @@ export async function runPerspectiveSubagent(params: {
   let stash: Extract<SubAgentThought, { action: "return" }> | undefined
 
   const llmThink = async (
-    messages: LlmThinkMessage[]
+    messages: LlmThinkMessage[],
+    options?: ThinkOptions
   ): Promise<ThinkResult> => {
     // reason: runSubagent's context message carries only factor/asset/instruction/history —
-    // the DDReport is appended here so every THINK call sees it. Native tools are NOT
-    // forwarded (the 2nd options arg is intentionally dropped) — planning stays on the
-    // JSON-in-prompt convention, which T6 leaves untouched for non-DD callers.
+    // the DDReport is appended here so every THINK call sees it. The 2nd options arg
+    // (native OpenAI tools built from the planning registry) is forwarded to DD think()
+    // so the LLM gets native tool calling instead of JSON-in-prompt; runSubagent passes
+    // undefined when the registry is empty, keeping the JSON convention for that case.
     const withReport: LlmThinkMessage[] = [
       ...messages,
       { role: "user", content: `[DDReport]\n${JSON.stringify(compactDDReport(params.ddReport))}` },
     ]
-    const thought = await think(withReport)
+    const thought = await think(withReport, options)
     if (thought.action === "return") stash = thought
     return thought
   }
@@ -92,7 +98,7 @@ export async function runPerspectiveSubagent(params: {
     }),
   })
 
-  return {
+  const merged: PerspectiveReport = {
     perspective: params.perspective,
     score: report.score,
     confidence: report.confidence,
@@ -109,4 +115,10 @@ export async function runPerspectiveSubagent(params: {
     suggested_position_size_usdc: stash?.suggested_position_size_usdc ?? 0,
     risk_flags: stash?.risk_flags ?? [],
   }
+
+  // reason: T13 hard-enforcement — the LLM's trading numbers are reconciled
+  // against the actual tool results (entry must come from get_mark_price, SL/TP
+  // and size from the risk-engine tools). runSubagent surfaces the ledger via
+  // factor.toolHistory; undefined (score-null force returns) degrades to [].
+  return verifyReportAgainstTools(merged, report.toolHistory ?? [])
 }

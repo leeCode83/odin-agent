@@ -56,13 +56,26 @@ describe("runPerspectiveSubagent", () => {
   })
 
   it("maps FactorReport + stashed return extras into a PerspectiveReport", async () => {
-    const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
+    const tools: ToolRegistry = {
+      compute_atr: makeTool("compute_atr"),
+      get_mark_price: makeTool("get_mark_price", async () => ({
+        success: true,
+        data: { markPrice: 65000 },
+        metadata: { source: "hyperliquid", latencyMs: 5 },
+      })),
+    }
     thinkMock
       .mockResolvedValueOnce({
         action: "tool_call",
         toolName: "compute_atr",
         params: { asset: "BTC" },
         reasoning: "Need volatility",
+      })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "get_mark_price",
+        params: { asset: "BTC" },
+        reasoning: "Need mark price",
       })
       .mockResolvedValueOnce(returnThoughtWithExtras)
 
@@ -77,8 +90,10 @@ describe("runPerspectiveSubagent", () => {
 
     expect(report.perspective).toBe("conservative")
     expect(report.score).toBe(75)
-    // deterministic confidence: 1 successful call, 1 unique tool → 100-15 (LLM verbalized 80 ignored)
-    expect(report.confidence).toBe(85)
+    // deterministic confidence: 2 successful calls, 2 unique tools → 100-0
+    // (LLM verbalized 80 ignored); entry matches the get_mark_price result so
+    // the verifier keeps the trade as-is.
+    expect(report.confidence).toBe(100)
     expect(report.side).toBe("long")
     expect(report.entry_price).toBe(65000)
     expect(report.suggested_stop_loss).toBe(62000)
@@ -88,9 +103,60 @@ describe("runPerspectiveSubagent", () => {
     expect(report.signals).toHaveLength(1)
     expect(report.signals[0].name).toBe("ATR reasonable")
     expect(report.dataSources).toContain("test")
-    expect(report.iterations).toBe(2)
+    expect(report.iterations).toBe(3)
     expect(report.conclusion).toBe("Go long with tight stop")
     expect(report.errors).toHaveLength(0)
+  })
+
+  it("forces no_trade when the LLM proposes a trade without get_mark_price", async () => {
+    const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    const report = await runPerspectiveSubagent({
+      perspective: "aggressive",
+      instruction: "Analyze",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    expect(report.side).toBe("no_trade")
+    expect(report.entry_price).toBe(0)
+    expect(report.suggested_stop_loss).toBe(0)
+    expect(report.suggested_take_profit).toBe(0)
+    expect(report.suggested_position_size_usdc).toBe(0)
+    expect(report.risk_flags).toContain("verifier: entry_price tanpa get_mark_price")
+  })
+
+  it("overrides a diverged entry_price to the mark price from get_mark_price", async () => {
+    const tools: ToolRegistry = {
+      get_mark_price: makeTool("get_mark_price", async () => ({
+        success: true,
+        data: { markPrice: 66000 },
+        metadata: { source: "hyperliquid", latencyMs: 5 },
+      })),
+    }
+    thinkMock
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "get_mark_price",
+        params: { asset: "BTC" },
+        reasoning: "Need mark price",
+      })
+      .mockResolvedValueOnce(returnThoughtWithExtras)
+
+    const report = await runPerspectiveSubagent({
+      perspective: "balance",
+      instruction: "Analyze",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    expect(report.side).toBe("long")
+    expect(report.entry_price).toBe(66000)
   })
 
   it("returns defaults when the return thought has no planning extras", async () => {
@@ -236,6 +302,42 @@ describe("runPerspectiveSubagent", () => {
     expect(systemPrompt).toContain(
       "Note: DD analysis incomplete — factors sentiment failed. Account for missing data explicitly."
     )
+  })
+
+  it("forwards native tool options to think when the registry is non-empty", async () => {
+    const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "conservative",
+      instruction: "Validate",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools,
+    })
+
+    const options = thinkMock.mock.calls[0][1] as
+      | { tools?: Array<{ function: { name: string } }> }
+      | undefined
+    expect(options).toBeDefined()
+    expect(options?.tools).toHaveLength(1)
+    expect(options?.tools?.[0].function.name).toBe("compute_atr")
+  })
+
+  it("calls think without options when the registry is empty", async () => {
+    thinkMock.mockResolvedValue(returnThoughtWithExtras)
+
+    await runPerspectiveSubagent({
+      perspective: "balance",
+      instruction: "Analyze",
+      asset: "BTC",
+      ddReport: mockDDReport,
+      targetProfitPercent: 100,
+      tools: {},
+    })
+
+    expect(thinkMock.mock.calls[0][1]).toBeUndefined()
   })
 
   it("omits the degraded-DD note when every factorReport scored", async () => {

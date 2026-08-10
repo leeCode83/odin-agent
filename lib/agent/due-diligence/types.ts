@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod"
+import type { HistoryEntry } from "@/lib/agent/due-diligence/subagent"
 
 /** @constant {readonly string[]} Known factor keys */
 export const FACTOR_KEYS = ["technical", "onchain", "sentiment", "fundamental"] as const
@@ -47,6 +48,10 @@ export interface FactorReport {
   conclusion: string
   errors: string[]
   stopReason?: SubagentStopReason
+  // reason: optional tool-call ledger from the ReAct loop — consumed by the
+  // planning verifier for deterministic post-return validation. Optional so
+  // DD consumers (aggregate/evaluate) and tests stay unchanged.
+  toolHistory?: HistoryEntry[]
 }
 
 /**

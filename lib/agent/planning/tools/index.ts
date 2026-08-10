@@ -1,8 +1,8 @@
 /**
  * @file planning/tools/index.ts
  * @description Entry point for the planning swarm tools. Builds a ToolRegistry
- * merging risk-engine, market-data, funding, liquidation, and web-search tools,
- * bound to a shared planning context.
+ * merging risk-engine, feasibility, market-data, funding, liquidation, and
+ * web-search tools, bound to a shared planning context.
  * @module planning/tools
  * @layer agent
  */
@@ -10,6 +10,7 @@
 import type { ToolDefinition, ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import { registerTools } from "@/lib/agent/due-diligence/tools/registry"
 import { buildRiskEngineTools } from "./risk-engine"
+import { buildFeasibilityTools } from "./feasibility"
 import { buildMarketDataTools } from "./market-data"
 import { buildFundingTools } from "./funding"
 import { buildLiquidationTools } from "./liquidation"
@@ -33,8 +34,8 @@ export interface PlanningToolContext {
 /**
  * @function buildPlanningToolRegistry
  * @description Builds the planning swarm ToolRegistry, merging the risk-engine,
- * market-data, funding, liquidation, and web-search tool sets bound to the
- * provided context.
+ * feasibility, market-data, funding, liquidation, and web-search tool sets
+ * bound to the provided context.
  * @param {PlanningToolContext} ctx - Shared planning context (wallet, user, asset, equity).
  * @returns {ToolRegistry} Registry of deterministic planning tools.
  */
@@ -42,6 +43,7 @@ export function buildPlanningToolRegistry(ctx: PlanningToolContext): ToolRegistr
   const registry: ToolRegistry = {}
   const tools: ToolDefinition[] = [
     ...buildRiskEngineTools(ctx),
+    ...buildFeasibilityTools(),
     ...buildMarketDataTools(ctx),
     ...buildFundingTools(ctx),
     ...buildLiquidationTools(ctx),
