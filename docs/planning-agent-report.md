@@ -226,7 +226,7 @@ Dua baris hardcode ini adalah bottleneck: semua kode di atasnya sudah siap untuk
 
 **Yang sudah benar:**
 - Arsitektur multi-perspective (conservative/balance/aggressive) — pattern ini valid, digunakan oleh TradingAgents dan FINCON
-- DD Agent → Planning Agent → Execution Agent pipeline — separation of concerns baik
+- DD Agent → Planning Agent → Paper Trading pipeline — separation of concerns baik
 - Layer-1 consensus + Layer-2 autonomy gate — two-layer validation pattern benar
 - ReAct loop dengan tool calling — pendekatan agentic yang solid
 - Deterministic consensus rules (evaluateConsensus) — idenya benar, ordering-nya yang salah

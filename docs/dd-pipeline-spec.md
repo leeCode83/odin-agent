@@ -7,7 +7,7 @@
 
 ## 1. Objective
 
-Build the Due Diligence (DD) Agent — the first agent in Odin's 3-agent pipeline. DD Agent takes an asset ticker as input, fetches multi-factor market data from free APIs, runs per-factor LLM analysis via DeepSeek, aggregates into a structured DD Report, and returns it to the Planning & Decision Agent.
+Build the Due Diligence (DD) Agent — the first agent in Odin's agent pipeline (DD → Planning → paper trading; live execution tidak lagi di scope). DD Agent takes an asset ticker as input, fetches multi-factor market data from free APIs, runs per-factor LLM analysis via DeepSeek, aggregates into a structured DD Report, and returns it to the Planning & Decision Agent.
 
 **Success criteria:**
 - Given any Hyperliquid-listed asset, produce a valid `DDReport` JSON within 30 seconds

@@ -8,7 +8,7 @@
 
 ## 1. Objective
 
-Build the Planning & Decision Agent — the second agent in Odin's 3-agent pipeline. Planning Agent takes a `DDReport` (produced by DD Agent) plus user context (userId, walletAddress), queries Graph Memory (ArangoDB) for historical patterns, runs hybrid LLM+code reasoning to produce a trade plan (side, size, SL/TP, leverage, confidence), applies autonomy gating, and returns a `TradePlan` to the caller. Stops at the gate decision — does NOT call Execution Agent, does NOT persist pending plans.
+Build the Planning & Decision Agent — the second agent in Odin's agent pipeline (DD → Planning → paper trading). Planning Agent takes a `DDReport` (produced by DD Agent) plus user context (userId, walletAddress), queries Graph Memory (ArangoDB) for historical patterns, runs hybrid LLM+code reasoning to produce a trade plan (side, size, SL/TP, leverage, confidence), applies autonomy gating, and returns a `TradePlan` to the caller. Stops at the gate decision — does NOT call Execution Agent, does NOT persist pending plans.
 
 **Success criteria:**
 - Given a valid `DDReport` + `userId` + `walletAddress`, produce a valid `TradePlan` JSON within 60 seconds

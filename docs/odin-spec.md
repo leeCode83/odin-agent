@@ -26,7 +26,7 @@ Beda dari existing player (Kora, Singularry, Neyro, Bankr) yang pakai static mod
 
 **Odin** — dipilih oleh user.
 
-## 4. Arsitektur — 3 Agent
+## 4. Arsitektur — 2 Agent + Paper Trading
 
 ```
 [Market Data + News + Onchain Data]
@@ -48,17 +48,19 @@ Beda dari existing player (Kora, Singularry, Neyro, Bankr) yang pakai static mod
  + dana < limit      dana > limit
       │                    │
       ▼                    ▼
-③ Execution Agent    Dashboard (approval UI)
-(place order ke              │
-Hyperliquid,          user approve/reject
-monitor fill)                │
-      │                      ▼
-      └──────► ③ Execution Agent (kalau approved)
+ Paper Trading       Dashboard (approval UI)
+ simulator                  │
+ (mulai monitoring    user approve/reject
+ posisi simulasi)           │
+      │                    ▼
+      └──────► Paper Trading (kalau approved)
             │
             ▼
    Record ke Graph Memory (ArangoDB)
    (decision + reasoning + outcome)
 ```
+
+> ⚠️ **Execution Agent (live trading) sudah tidak ada.** Scope saat ini hanya sampai **paper trading** — rencana dieksekusi sebagai posisi simulasi (mark price Hyperliquid), bukan order asli. Live execution ke Hyperliquid (order limit + trigger TP/SL) bisa dibangun ulang di masa depan dari desain yang tercatat di roadmap (§4.4).
 
 ### 4.1 Due Diligence Agent
 - Input: asset dari watchlist user.
@@ -74,30 +76,39 @@ monitor fill)                │
 - Bandingkan terhadap threshold dana & threshold confidence user → gate keputusan.
 - Metodologi detail: lihat §6.
 
-### 4.3 Execution Agent
-- Eksekusi trade plan via `@nktkas/hyperliquid` SDK.
-- Monitor order fill & posisi terbuka.
-- Tulis hasil eksekusi (outcome) balik ke Graph Memory setelah posisi closed.
+### 4.3 Paper Trading (posisi simulasi)
 
-#### 4.3.1 Order Placement — Exchange-Side Execution (bukan agent polling)
+Menggantikan Execution Agent — trade plan dijalankan sebagai **paper trade** (simulasi, tanpa order asli ke Hyperliquid):
 
-Prinsip utama: begitu plan dieksekusi, **entry + TP + SL semua "dititip" ke Hyperliquid**, dieksekusi oleh exchange itu sendiri — agent gak perlu mantengin harga terus-menerus buat nge-trigger close posisi.
+- Terima trade plan dari Planning Agent (`action` bukan `NO_TRADE`).
+- Simpan record di collection `paper_trades` (ArangoDB), mulai monitoring harga.
+- Monitoring via **polling berkala** (`PAPER_TRADING_POLL_INTERVAL_MS=300000` / 5 menit, durasi maksimal `PAPER_TRADING_MAX_DURATION_MS` / 7 hari) — posisi dianggap SL/TP kena kalau harga mark menyentuh level dari plan.
+- Saat posisi closed (SL/TP kena atau durasi habis), hitung P&L simulasi (USDC + %) dan tulis outcome ke Graph Memory.
+- API: `POST /api/agent/paper-trading` (buat), `GET /api/agent/paper-trading/[id]` (status) — lihat `docs/api-documentation.md`.
 
-1. **Entry** — pasang **limit order** biasa, resting di on-chain orderbook (HyperCore). Nunggu match sesuai price-time priority.
-2. **TP/SL** — begitu entry fill, pasang **trigger order** (stop-market/stop-limit buat SL, take-profit market/limit buat TP) dengan flag **`reduceOnly: true`** (cuma boleh mengecilkan/menutup posisi, gak bisa flip/buka posisi baru). Trigger dievaluasi terhadap **mark price** (bukan last trade price) — lebih tahan terhadap wick/flash spike palsu. Eksekusi trigger dilakukan exchange, bukan agent.
-3. **Grouping (OCO-style)** — TP dan SL di-pasang sebagai satu paket order via field `grouping` (`"normalTpsl"` / `"positionTpsl"`). Begitu salah satu ke-trigger, order satunya otomatis di-cancel oleh exchange. Gak ada race condition dua order jalan bareng.
+#### 4.3.1 Paper Trading tidak pakai order asli
 
-Konsekuensi desain: Execution Agent **tidak perlu polling harga secara terus-menerus** untuk mengeksekusi TP/SL — itu tanggung jawab exchange. Agent cukup event-driven untuk hal-hal lain (lihat 4.3.2).
+Gak ada order limit/trigger yang dikirim ke Hyperliquid. Posisi murni simulasi: entry/exit ditentukan dari mark price yang dipoll. Ini menghindari risiko dana, tapi berarti SL/TP gak "dititip" ke exchange — evaluasi SL/TP dilakukan client-side oleh service monitoring.
 
-#### 4.3.2 Monitoring (Event-Driven, bukan Polling)
+#### 4.3.2 Monitoring (Polling, bukan WebSocket)
 
-- **Fill/order status** — subscribe ke **WebSocket** (`SubscriptionClient` — channel `orderUpdates`/`userEvents`) buat tau kapan entry/TP/SL ke-fill, dipakai buat update Graph Memory (outcome record). Event-driven, bukan polling loop.
-- **Thesis re-evaluation** (opsional, stretch) — kalau kondisi market berubah signifikan sebelum TP/SL kena (fundamental shift, funding rate meledak), agent bisa punya opsi re-evaluate & adjust/cancel order manual.
-- **Funding rate monitoring** — posisi perpetual bayar/terima funding tiap periode, di-track buat akurasi P&L di dashboard.
+- Service `lib/agent/paper-trading/service.ts` mem-poll harga mark tiap interval, bandingkan dengan entry/SL/TP, update `lastCheckedPrice`/`lastCheckedAt` di record.
+- Event-driven WebSocket (`orderUpdates`/`userEvents`) tidak dipakai — tidak ada order asli yang perlu di-track.
 
-#### 4.3.3 Known Limitation
+#### 4.3.3 Keterbatasan
 
-Trigger order (TP/SL) tersimpan & dieksekusi di sisi Hyperliquid. Kalau platform Hyperliquid mengalami downtime, trigger order yang sudah dipasang **tidak akan tereksekusi** sampai platform kembali normal — ini risiko di level exchange, bukan cacat desain agent, tapi perlu didokumentasikan sebagai known limitation/disclaimer ke user.
+- Paper trade tidak memantulkan slippage, funding cost, atau liquidity asli — P&L simulasi.
+- Gak ada risk of exchange downtime karena gak ada order resting — tapi juga gak ada jaminan level ter-eksekusi seperti trigger order exchange-side.
+
+### 4.4 Roadmap: Live Execution (future work)
+
+Kalau mau lanjut ke trading asli di masa depan, desain yang sudah ada bisa dihidupkan lagi:
+
+- **Entry** — limit order resting di orderbook, nunggu match price-time priority.
+- **TP/SL** — trigger order (stop-market/limit, take-profit market/limit) dengan flag **`reduceOnly: true`**, trigger dievaluasi terhadap **mark price** (tahan wick/flash spike palsu).
+- **Grouping (OCO-style)** — TP + SL sebagai satu paket via field `grouping` (`"normalTpsl"` / `"positionTpsl"`); salah satu ke-trigger, satunya auto-cancel oleh exchange — gak ada race condition.
+- **Monitoring** — event-driven via WebSocket `SubscriptionClient` (channel `orderUpdates`/`userEvents`) buat update Graph Memory saat fill.
+- **Known limitation** — kalau Hyperliquid downtime, trigger order tidak tereksekusi sampai platform normal (risiko level exchange, perlu disclaimer ke user).
 
 ## 5. Wallet & Custody Model
 
@@ -105,7 +116,7 @@ Odin non-custodial, pakai konsep **Hyperliquid API Wallet (Agent Wallet)**:
 
 - User deposit USDC ke akun Hyperliquid miliknya sendiri (via main wallet, bridge dari Arbitrum) — dana tetap di kontrol user.
 - User approve satu **Agent Wallet** terpisah dengan permission terbatas: **cuma bisa trade, TIDAK bisa withdraw**.
-- Private key Agent Wallet disimpan encrypted di server, dipakai Execution Agent buat sign order atas nama akun user.
+- Private key Agent Wallet disimpan encrypted di server (collection `agent_wallets`) — **dipakai nanti kalau live execution aktif** (§4.4); untuk paper trading key ini tidak diperlukan.
 - User bisa **revoke approval kapan saja** langsung dari Hyperliquid app — agent langsung kehilangan akses.
 - Withdraw dana dilakukan user langsung dari Hyperliquid (native), agent sama sekali gak punya akses withdraw.
 
@@ -146,7 +157,7 @@ Prinsip: LLM buat "mikir" (thesis & confidence), kode deterministic buat "hitung
 
 - **Node**: `Asset`, `Category`, `Signal`, `Decision`, `Outcome`.
 - **Edge**: `Decision -[ANALYZED]-> Asset`, `Decision -[TRIGGERED_BY]-> Signal`, `Decision -[RESULTED_IN]-> Outcome`, `Asset -[BELONGS_TO]-> Category`.
-- Karena Decision object sudah structured JSON, konversi ke graph adalah **deterministic mapping** (bukan butuh LLM lagi) — mapper function insert node/edge via `arangojs` di step terakhir Execution Agent (setelah posisi closed).
+- Karena Decision object sudah structured JSON, konversi ke graph adalah **deterministic mapping** (bukan butuh LLM lagi) — mapper function insert node/edge via `arangojs`, dijalankan saat outcome tercatat (paper trade closed / pipeline selesai).
 - Planning Agent query graph ini buat cari: "pola sinyal X di kategori aset Y historically berujung outcome apa?" — jadi semacam explainable memory, bukan cuma blackbox confidence number.
 
 ## 9. Database Strategy
@@ -221,11 +232,13 @@ export function getCategory(asset: string): CategoryConfig {
 ```
 IF confidence_score >= threshold_confidence
    AND position_size <= threshold_fund
-THEN auto-execute
+THEN auto-execute (paper trade otomatis aktif)
 ELSE push to dashboard for user approval
 ```
 
 Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user.
+
+> Saat ini "auto-execute" berarti **paper trade otomatis dimulai** (posisi simulasi). Live execution otomatis adalah masa depan (§4.4).
 
 ## 14. LLM Model per Agent (DeepSeek)
 
@@ -235,19 +248,16 @@ Kedua threshold (`threshold_confidence`, `threshold_fund`) configurable per user
 |---|---|---|
 | Due Diligence Agent | `deepseek-v4-flash` (non-thinking) | Ekstraksi & summarize data, gak butuh deep reasoning, murah & cepat, throughput tinggi (banyak aset di-scan). |
 | Planning & Decision Agent | `deepseek-v4-flash` (thinking mode) / `deepseek-v4-pro` | Butuh reasoning terdalam — thesis, confidence score, position sizing. |
-| Execution Agent | `deepseek-v4-flash` (non-thinking) | Kerjaan deterministic (construct order, handle SDK response/error), gak butuh reasoning berat. |
 
 ## 15. Flow End-to-End User
 
 1. **Landing** → user buka dashboard, connect wallet (wagmi/RainbowKit).
-2. **Onboarding** → user deposit USDC ke Hyperliquid (bridge dari Arbitrum).
-3. **Approve Agent Wallet** → user approve API Wallet dengan permission terbatas (trade-only, no withdraw).
-4. **Setup config** → pilih watchlist aset, set threshold confidence & threshold dana per trade.
-5. **Agent jalan background** → scheduler jalanin DD Agent → Planning Agent tiap interval/trigger, untuk tiap aset di watchlist.
-6. **Notifikasi** → auto-execute langsung jalan + muncul di log dashboard; kalau butuh approval, muncul card "Pending Approval" dengan DD report + plan.
-7. **User approve/reject** kapan saja buka dashboard (gak harus real-time).
-8. **Monitoring** → posisi terbuka dipantau agent (SL/TP, funding cost), history & P&L kelihatan di dashboard.
-9. **Withdraw** → user withdraw dana kapan saja langsung dari Hyperliquid, gak lewat agent.
+2. **Setup config** → pilih watchlist aset, set threshold confidence & threshold dana per trade. (Untuk paper trading **tidak perlu** deposit USDC atau approve Agent Wallet — gak ada dana asli.)
+3. **Agent jalan background** → scheduler jalanin DD Agent → Planning Agent tiap interval/trigger, untuk tiap aset di watchlist.
+4. **Notifikasi** → kalau confidence tinggi, paper trade otomatis mulai + muncul di log dashboard; kalau butuh approval, muncul card "Pending Approval" dengan DD report + plan.
+5. **User approve/reject** kapan saja buka dashboard (gak harus real-time).
+6. **Monitoring** → paper trade dipantau service polling (SL/TP simulasi, durasi maksimal 7 hari), history & P&L kelihatan di dashboard.
+7. **Live trading (masa depan)** → kalau fitur execution aktif (§4.4), baru ada langkah deposit USDC, approve Agent Wallet trade-only, dan withdraw dana langsung dari Hyperliquid.
 
 ## 16. Background Execution (Browser Independence)
 
@@ -260,9 +270,9 @@ Dashboard cuma jendela buat lihat & approve, bukan yang "menjalankan" agent.
 
 ## 17. Tech Stack
 
-- **Frontend + Backend**: Next.js 16 (dashboard + API routes/server actions buat orchestrate 3 agent)
+- **Frontend + Backend**: Next.js 16 (dashboard + API routes/server actions buat orchestrate 2 agent + paper trading)
 - **Wallet connect**: wagmi (+ viem)
-- **Execution**: `@nktkas/hyperliquid` SDK (TypeScript)
+- **Execution**: `@nktkas/hyperliquid` SDK (TypeScript) — dipakai buat market data & harga mark (paper trading); order execution live = masa depan (§4.4)
 - **Memory/DB**: ArangoDB (multi-model: document + graph), driver `arangojs`
 - **LLM**: DeepSeek API (`deepseek-v4-flash`, `deepseek-v4-pro`)
 - **Auth**: SIWE + JWT session
@@ -270,7 +280,7 @@ Dashboard cuma jendela buat lihat & approve, bukan yang "menjalankan" agent.
 
 ## 18. Scope MVP vs Stretch (Hackathon Timeline)
 
-- **MVP**: 3 agent jalan end-to-end di testnet, due diligence basic (technical+onchain dulu, sentiment+fundamental kalau waktu cukup), dashboard approval simpel, graph memory basic record+query.
+- **MVP**: DD Agent + Planning Agent + paper trading jalan end-to-end di testnet, due diligence basic (technical+onchain dulu, sentiment+fundamental kalau waktu cukup), dashboard approval simpel, graph memory basic record+query.
 - **Stretch**: fundamental analysis penuh, Telegram notifikasi, multi-asset paralel monitoring, backtesting dashboard.
 
 ---

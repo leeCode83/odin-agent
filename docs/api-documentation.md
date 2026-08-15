@@ -10,48 +10,6 @@ Error format across all endpoints:
 
 ---
 
-## GET /api/agent/balance
-
-Return detailed user balance from Hyperliquid clearing state.
-
-**Query params:**
-
-| Param | Type | Required | Description |
-|-------|------|----------|-------------|
-| `walletAddress` | `string` | Yes | 0x-prefixed 40-char hex address |
-
-**Response `200`:**
-
-```json
-{
-  "walletAddress": "0x...",
-  "withdrawable": 450.0,
-  "accountValue": 1009.5,
-  "totalMarginUsed": 559.5,
-  "openPositions": 1,
-  "crossMaintenanceMarginUsed": 8.42,
-  "positions": [
-    {
-      "coin": "BTC",
-      "side": "long",
-      "sizeAsset": 0.01,
-      "sizeUsdc": 500.0,
-      "entryPrice": 50000.0,
-      "unrealizedPnl": 10.0,
-      "leverage": 5.0,
-      "marginUsed": 100.0,
-      "liquidationPrice": 48000.0,
-      "returnOnEquity": 2.0,
-      "fundingSinceOpen": -0.05
-    }
-  ]
-}
-```
-
-**Errors:** 400 (missing/invalid walletAddress), 500 (fetch error)
-
----
-
 ## POST /api/agent/dd
 
 Run Due Diligence pipeline for an asset. Fetches multi-factor analysis (technical, onchain, sentiment, fundamental).
@@ -189,9 +147,9 @@ Run Planning pipeline. Takes an asset, internally runs the DD agent (step 0), th
 
 ---
 
-## POST /api/agent/trade
+## POST /api/agent/paper-trading
 
-Run full 3-agent pipeline end-to-end: Due Diligence → Planning → Execution. Returns DD report, trade plan, execution result, and timing.
+Create a paper trade (simulated position, no real orders). Accepts a pre-built `planReport`, or runs the DD → Planning pipeline internally (cached DD report used when available).
 
 **Request body:**
 
@@ -199,316 +157,90 @@ Run full 3-agent pipeline end-to-end: Due Diligence → Planning → Execution. 
 {
   "asset": "BTC",
   "userId": "user_abc123",
-  "walletAddress": "0x..."
-}
-```
-
-**Response `200`:**
-
-```json
-{
-  "ddReport": { /* DDReport object */ },
-  "plan": { /* TradePlan object */ },
-  "execution": { /* ExecutionResult object */ },
-  "timing": { "ddMs": 4600, "planMs": 5500, "execMs": 3000, "totalMs": 13100 }
-}
-```
-
-**Errors:** 400 (missing fields), 503 (wallet not initialized), 502 (HL exchange error), 500
-
----
-
-## POST /api/agent/trade/approve
-
-Manually approve a pending trade plan and execute it. Used when autonomy_decision is `"approve"`.
-
-**Request body:**
-
-```json
-{
-  "tradePlan": { /* TradePlan object */ },
   "walletAddress": "0x...",
-  "userId": "user_abc123",
-  "ddReport": { /* optional DDReport */ }
+  "targetProfitPercent": 5,
+  "duration": "24h",
+  "planReport": { /* optional TradePlan — skips DD + Planning */ }
 }
 ```
 
-**Response `200`:**
+- `asset`, `userId`, `walletAddress` — required, non-empty strings.
+- `targetProfitPercent` — optional number, positive, max 1000 (decimals allowed).
+- `duration` — required, max 7 days (monitoring window).
+- `planReport` — optional pre-built trade plan; when provided the DD + Planning pipeline is skipped.
+
+**Response `201`** (trade created, monitoring started):
 
 ```json
 {
-  "execution": { /* ExecutionResult object */ },
-  "ddReport": { /* DDReport if provided */ }
+  "id": "paper_trade_abc123",
+  "status": "active",
+  "asset": "BTC",
+  "side": "long",
+  "entryPrice": 50123.45,
+  "stopLoss": 49500.0,
+  "takeProfit": 51500.0,
+  "leverage": 5.0,
+  "duration": "24h",
+  "startedAt": "2026-07-21T10:00:00Z"
 }
 ```
 
-**Errors:** 400 (missing fields, invalid tradePlan), 503 (not initialized), 502 (HL error), 500
+**Response `200`** (planning decided NO_TRADE — record persisted, nothing monitored):
+
+```json
+{
+  "id": "paper_trade_abc124",
+  "status": "no_trade",
+  "message": "Planning agent decided no trade for this asset",
+  "reasoning": "..."
+}
+```
+
+**Errors:**
+
+- 400 — invalid JSON, schema violation, `UNKNOWN_ASSET` (asset not in Hyperliquid universe)
+- 422 — `DD_AGENT_FAILED`, `PLANNING_FAILED`
+- 503 — `HL_UNAVAILABLE` (Hyperliquid unreachable), database not available
+- 500 — `PAPER_TRADING_FAILED`
 
 ---
 
-## POST /api/agent/trade/reject
+## GET /api/agent/paper-trading/[id]
 
-Reject a trade plan without executing. Records the rejection to graph memory as `"cancelled"` outcome.
+Fetch a paper trade's current status and P&L.
 
-**Request body:**
-
-```json
-{
-  "tradePlan": { /* TradePlan object */ },
-  "userId": "user_abc123",
-  "reason": "Optional rejection reason"
-}
-```
-
-**Response `200`:**
-
-```json
-{
-  "status": "rejected",
-  "decisionKey": "decision_abc123",
-  "message": "Trade rejected. Decision recorded to graph memory."
-}
-```
-
-**Errors:** 400 (missing fields, invalid tradePlan), 500
-
----
-
-## POST /api/agent/execution
-
-Execute a trade plan directly (bypass DD and Planning). Places entry order + OCO (SL/TP) on Hyperliquid.
-
-**Request body:**
-
-```json
-{
-  "tradePlan": { /* TradePlan object */ },
-  "walletAddress": "0x...",
-  "userId": "user_abc123",
-  "ddReport": { /* optional DDReport */ }
-}
-```
-
-**Response `200`:**
-
-```json
-{
-  "execution": {
-    "status": "placed",
-    "orders": [
-      { "type": "entry", "oid": 12345, "status": "open" },
-      { "type": "take_profit", "oid": 12346, "status": "open" },
-      { "type": "stop_loss", "oid": 12347, "status": "open" }
-    ],
-    "groupId": "normalTpsl",
-    "fillStatus": "pending",
-    "fillAmount": null,
-    "fillPrice": null,
-    "timestamp": "2026-07-21T10:00:00Z",
-    "decisionKey": "decision_abc123"
-  },
-  "timing": { "buildMs": 50, "placeMs": 800, "graphMs": 150, "totalMs": 1000 }
-}
-```
-
-**Errors:** 400 (missing fields, invalid tradePlan, manual approval required), 503 (not initialized), 502 (HL error), 500
-
----
-
-## POST /api/agent/execution/cancel
-
-Cancel all open orders for the configured agent wallet. Reads AGENT_PRIVATE_KEY and AGENT_WALLET_ADDRESS from env.
-
-**Request body:** None
-
-**Response `200`:**
-
-```json
-{
-  "cancelled": 3,
-  "message": "All orders cancelled"
-}
-```
-
-**Errors:** 503 (wallet not initialized), 502 (HL exchange error)
-
----
-
-## GET /api/agent/execution/status
-
-Poll order fill status by order ID. Uses polling with configurable interval and max attempts.
-
-**Query params:**
+**Path params:**
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `oid` | `number` | Yes | Order ID (positive integer) |
+| `id` | `string` | Yes | Paper trade ID (document key) |
 
 **Response `200`:**
 
 ```json
 {
-  "oid": 12345,
-  "status": "filled",
-  "fillAmount": "0.01",
-  "fillPrice": "50123.45"
+  "id": "paper_trade_abc123",
+  "asset": "BTC",
+  "side": "long",
+  "entryPrice": 50123.45,
+  "stopLoss": 49500.0,
+  "takeProfit": 51500.0,
+  "leverage": 5.0,
+  "positionSizeUsdc": 500.0,
+  "status": "active",
+  "duration": "24h",
+  "startedAt": "2026-07-21T10:00:00Z",
+  "closedAt": null,
+  "closedPrice": null,
+  "pnlUsdc": null,
+  "pnlPercent": null,
+  "lastCheckedPrice": 50200.0,
+  "lastCheckedAt": "2026-07-21T10:05:00Z",
+  "createdAt": "2026-07-21T10:00:00Z"
 }
 ```
 
-Status values: `"filled"`, `"pending"`, `"cancelled"`, `"rejected"`.
+`status` values: `"active"`, `"closed"`, `"no_trade"`.
 
-**Errors:** 400 (missing/invalid oid), 500
-
----
-
-## POST /api/agent/execution/init
-
-Generate and approve a new agent Hyperliquid API wallet. Requires MASTER_PRIVATE_KEY in env. Idempotent — returns "Already initialized" if AGENT_PRIVATE_KEY and AGENT_WALLET_ADDRESS exist.
-
-**Request body:**
-
-```json
-{
-  "agentName": "odin"
-}
-```
-
-`agentName` is optional (defaults to `"odin"`).
-
-**Response `200`:**
-
-```json
-{
-  "agentAddress": "0x...",
-  "agentName": "odin",
-  "agentPrivateKey": "0x...",
-  "approved": true,
-  "message": "Agent wallet generated. Save AGENT_PRIVATE_KEY=... and AGENT_WALLET_ADDRESS=... to .env"
-}
-```
-
-Idempotent response:
-
-```json
-{
-  "agentAddress": "0x...",
-  "approved": true,
-  "message": "Already initialized"
-}
-```
-
-**Errors:** 400 (MASTER_PRIVATE_KEY not set), 500
-
----
-
-## POST /api/agent/execution/outcome
-
-Record a trade outcome to graph memory. Used after position close to log profit/loss/cancelled for pattern learning.
-
-**Request body:**
-
-```json
-{
-  "decisionKey": "decision_abc123",
-  "result": "profit",
-  "pnlUsdc": 25.0,
-  "pnlPercent": 5.0,
-  "exitPrice": 51000.0,
-  "exitReason": "Take profit hit"
-}
-```
-
-`result` must be one of: `"profit"`, `"loss"`, `"breakeven"`, `"cancelled"`.
-
-Optional fields: `pnlUsdc`, `pnlPercent`, `exitPrice`, `exitReason`.
-
-**Response `200`:**
-
-```json
-{
-  "recorded": true,
-  "decisionKey": "decision_abc123",
-  "outcomeKey": "outcome_abc123"
-}
-```
-
-**Errors:** 400 (missing fields, invalid result), 500
-
----
-
-## POST /api/agent/execution/close
-
-Close all filled positions across all coins. Cancels existing open orders, then places reduceOnly IoC orders at aggressive prices (mid ± 1%) to force immediate fill. Records closed positions to graph memory as `"cancelled"` outcomes.
-
-**Request body:**
-
-```json
-{
-  "walletAddress": "0x..."
-}
-```
-
-`walletAddress` is optional. If provided, positions are queried for this address instead of `AGENT_WALLET_ADDRESS` from env. Useful when the signing agent wallet differs from the wallet holding the positions.
-
-**Response `200`:**
-
-```json
-{
-  "closed": 2,
-  "positions": [
-    {
-      "coin": "BTC",
-      "side": "long",
-      "size": "0.1",
-      "closed": true,
-      "oid": 100
-    },
-    {
-      "coin": "ETH",
-      "side": "short",
-      "size": "2.0",
-      "closed": false,
-      "error": "Mid price not found for ETH"
-    }
-  ]
-}
-```
-
-`closed` is the count of successfully closed positions. Each position entry has `coin`, `side` ("long" | "short"), `size`, `closed` (boolean), `oid` (order ID if placed), and optional `error` (if close failed).
-
-**Errors:** 503 (wallet not initialized), 502 (HL exchange error)
-
----
-
-## POST /api/agent/execution/close/{coin}
-
-Close all filled positions for a specific coin (e.g. `BTC`, `ETH`). Same behavior as the close-all endpoint, scoped to one coin.
-
-**Request body:**
-
-```json
-{
-  "walletAddress": "0x..."
-}
-```
-
-`walletAddress` is optional — same as close-all endpoint.
-
-**Response `200`:**
-
-```json
-{
-  "closed": 1,
-  "positions": [
-    {
-      "coin": "BTC",
-      "side": "long",
-      "size": "0.1",
-      "closed": true,
-      "oid": 100
-    }
-  ]
-}
-```
-
-**Errors:** 400 (coin parameter missing), 404 (coin not found in Hyperliquid universe), 503 (wallet not initialized), 502 (HL exchange error)
+**Errors:** 400 (missing id), 404 (not found), 503 (database not available), 500 (fetch error)

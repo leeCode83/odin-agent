@@ -733,7 +733,7 @@ app/api/agent/dd/
 - `lib/agent/due-diligence/llm.ts` — existing LLM integration
 - `lib/agent/due-diligence/prompts.ts` — existing prompts
 - `lib/agent/planning/pipeline.ts` — planning agent (hybrid LLM+code pattern)
-- `lib/agent/execution/pipeline.ts` — execution agent
+- ~~`lib/agent/execution/pipeline.ts` — execution agent~~ (tidak ada di codebase — scope sekarang cuma paper trading; live execution = future work, lihat docs/odin-spec.md §4.4)
 - `lib/data/` — current data providers (to be refactored as tools)
 - `lib/db/` — ArangoDB graph memory
 - `docs/odin-spec.md` — master architecture spec
@@ -793,9 +793,9 @@ app/api/agent/dd/
    all consumers.** Tidak ada backward-compat shim. Update DDReport schema di
    `lib/agent/types.ts` + migrate semua consumers:
    - `app/api/agent/dd/route.ts` — return new DDReport
-   - `app/api/agent/execution/route.ts` — parse new DDReport
+   - ~~`app/api/agent/execution/route.ts` — parse new DDReport~~ (route tidak ada; doc historis sebelum execution di-drop dari scope)
    - `app/api/agent/planning/route.ts` — parse new DDReport
-   - `app/api/agent/trade/approve/route.ts` — parse new DDReport
+   - ~~`app/api/agent/trade/approve/route.ts` — parse new DDReport~~ (route tidak ada; doc historis)
    - `components/dashboard/dd-section.tsx` — reads `aggregated_thesis` +
      `confidence_score` (ganti ke `summary` + `overallConfidence` fields baru)
    All consumers already use `DDReportSchema.safeParse/parse` which tolerate
