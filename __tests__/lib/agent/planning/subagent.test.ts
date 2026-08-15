@@ -45,17 +45,11 @@ const mockDDReport: DDReport = {
 
 const returnThoughtWithExtras: SubAgentThought = {
   action: "return",
-  score: 75,
-  confidence: 80,
   signals: [{ name: "ATR reasonable", strength: 70, direction: "bullish" }],
   reasoning: "Validated against live market data",
   conclusion: "Go long with tight stop",
   side: "long",
-  entry_price: 65000,
-  suggested_stop_loss: 62000,
-  suggested_take_profit: 71000,
-  suggested_position_size_usdc: 1000,
-  risk_flags: ["Funding positive"],
+  risk_flags_text: "Funding positive",
 }
 
 describe("runPerspectiveSubagent", () => {
@@ -65,11 +59,25 @@ describe("runPerspectiveSubagent", () => {
 
   it("maps FactorReport + stashed return extras into a PerspectiveReport", async () => {
     const tools: ToolRegistry = {
-      compute_atr: makeTool("compute_atr"),
+      compute_atr: makeTool("compute_atr", async () => ({
+        success: true,
+        data: { atr: 2.5 },
+        metadata: { source: "hyperliquid", latencyMs: 5 },
+      })),
       get_mark_price: makeTool("get_mark_price", async () => ({
         success: true,
         data: { markPrice: 65000 },
         metadata: { source: "hyperliquid", latencyMs: 5 },
+      })),
+      compute_sltp: makeTool("compute_sltp", async () => ({
+        success: true,
+        data: { stopLoss: 62000, takeProfit: 71000 },
+        metadata: { source: "risk-engine", latencyMs: 5 },
+      })),
+      compute_position_size: makeTool("compute_position_size", async () => ({
+        success: true,
+        data: { positionSizeUsdc: 1000, positionSizeContracts: 0.015 },
+        metadata: { source: "risk-engine", latencyMs: 5 },
       })),
     }
     thinkMock
@@ -85,6 +93,18 @@ describe("runPerspectiveSubagent", () => {
         params: { asset: "BTC" },
         reasoning: "Need mark price",
       })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "compute_sltp",
+        params: { asset: "BTC" },
+        reasoning: "Need SL/TP",
+      })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "compute_position_size",
+        params: { asset: "BTC" },
+        reasoning: "Need size",
+      })
       .mockResolvedValueOnce(returnThoughtWithExtras)
 
     const report = await runPerspectiveSubagent({
@@ -97,21 +117,24 @@ describe("runPerspectiveSubagent", () => {
     })
 
     expect(report.perspective).toBe("conservative")
-    expect(report.score).toBe(75)
-    // deterministic confidence: 2 successful calls, 2 unique tools → 100-0
-    // (LLM verbalized 80 ignored); entry matches the get_mark_price result so
-    // the verifier keeps the trade as-is.
+    // deterministic score/confidence: 4 successful calls, 4 unique tools → 100
+    // (the LLM's self-assessed values are gone from the schema entirely).
+    expect(report.score).toBe(100)
     expect(report.confidence).toBe(100)
     expect(report.side).toBe("long")
+    // reason: numbers come from the tool results enforced by the verifier.
     expect(report.entry_price).toBe(65000)
     expect(report.suggested_stop_loss).toBe(62000)
     expect(report.suggested_take_profit).toBe(71000)
     expect(report.suggested_position_size_usdc).toBe(1000)
-    expect(report.risk_flags).toEqual(["Funding positive"])
+    // reason: structured flags come from tool data (none in these mocks); the
+    // LLM's free-text narrative lands in risk_flags_text.
+    expect(report.risk_flags).toEqual([])
+    expect(report.risk_flags_text).toBe("Funding positive")
     expect(report.signals).toHaveLength(1)
     expect(report.signals[0].name).toBe("ATR reasonable")
-    expect(report.dataSources).toContain("test")
-    expect(report.iterations).toBe(3)
+    expect(report.dataSources).toContain("hyperliquid")
+    expect(report.iterations).toBe(5)
     expect(report.conclusion).toBe("Go long with tight stop")
     expect(report.errors).toHaveLength(0)
   })
@@ -144,6 +167,16 @@ describe("runPerspectiveSubagent", () => {
         data: { markPrice: 66000 },
         metadata: { source: "hyperliquid", latencyMs: 5 },
       })),
+      compute_sltp: makeTool("compute_sltp", async () => ({
+        success: true,
+        data: { stopLoss: 63000, takeProfit: 70000 },
+        metadata: { source: "risk-engine", latencyMs: 5 },
+      })),
+      compute_position_size: makeTool("compute_position_size", async () => ({
+        success: true,
+        data: { positionSizeUsdc: 1000, positionSizeContracts: 0.015 },
+        metadata: { source: "risk-engine", latencyMs: 5 },
+      })),
     }
     thinkMock
       .mockResolvedValueOnce({
@@ -151,6 +184,18 @@ describe("runPerspectiveSubagent", () => {
         toolName: "get_mark_price",
         params: { asset: "BTC" },
         reasoning: "Need mark price",
+      })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "compute_sltp",
+        params: { asset: "BTC" },
+        reasoning: "Need SL/TP",
+      })
+      .mockResolvedValueOnce({
+        action: "tool_call",
+        toolName: "compute_position_size",
+        params: { asset: "BTC" },
+        reasoning: "Need size",
       })
       .mockResolvedValueOnce(returnThoughtWithExtras)
 
@@ -171,8 +216,6 @@ describe("runPerspectiveSubagent", () => {
     const tools: ToolRegistry = { compute_atr: makeTool("compute_atr") }
     thinkMock.mockResolvedValueOnce({
       action: "return",
-      score: 50,
-      confidence: 50,
       signals: [],
       reasoning: "No data",
       conclusion: "Inconclusive",
@@ -194,7 +237,9 @@ describe("runPerspectiveSubagent", () => {
     expect(report.suggested_take_profit).toBe(0)
     expect(report.suggested_position_size_usdc).toBe(0)
     expect(report.risk_flags).toEqual([])
-    expect(report.score).toBe(50)
+    // reason: unknown factor → deterministic score falls back to the
+    // execution-signal confidence (zero tool calls → floor 15).
+    expect(report.score).toBe(15)
   })
 
   it("passes tool_call thoughts through unchanged so tools execute", async () => {

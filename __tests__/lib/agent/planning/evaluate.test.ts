@@ -10,6 +10,7 @@ import {
   evaluateConsensus,
   computeNoTradeDecision,
 } from "@/lib/agent/planning/evaluate"
+import { RiskFlag } from "@/lib/agent/shared/risk-flags"
 import type {
   PerspectiveReport,
   PlanningAggregationResult,
@@ -128,8 +129,8 @@ describe("evaluateConsensus", () => {
 
   it("RULE 2 ordering — no_trade majority beats funding flags (rule 2 before rule 3)", () => {
     const reports = [
-      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35, risk_flags: ["funding_rate_extreme"] }),
-      makeReport({ perspective: "balance", side: "no_trade", confidence: 35, risk_flags: ["funding_rate_extreme"] }),
+      makeReport({ perspective: "conservative", side: "no_trade", confidence: 35, risk_flags: [RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "balance", side: "no_trade", confidence: 35, risk_flags: [RiskFlag.funding_overheated] }),
       makeReport({ perspective: "aggressive", side: "long", confidence: 35, risk_flags: [] }),
     ]
 
@@ -142,10 +143,10 @@ describe("evaluateConsensus", () => {
     expect(result.noTradeReason).toBeDefined()
   })
 
-  it("RULE 3 — ≥2 reports risk_flags contain funding (case-insensitive) → NO_TRADE", () => {
+  it("RULE 3 — ≥2 reports emit funding_overheated enum flag → NO_TRADE", () => {
     const reports = [
-      makeReport({ perspective: "conservative", risk_flags: ["Funding_rate_extreme"] }),
-      makeReport({ perspective: "balance", risk_flags: ["funding_rate_extreme"] }),
+      makeReport({ perspective: "conservative", risk_flags: [RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "balance", risk_flags: [RiskFlag.funding_overheated] }),
       makeReport({ perspective: "aggressive", risk_flags: [] }),
     ]
 
@@ -155,10 +156,58 @@ describe("evaluateConsensus", () => {
     expect(result.message.toLowerCase()).toContain("funding")
   })
 
-  it("RULE 3 ordering — funding flags beat unanimous high-confidence ACCEPT", () => {
+  it("RULE 3 — free-text LLM prose mentioning funding does NOT trigger NO_TRADE (no substring matching)", () => {
     const reports = [
       makeReport({ perspective: "conservative", risk_flags: ["funding overheat"] }),
-      makeReport({ perspective: "balance", risk_flags: ["funding overheat"] }),
+      makeReport({ perspective: "balance", risk_flags: ["Funding_rate_extreme"] }),
+      makeReport({ perspective: "aggressive", risk_flags: [] }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({}))
+
+    expect(result.decision).not.toBe("NO_TRADE")
+  })
+
+  it("RULE 3 — single funding_overheated flag is not enough for NO_TRADE", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", risk_flags: [RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "balance", risk_flags: [] }),
+      makeReport({ perspective: "aggressive", risk_flags: [] }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({}))
+
+    expect(result.decision).not.toBe("NO_TRADE")
+  })
+
+  it("RULE 3 — empty risk_flags arrays never trigger NO_TRADE", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", risk_flags: [] }),
+      makeReport({ perspective: "balance", risk_flags: [] }),
+      makeReport({ perspective: "aggressive", risk_flags: [] }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({}))
+
+    expect(result.decision).toBe("ACCEPT")
+  })
+
+  it("RULE 3 — enum flag among other enum flags still triggers NO_TRADE", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", risk_flags: [RiskFlag.cascade_risk, RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "balance", risk_flags: [RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "aggressive", risk_flags: [] }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({}))
+
+    expect(result.decision).toBe("NO_TRADE")
+  })
+
+  it("RULE 3 ordering — funding flags beat unanimous high-confidence ACCEPT", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", risk_flags: [RiskFlag.funding_overheated] }),
+      makeReport({ perspective: "balance", risk_flags: [RiskFlag.funding_overheated] }),
       makeReport({ perspective: "aggressive", risk_flags: [] }),
     ]
 
@@ -511,7 +560,7 @@ describe("evaluateConsensus", () => {
         confidence: null,
         score: 62,
         reasoning: "trend intact",
-        risk_flags: ["funding overheat"],
+        risk_flags: [RiskFlag.funding_overheated],
         errors: ["tool-a", "tool-b"],
       }),
       makeReport({ perspective: "balance", side: "long", confidence: 65 }),
@@ -535,6 +584,21 @@ describe("evaluateConsensus", () => {
     expect(conservative?.fundingFlag).toBe(true)
     expect(conservative?.toolsFailed).toEqual(["tool-a", "tool-b"])
     expect(conservative?.degraded).toBe(true)
+  })
+
+  it("perspectiveBreakdown — free-text prose does not set fundingFlag (enum only)", () => {
+    const reports = [
+      makeReport({ perspective: "conservative", risk_flags: ["funding overheat"] }),
+      makeReport({ perspective: "balance", side: "long" }),
+      makeReport({ perspective: "aggressive", side: "long" }),
+    ]
+
+    const result = evaluateConsensus(reports, makeAggregation({}))
+
+    const conservative = result.perspectiveBreakdown.find(
+      (e) => e.perspective === "conservative"
+    )
+    expect(conservative?.fundingFlag).toBe(false)
   })
 })
 

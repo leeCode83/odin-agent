@@ -12,6 +12,7 @@
 import { z } from "zod"
 import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { createHLClient, fetchOnchainData } from "@/lib/data/hyperliquid"
+import { RiskFlag } from "@/lib/agent/shared/risk-flags"
 import { getOrderbookDepthTool } from "@/lib/agent/due-diligence/tools/onchain/hyperliquid"
 
 /**
@@ -183,11 +184,15 @@ export function buildLiquidationTools(_ctx: LiquidationToolContext): ToolDefinit
           // reason: stop-loss inside a magnet zone is a stop-hunt risk; 0.5% matches the cluster gap
           const warning = zones.some((z) => z.price > 0 && Math.abs(params.stopLoss - z.price) / z.price <= STOP_PROXIMITY_PCT)
 
+          // reason: structured enum flag for the proximity rule (P4 SA2)
+          const risk_flags: RiskFlag[] = warning ? [RiskFlag.liquidation_zone_proximity] : []
+
           return {
             success: true,
             data: {
               warning,
               zones,
+              risk_flags,
               notes:
                 "approximation — HL exposes no public liquidation data; nearest orderbook liquidity clusters used as proxy for magnet zones",
             },
@@ -235,10 +240,14 @@ export function buildLiquidationTools(_ctx: LiquidationToolContext): ToolDefinit
 
           const cascadeRisk = score >= 3 ? "high" : score === 2 ? "medium" : "low"
 
+          // reason: structured enum flag whenever cascade risk exists (P4 SA2)
+          const risk_flags: RiskFlag[] = cascadeRisk === "low" ? [] : [RiskFlag.cascade_risk]
+
           return {
             success: true,
             data: {
               cascadeRisk,
+              risk_flags,
               notes:
                 "approximation — HL exposes no public liquidation data; cascade risk proxied by funding magnitude + OI size + orderbook thinness",
             },

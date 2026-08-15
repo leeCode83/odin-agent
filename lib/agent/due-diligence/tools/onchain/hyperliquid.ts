@@ -11,6 +11,41 @@ async function getAssetCtx(asset: string) {
   return { client, ctx: assetCtxs[idx], meta }
 }
 
+/**
+ * @constant FUNDING_OVERHEAT
+ * @description Per-8h funding rate (decimal) above which the regime is overheated
+ *   (mirrors the perp-funding-basis skill: > +0.05%/8h = extreme long crowding).
+ */
+const FUNDING_OVERHEAT = 0.0005
+
+/**
+ * @constant FundingDataSchema
+ * @description Structured get_funding_rate output consumed by deterministic scoring:
+ *   the derived `regime` classifies funding crowding without any LLM judgment.
+ */
+export const FundingDataSchema = z.object({
+  fundingRate: z.number(),
+  markPrice: z.number(),
+  oraclePrice: z.number(),
+  premium: z.number().nullable(),
+  regime: z.enum(["overheated_long", "overheated_short", "normal"]),
+})
+
+/** @typedef {z.infer<typeof FundingDataSchema>} FundingData */
+export type FundingData = z.infer<typeof FundingDataSchema>
+
+/**
+ * @constant OpenInterestDataSchema
+ * @description Structured get_open_interest output.
+ */
+export const OpenInterestDataSchema = z.object({
+  openInterest: z.number(),
+  oiCapReached: z.boolean(),
+})
+
+/** @typedef {z.infer<typeof OpenInterestDataSchema>} OpenInterestData */
+export type OpenInterestData = z.infer<typeof OpenInterestDataSchema>
+
 export function getFundingRateTool(): ToolDefinition {
   return {
     name: "get_funding_rate",
@@ -22,13 +57,22 @@ export function getFundingRateTool(): ToolDefinition {
       const start = Date.now()
       try {
         const { ctx } = await getAssetCtx(params.asset)
+        const fundingRate = parseFloat(ctx.funding)
+        const absFunding = Math.abs(fundingRate)
+        const regime =
+          absFunding > FUNDING_OVERHEAT
+            ? fundingRate > 0
+              ? "overheated_long"
+              : "overheated_short"
+            : "normal"
         return {
           success: true,
           data: {
-            fundingRate: parseFloat(ctx.funding),
+            fundingRate,
             markPrice: parseFloat(ctx.markPx),
             oraclePrice: parseFloat(ctx.oraclePx),
             premium: ctx.premium !== null ? parseFloat(ctx.premium) : null,
+            regime,
           },
           metadata: { source: "hyperliquid", latencyMs: Date.now() - start },
         }

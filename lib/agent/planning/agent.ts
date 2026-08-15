@@ -4,19 +4,33 @@
  *   loop (spec §6.2): auto-calls the DD agent, deploys the three perspective
  *   subagents, aggregates their reports via LLM, and evaluates consensus
  *   (Layer 1, spec §8.1). On ACCEPT it applies the autonomy gate (Layer 2,
- *   spec §8.2) and builds the final TradePlan. Mirrors the runDDAgent() loop
- *   structure (see lib/agent/due-diligence/agent.ts:149-288).
+ *   spec §8.2) and builds the final TradePlan.
+ *
+ *   Deterministic integration (Fase 2): the PLAN/RE-PLAN step is deterministic
+ *   (buildFixedPerspectives), every money number (entry/SL/TP/size/leverage/
+ *   confidence) is computed in code — never from the LLM. The LLM supplies only
+ *   narrative (side/thesis/reasoning/contradictions); computeTradeNumbers is
+ *   the single source of trade numbers and deterministicConfidence the single
+ *   source of confidence, both fed from tool results and the DD report.
+ *
+ *   Mirrors the runDDAgent() loop structure (see lib/agent/due-diligence/agent.ts:149-288).
  * @module planning/agent
  * @layer agent
  */
 
-import { plan, rePlan, aggregate } from "@/lib/agent/planning/llm"
+import { aggregate } from "@/lib/agent/planning/llm"
+import { buildFixedPerspectives } from "@/lib/agent/planning/fixed-planner"
 import { runPerspectiveSubagent } from "@/lib/agent/planning/subagent"
 import { buildPlanningToolRegistry } from "@/lib/agent/planning/tools"
 import { evaluateConsensus } from "@/lib/agent/planning/evaluate"
 import { autonomyGate } from "@/lib/agent/planning/gate"
-import { computeATR, computeLeverage, computePositionSize } from "@/lib/agent/shared/risk-engine"
-import { recordDecision, queryPerspectivePerformance } from "@/lib/db/graph-memory"
+import {
+  computeATR,
+  computeLeverage,
+  computePositionSize,
+  computeSLTP,
+} from "@/lib/agent/shared/risk-engine"
+import { recordDecision, queryPerspectivePerformance, queryGraphPatterns } from "@/lib/db/graph-memory"
 import {
   computePerspectiveWeights,
   applyWta,
@@ -27,14 +41,23 @@ import { getRiskThresholds, envDefaults } from "@/lib/db/risk-thresholds"
 import { fetchUserEquity, fetchCandlesForATR, fetchMarkPrice } from "@/lib/data/hyperliquid"
 import { PlanningError } from "@/lib/agent/planning/pipeline"
 import { TradePlanSchema } from "@/lib/agent/types"
+import { computeTradeNumbers } from "@/lib/agent/planning/compute-trade-numbers"
+import { deterministicConfidence } from "@/lib/agent/shared/deterministic-confidence"
+import type {
+  DeterministicConfidenceResult,
+  FactorScoreInput,
+  HistoricalMatchInput,
+} from "@/lib/agent/shared/deterministic-confidence"
+import { mergeRiskFlags } from "@/lib/agent/shared/risk-flags"
+import { computeProfitFeasibility } from "@/lib/agent/shared/feasibility"
 import { log } from "@/lib/agent/planning/log"
 import type { AutonomyDecision, RiskThresholds, TradePlan } from "@/lib/agent/types"
 import type {
   PlanningAgentInput,
   PlanningAgentOutput,
   PlanningAggregationResult,
+  PlanningAggregationLlmResult,
   PlanningSubagentPlan,
-  Perspective,
   PerspectiveBreakdownEntry,
   PerspectiveReport,
   ConsensusResult,
@@ -62,64 +85,26 @@ const PLANNING_LOOP_TIMEOUT_MS = 300_000
 const MAX_RE_DEPLOYS_PER_PERSPECTIVE = 2
 
 /**
- * @constant PERSPECTIVES
- * @description The three trading perspectives the swarm always deploys.
- */
-const PERSPECTIVES: Perspective[] = ["conservative", "balance", "aggressive"]
-
-/**
- * @function fallbackPlan
- * @description Fallback PLAN output: deploys all three perspectives with a
- *   generic instruction. Used when the PLAN/rePLAN LLM call returns empty.
- * @param {string} asset - Asset ticker.
- * @returns {PlanningSubagentPlan[]} Plans for all three perspectives.
- */
-function fallbackPlan(asset: string): PlanningSubagentPlan[] {
-  return PERSPECTIVES.map((perspective, i) => ({
-    perspective,
-    instruction: `Analyze ${asset} from the ${perspective} perspective and produce a trade plan with appropriate risk discipline`,
-    priority: i + 1,
-  }))
-}
-
-/**
- * @function median
- * @description Median of a number array (middle value of the sorted copy).
- * @param {number[]} values - Input values.
- * @returns {number} Median, or 0 for an empty array.
- */
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  return sorted[Math.floor(sorted.length / 2)] ?? 0
-}
-
-/**
  * @function fallbackAggregation
  * @description Deterministic merge fallback (spec §9.2) used when the
  *   AGGREGATE LLM call never succeeded but a plan must still be built
- *   (forced accept / loop exhausted). Majority vote for side, medians for
- *   prices/confidence, no profit feasibility.
+ *   (forced accept / loop exhausted). Majority vote for side only — every
+ *   number is filled deterministically by enrichAggregation (confidence via
+ *   deterministicConfidence, prices/size/leverage via computeTradeNumbers).
  * @param {PerspectiveReport[]} reports - Accumulated perspective reports.
- * @returns {PlanningAggregationResult} Synthesized aggregation.
+ * @returns {PlanningAggregationLlmResult} Narrow narrative aggregation.
  */
-function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationResult {
-  // Guard: no reports → cannot compute meaningful prices, force NO_TRADE
+function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationLlmResult {
+  // Guard: no reports → cannot compute anything meaningful, force NO_TRADE
   if (reports.length === 0) {
     return {
       side: "no_trade",
       thesis: "No subagent data — planning timed out before reports were available",
       reasoning: "Planning loop exhausted before any perspective subagent completed",
-      confidence_score: 0,
-      confidence_breakdown: { factor_alignment: 0, historical_match: 0, signal_strength: 0 },
-      risk_flags: ["planning_timeout", "no_subagent_data"],
+      risk_flags_text: "",
       consensus_alignment: 0,
       contradictions: [],
-      profit_feasible: false,
       no_trade_reason: "Planning timed out — no subagent reports available",
-      entry_price: 0,
-      stop_loss: 0,
-      take_profit: 0,
-      position_size_usdc: 0,
     }
   }
 
@@ -143,17 +128,198 @@ function fallbackAggregation(reports: PerspectiveReport[]): PlanningAggregationR
     reasoning:
       reports.map((r) => `${r.perspective}: ${r.reasoning}`).join("; ") ||
       "No perspective reasoning available",
-    confidence_score: Math.round(median(reports.map((r) => r.confidence ?? 0))),
-    // reason: reports carry no confidence_breakdown — zeros mark it as unmeasured.
-    confidence_breakdown: { factor_alignment: 0, historical_match: 0, signal_strength: 0 },
-    risk_flags: Array.from(new Set(reports.flatMap((r) => r.risk_flags))),
+    risk_flags_text: "",
     consensus_alignment: 0,
     contradictions: [],
-    profit_feasible: false,
-    entry_price: median(reports.map((r) => r.entry_price)),
-    stop_loss: median(reports.map((r) => r.suggested_stop_loss)),
-    take_profit: median(reports.map((r) => r.suggested_take_profit)),
-    position_size_usdc: 0,
+  }
+}
+
+/**
+ * @interface EnrichAggregationInput
+ * @description Inputs to enrichAggregation. `narrative` carries the LLM's side
+ *   and prose; every number is derived deterministically from the tool inputs
+ *   and the DD context.
+ * @property {PlanningAggregationLlmResult} narrative - LLM narrative (side/thesis/reasoning).
+ * @property {PerspectiveReport[]} reports - The perspective reports (signal + vote inputs).
+ * @property {FactorScoreInput[]} factorScores - DD factor scores (deterministic confidence input).
+ * @property {HistoricalMatchInput} historicalMatches - Graph-memory pattern stats.
+ * @property {number} markPrice - Pre-fetched mark price (get_mark_price result).
+ * @property {number} atr - Pre-fetched ATR(14) (compute_atr result).
+ * @property {number} equity - Pre-fetched account equity in USDC.
+ * @property {RiskThresholds} thresholds - User risk thresholds (max leverage,
+ *   risk per trade).
+ * @property {number} targetProfitPercent - Effective target profit percent.
+ * @property {"long" | "short"} [sideOverride] - L3 override side (forced path).
+ * @property {number} [confidenceFloor] - L3 override confidence floor.
+ * @property {number} [ddMultiplier] - Partial-DD confidence penalty multiplier.
+ */
+interface EnrichAggregationInput {
+  narrative: PlanningAggregationLlmResult
+  reports: PerspectiveReport[]
+  factorScores: FactorScoreInput[]
+  historicalMatches: HistoricalMatchInput
+  markPrice: number
+  atr: number
+  equity: number
+  thresholds: RiskThresholds
+  targetProfitPercent: number
+  sideOverride?: "long" | "short"
+  confidenceFloor?: number
+  ddMultiplier?: number
+}
+
+/**
+ * @function strongestReportSide
+ * @description The long/short side carried by the highest-confidence report
+ *   (report.confidence ?? score ?? 0), or undefined when no report sides
+ *   long/short. Used to judge L3-override feasibility when the aggregation
+ *   narrative abstains: the rescue candidate's trade geometry decides whether a
+ *   strong minority signal may be rescued from a no_trade majority.
+ * @param {PerspectiveReport[]} reports - The perspective reports.
+ * @returns {"long" | "short" | undefined} The strongest non-no_trade side.
+ */
+function strongestReportSide(reports: PerspectiveReport[]): "long" | "short" | undefined {
+  let best: "long" | "short" | undefined
+  let bestConf = 0
+  for (const r of reports) {
+    if (r.side === "no_trade") continue
+    const conf = r.confidence ?? r.score ?? 0
+    if (conf > bestConf) {
+      bestConf = conf
+      best = r.side
+    }
+  }
+  return best
+}
+
+/**
+ * @function enrichAggregation
+ * @description Assembles the full PlanningAggregationResult from the LLM
+ *   narrative + deterministic computations. Single source of the final trade
+ *   numbers: confidence = deterministicConfidence(...).score (optionally floored
+ *   by the L3 override and multiplied by the partial-DD penalty), prices/size
+ *   from computeTradeNumbers (mark price, ATR, compute_sltp / compute_position_size
+ *   math, thresholds), risk_flags = mergeRiskFlags over the reports' structured
+ *   enum flags, and profit_feasible from computeProfitFeasibility. Any missing
+ *   tool input forces {no_trade: true} via computeTradeNumbers — no LLM-guessed
+ *   number can survive. When the narrative side is no_trade but a strong
+ *   long/short minority exists, profit_feasible is judged against the candidate
+ *   side's geometry (L3 feasibility gate). Pure — no I/O (all inputs pre-fetched
+ *   by the orchestrator).
+ * @param {EnrichAggregationInput} input - Narrative + deterministic inputs.
+ * @returns {PlanningAggregationResult} Full deterministic aggregation.
+ */
+function enrichAggregation(input: EnrichAggregationInput): PlanningAggregationResult {
+  const side = input.sideOverride ?? input.narrative.side
+  const det = deterministicConfidence({
+    side,
+    factorScores: input.factorScores,
+    historicalMatches: input.historicalMatches,
+    signals: input.reports.flatMap((r) => r.signals),
+    votes: input.reports.map((r) => r.side),
+  })
+  // reason: L3 override floors the confidence at the rescued signal's value;
+  // the partial-DD penalty then scales it (usable/planned factor ratio).
+  const rawScore =
+    input.confidenceFloor !== undefined ? Math.max(input.confidenceFloor, det.score) : det.score
+  const confidenceScore = Math.round(rawScore * (input.ddMultiplier ?? 1))
+  const confidence = confidenceScore / 100
+
+  // reason: computeTradeNumbers is the single source of the money numbers —
+  // entry from the mark price, SL/TP from compute_sltp math, size from
+  // compute_position_size math, leverage from the risk engine. Any invalid or
+  // missing input returns {no_trade: true, reason}.
+  const numbersFor = (s: "long" | "short"): { entry: number; stopLoss: number; takeProfit: number; positionSizeUsdc: number } | null => {
+    const sltp = computeSLTP(input.markPrice, input.atr, s)
+    const positionSize = computePositionSize(
+      input.equity,
+      input.markPrice,
+      sltp.stopLoss,
+      input.thresholds.risk_per_trade_percent
+    )
+    const result = computeTradeNumbers({
+      markPrice: input.markPrice,
+      atr: input.atr,
+      sltpResult: sltp,
+      positionSizeResult: { positionSizeUsdc: positionSize.positionSizeUsdc },
+      thresholds: input.thresholds,
+      equity: input.equity,
+      side: s,
+      confidence,
+    })
+    if ("no_trade" in result) return null
+    return {
+      entry: result.entry,
+      stopLoss: result.stopLoss,
+      takeProfit: result.takeProfit,
+      positionSizeUsdc: result.positionSizeUsdc,
+    }
+  }
+
+  let entry = 0
+  let stopLoss = 0
+  let takeProfit = 0
+  let positionSizeUsdc = 0
+  let profitFeasible = false
+  if (side !== "no_trade") {
+    const numbers = numbersFor(side)
+    if (numbers !== null) {
+      entry = numbers.entry
+      stopLoss = numbers.stopLoss
+      takeProfit = numbers.takeProfit
+      positionSizeUsdc = numbers.positionSizeUsdc
+      // reason: profit_feasible is computed in code from the deterministic
+      // geometry (R:R ≥ min, target within TP distance, target within 3×ATR) —
+      // never from the LLM's judgment.
+      profitFeasible = computeProfitFeasibility({
+        entryPrice: numbers.entry,
+        stopLoss: numbers.stopLoss,
+        takeProfit: numbers.takeProfit,
+        side,
+        targetProfitPercent: input.targetProfitPercent,
+        atr: input.atr,
+      }).feasible
+    }
+  } else {
+    // reason: L3 feasibility gate — when the narrative abstains but a strong
+    // long/short minority exists, feasibility is judged on the candidate side's
+    // geometry so the rescue rule can still fire (an abstention has no geometry
+    // of its own). The returned numbers stay zero (side stays no_trade); the
+    // override (if applied) recomputes them for the rescued side at the tail.
+    const candidate = strongestReportSide(input.reports)
+    if (candidate !== undefined) {
+      const numbers = numbersFor(candidate)
+      if (numbers !== null) {
+        profitFeasible = computeProfitFeasibility({
+          entryPrice: numbers.entry,
+          stopLoss: numbers.stopLoss,
+          takeProfit: numbers.takeProfit,
+          side: candidate,
+          targetProfitPercent: input.targetProfitPercent,
+          atr: input.atr,
+        }).feasible
+      }
+    }
+  }
+
+  return {
+    side,
+    thesis: input.narrative.thesis,
+    reasoning: input.narrative.reasoning,
+    confidence_score: confidenceScore,
+    confidence_breakdown: det.breakdown,
+    // reason: structured enum flags only — LLM prose never reaches risk_flags.
+    risk_flags: mergeRiskFlags(input.reports.map((r) => r.risk_flags)),
+    consensus_alignment: input.narrative.consensus_alignment,
+    contradictions: input.narrative.contradictions,
+    profit_feasible: profitFeasible,
+    ...(input.narrative.no_trade_reason !== undefined
+      ? { no_trade_reason: input.narrative.no_trade_reason }
+      : {}),
+    entry_price: entry,
+    stop_loss: stopLoss,
+    take_profit: takeProfit,
+    position_size_usdc: positionSizeUsdc,
   }
 }
 
@@ -186,11 +352,14 @@ interface BuildTradePlanParams {
  * @description Assembles the final TradePlan from the accepted aggregation.
  *   NO_TRADE encodes a zero-size placeholder position: SL = entry*0.99,
  *   TP = entry*1.01, position_size_usdc 0, leverage 1 (spec §8.1 row 8).
- *   Leverage is the risk engine's deterministic OUTPUT (never LLM input):
- *   ATR is taken from the pre-fetched value when provided (fetched once per
- *   run by the orchestrator) or fetched once here (same source as the
- *   compute_atr tool) and fed to computeLeverage. Any ATR failure degrades
- *   to leverage 1 (conservative) instead of crashing the plan.
+ *   The aggregation's numbers are ALREADY the deterministic computeTradeNumbers
+ *   output (entry/SL/TP/size) — buildTradePlan only recomputes contracts and
+ *   leverage so they stay consistent with the same inputs. Leverage is the risk
+ *   engine's deterministic OUTPUT (never LLM input): ATR is taken from the
+ *   pre-fetched value when provided (fetched once per run by the orchestrator)
+ *   or fetched once here (same source as the compute_atr tool) and fed to
+ *   computeLeverage. Any ATR failure degrades to leverage 1 (conservative)
+ *   instead of crashing the plan.
  * @param {BuildTradePlanParams} params - Plan assembly inputs.
  * @returns {Promise<TradePlan>} Zod-validated trade plan.
  */
@@ -353,15 +522,16 @@ function persistDecision(
 /**
  * @function runPlanningAgent
  * @description Main planning swarm orchestrator (spec §6.2). Assumes a valid
- *   DD report is provided via input. Pre-fetches equity once (spec §16.4), then
- *   runs up to 3 Plan-Execute-Reflect iterations (fail fast: a loop deadline
- *   checked at each iteration start breaks out with a partial best-effort
- *   plan):
- *   1. PLAN — llm plan (first iteration) or rePlan (low-consensus only).
+ *   DD report is provided via input. Pre-fetches equity, mark price, ATR, and
+ *   risk thresholds once (spec §16.4), then runs up to 3 Plan-Execute-Reflect
+ *   iterations (fail fast: a loop deadline checked at each iteration start
+ *   breaks out with a partial best-effort plan):
+ *   1. PLAN — deterministic: buildFixedPerspectives (always 3 perspectives).
  *   2. EXECUTE — all planned perspective subagents in parallel, sharing one
- *      tool registry bound to the pre-fetched equity.
- *   3. AGGREGATE — llm aggregation; null keeps the previous result.
- *   4. EVALUATE — deterministic consensus (Layer 1).
+ *      tool registry bound to the pre-fetched equity/mark price/ATR.
+ *   3. AGGREGATE — llm aggregation (narrative only); null keeps the previous.
+ *   4. EVALUATE — deterministic consensus (Layer 1) over an aggregation whose
+ *      confidence/profit_feasible are computed deterministically (no LLM numbers).
  *   ACCEPT breaks to Layer 2 (autonomy gate) and builds the TradePlan.
  *   NO_TRADE builds a zero-size placeholder plan. FAILED throws
  *   PlanningError. RE-DEPLOY loops until the per-perspective cap (2) forces
@@ -467,6 +637,11 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
     })
   }
 
+  // reason: risk thresholds are pre-fetched once — needed by computeTradeNumbers
+  // (max_leverage, risk_per_trade_percent) during consensus enrichment AND by
+  // the autonomy gate at the tail.
+  const thresholds = await getRiskThresholds(params.userId).catch(() => envDefaults())
+
   // reason: L1 dynamic weighting (Phase 2) — perspective weights come from
   // historical performance in graph memory; any failure degrades to cold-start
   // uniform weights (never crashes the run). The WTA boost is applied here so
@@ -479,10 +654,24 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   )
   log("info", "planning.weights", { weights, hasHistory: perspectivePerf !== null })
 
+  // reason: deterministicConfidence inputs (SA3) — factor scores from the DD
+  // report sections (null = failed factor, counts as non-aligned) and graph
+  // pattern stats from get_graph_patterns (a "profit" outcome aligns with the
+  // proposed side; totalCount 0 → conservative no-history default). Both feed
+  // every consensus evaluation and the final plan; neither ever involves the LLM.
+  const ddFactorScores: FactorScoreInput[] = Object.values(ddReport.sections ?? {}).map((s) => ({
+    score: typeof s?.score === "number" ? s.score : null,
+  }))
+  const ddSignals = Object.values(ddReport.sections ?? {}).flatMap((s) => s?.signals ?? [])
+  const graphPatterns = await queryGraphPatterns(params.asset, ddSignals).catch(() => [])
+  const historicalMatches: HistoricalMatchInput = {
+    alignedCount: graphPatterns.filter((p) => /profit/i.test(p.outcome)).length,
+    totalCount: graphPatterns.length,
+  }
+
   let allReports: PerspectiveReport[] = []
-  let aggregation: PlanningAggregationResult | null = null
+  let aggregation: PlanningAggregationLlmResult | null = null
   const reDeployCounts: Record<string, number> = {}
-  let lastLowConsensus: string[] = []
 
   let outcome: "accepted" | "forced" | "no_trade" | "exhausted" = "exhausted"
   // reason: transparency (2c) — keep the final consensus evaluation around for
@@ -503,31 +692,18 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       break
     }
 
-    // --- PLAN ---
+    // --- PLAN (deterministic) ---
     const planT0 = Date.now()
-    let subagentPlans: PlanningSubagentPlan[]
-    if (iteration === 0) {
-      const planned = await plan({
-        ddReport,
-        targetProfitPercent,
+    // reason: the fixed planner (SA5) always deploys exactly 3 perspectives
+    // with static instruction templates — no LLM PLAN/RE-PLAN call, no empty
+    // fallback. The loop re-runs the same fixed plan on RE-DEPLOY iterations.
+    const subagentPlans: PlanningSubagentPlan[] = buildFixedPerspectives(ddReport).map(
+      (perspectivePlan, i) => ({
+        perspective: perspectivePlan.perspective,
+        instruction: perspectivePlan.instructions,
+        priority: i + 1,
       })
-      subagentPlans = planned.length > 0 ? planned : fallbackPlan(params.asset)
-    } else {
-      const replanned = await rePlan({
-        ddReport,
-        targetProfitPercent,
-        lowConsensusPerspectives: lastLowConsensus,
-        previousReports: allReports.filter((r) => lastLowConsensus.includes(r.perspective)),
-      })
-      subagentPlans =
-        replanned.length > 0
-          ? replanned
-          : lastLowConsensus.map((p) => ({
-              perspective: p as Perspective,
-              instruction: `Re-analyze ${params.asset} from the ${p} perspective with higher scrutiny`,
-              priority: 1,
-            }))
-    }
+    )
     timing.planMs += Date.now() - planT0
 
     // --- EXECUTE ---
@@ -592,24 +768,41 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       aggregation = agg
     } else {
       errors.push(`Aggregation step returned null on iteration ${iteration + 1}`)
-      // reason: keep the previous aggregation as fallback context, but force
-      // profit_feasible false so stale feasibility never satisfies the ACCEPT rules.
-      // (typed intermediate avoids TS2698 on spreading an Omit-intersection
-      // into a `T | null` assignment target)
-      if (aggregation) {
-        const kept: PlanningAggregationResult = { ...aggregation, profit_feasible: false }
-        aggregation = kept
-      }
+      // reason: keep the previous narrative as fallback context; the
+      // enrichment below recomputes confidence/profit_feasible fresh from the
+      // current reports, so stale numbers never leak into the decision.
     }
     timing.aggregateMs += Date.now() - aggT0
+
+    // --- ENRICH (deterministic numbers for this evaluation) ---
+    // reason: the LLM aggregation carries no numbers — confidence and
+    // profit_feasible are computed here from the current reports + DD context
+    // + tool inputs so evaluateConsensus's ACCEPT rules and the L3 feasibility
+    // gate see the deterministic values.
+    const evaluationAggregation: PlanningAggregationResult | null = aggregation
+      ? enrichAggregation({
+          narrative: aggregation,
+          reports: allReports,
+          factorScores: ddFactorScores,
+          historicalMatches,
+          markPrice: prefetchedMarkPrice,
+          atr: prefetchedAtr,
+          equity,
+          thresholds,
+          targetProfitPercent,
+        })
+      : null
 
     // --- EVALUATE (Layer 1) ---
     const evalT0 = Date.now()
     const evaluation = evaluateConsensus(
       allReports,
-      aggregation,
+      evaluationAggregation,
       degradedFactors.length > 0 ? degradedFactors : undefined,
-      weights
+      weights,
+      // reason: SA3 — deterministic side scores (DD context) instead of the
+      // LLM's verbalized per-perspective confidence.
+      { factorScores: ddFactorScores, historicalMatches }
     )
     timing.evaluateMs += Date.now() - evalT0
     latestConsensus = evaluation
@@ -658,7 +851,6 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       finalIterations = iteration + 1
       break
     }
-    lastLowConsensus = evaluation.lowConsensusPerspectives
   }
 
   const totalMs = Date.now() - t0
@@ -674,7 +866,6 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // --- Layer 2 (ACCEPT / forced / exhausted paths) ---
   // reason: NO_TRADE skips the gate — nothing is at risk; a zero-size
   // position would trivially satisfy it anyway, so "auto" is forced.
-  const thresholds = await getRiskThresholds(params.userId).catch(() => envDefaults())
   // reason: confidence penalty (graceful degradation of partial DD, spec
   // §9.x). A report with usable < planned factors discounts the swarm's
   // confidence BEFORE the autonomy gate, so degraded input flows to the human
@@ -685,31 +876,53 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
   // All deployed factors succeeded → 1.0 (no penalty, no fixed 4); penalty
   // applies only when some deployed factors failed (3/4 → 0.75, 2/4 → 0.5).
   const ddConfidenceMultiplier = Math.min(1, usableFactorCount / plannedFactorCount)
-  const finalAggregation = aggregation ?? fallbackAggregation(allReports)
+
+  const finalNarrative = aggregation ?? fallbackAggregation(allReports)
+
   // reason: L3 strong-minority override — when consensus rescued a side from
-  // the no_trade majority (RE-DEPLOY → cap → forced), the LLM aggregation may
-  // still say no_trade. Override its side with the deterministic side and take
-  // max(override.confidence, aggregation confidence) so the forced path
-  // carries the rescued signal instead of killing it. The DD penalty below
-  // still applies to the final confidence (graceful degradation unchanged).
-  const overrideAggregation: PlanningAggregationResult =
+  // the no_trade majority (RE-DEPLOY → cap → forced), the LLM narrative may
+  // still say no_trade. Override its side with the deterministic side and
+  // floor the confidence at the rescued signal's value so the forced path
+  // carries the signal instead of killing it.
+  const override =
     latestConsensus?.overrideRule.applied === true
       ? {
-          ...finalAggregation,
           side: latestConsensus.overrideRule.side,
-          confidence_score: Math.max(
-            latestConsensus.overrideRule.confidence,
-            finalAggregation.confidence_score
-          ),
+          confidenceFloor: latestConsensus.overrideRule.confidence,
         }
-      : finalAggregation
-  const effectiveAggregation: PlanningAggregationResult =
-    ddConfidenceMultiplier < 1
-      ? {
-          ...overrideAggregation,
-          confidence_score: Math.round(overrideAggregation.confidence_score * ddConfidenceMultiplier),
-        }
-      : overrideAggregation
+      : undefined
+
+  // reason: a consensus NO_TRADE wins over the LLM narrative side — a
+  // majority abstention must produce a NO_TRADE plan regardless of what the
+  // aggregator synthesized. (The old code let the LLM side through here.)
+  const narrativeForPlan: PlanningAggregationLlmResult =
+    outcome === "no_trade" && finalNarrative.side !== "no_trade"
+      ? { ...finalNarrative, side: "no_trade" }
+      : finalNarrative
+
+  // reason: single deterministic assembly — confidence (with override floor +
+  // DD penalty), trade numbers (computeTradeNumbers), risk flags
+  // (mergeRiskFlags), profit feasibility (computeProfitFeasibility).
+  const finalAggregation = enrichAggregation({
+    narrative: narrativeForPlan,
+    reports: allReports,
+    factorScores: ddFactorScores,
+    historicalMatches,
+    markPrice: prefetchedMarkPrice,
+    atr: prefetchedAtr,
+    equity,
+    thresholds,
+    targetProfitPercent,
+    ...(override ? { sideOverride: override.side, confidenceFloor: override.confidenceFloor } : {}),
+    ddMultiplier: ddConfidenceMultiplier,
+  })
+
+  // reason: the deterministic confidence result object (never an LLM value)
+  // drives the autonomy gate — score already carries the DD penalty + override.
+  const deterministicResult: DeterministicConfidenceResult = {
+    score: finalAggregation.confidence_score,
+    breakdown: finalAggregation.confidence_breakdown,
+  }
   // reason: scaled profit target deviates from the user's explicit instruction
   // — the plan MUST go through human approval regardless of the confidence
   // gate (Option B: fallback ATR target + approval).
@@ -719,14 +932,14 @@ export async function runPlanningAgent(params: PlanningAgentInput): Promise<Plan
       : targetProfitScaled
         ? "approve"
         : autonomyGate(
-            effectiveAggregation.confidence_score,
-            effectiveAggregation.position_size_usdc,
+            deterministicResult,
+            finalAggregation.position_size_usdc,
             thresholds
           )
 
   const tradePlan = await buildTradePlan({
     asset: params.asset,
-    aggregation: effectiveAggregation,
+    aggregation: finalAggregation,
     equity,
     thresholds,
     autonomyDecision,

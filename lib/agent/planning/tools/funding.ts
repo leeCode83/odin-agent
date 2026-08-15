@@ -12,6 +12,7 @@
 import { z } from "zod"
 import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 import { createHLClient, fetchOnchainData, fetchMarkPrice, fetchCandles } from "@/lib/data/hyperliquid"
+import { RiskFlag } from "@/lib/agent/shared/risk-flags"
 import { withTimeout } from "@/lib/utils"
 
 /**
@@ -123,6 +124,10 @@ export function buildFundingTools(_ctx: FundingToolContext): ToolDefinition[] {
                 ? "overheated_long"
                 : "overheated_short"
               : "normal"
+          // reason: structured enum flag for the overheated rule (P4 SA2) —
+          // one flag, either direction; free-text narrative stays in notes.
+          const risk_flags: RiskFlag[] =
+            regime === "normal" ? [] : [RiskFlag.funding_overheated]
           return {
             success: true,
             data: {
@@ -131,6 +136,7 @@ export function buildFundingTools(_ctx: FundingToolContext): ToolDefinition[] {
               openInterest: onchain.openInterest,
               markPrice,
               predictedFunding,
+              risk_flags,
               notes: "approx — HL funding snapshot; predicted funding from HL HlPerp venue when available",
             },
             metadata: { source: "hyperliquid", latencyMs: Date.now() - start },
@@ -194,6 +200,9 @@ export function buildFundingTools(_ctx: FundingToolContext): ToolDefinition[] {
             signal = "bearish"
           }
 
+          // reason: structured enum flag when divergence is real (P4 SA2) —
+          // the overextended-neutral branch (oiUp) deliberately emits none.
+          const risk_flags: RiskFlag[] = divergence ? [RiskFlag.oi_divergence] : []
           return {
             success: true,
             data: {
@@ -202,6 +211,7 @@ export function buildFundingTools(_ctx: FundingToolContext): ToolDefinition[] {
               oiChangePct: Math.round(oiChangePct * 100) / 100,
               fundingRate: onchain.fundingRate,
               signal,
+              risk_flags,
               notes:
                 "approximation — HL exposes no OI history; oiChangePct is a 24h-volume/OI turnover proxy, not a real OI change",
             },

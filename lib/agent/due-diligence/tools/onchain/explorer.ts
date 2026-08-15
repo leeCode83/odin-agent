@@ -1,6 +1,34 @@
 import { z } from "zod"
 import type { ToolDefinition } from "../types"
 
+/**
+ * @constant ExchangeFlowDataSchema
+ * @description Structured get_exchange_flow output consumed by deterministic scoring:
+ *   netflow sign (positive = exchange inflow = sell pressure) drives the score.
+ */
+export const ExchangeFlowDataSchema = z.object({
+  asset: z.string(),
+  inflow: z.number(),
+  outflow: z.number(),
+  netflow: z.number(),
+})
+
+/** @typedef {z.infer<typeof ExchangeFlowDataSchema>} ExchangeFlowData */
+export type ExchangeFlowData = z.infer<typeof ExchangeFlowDataSchema>
+
+/**
+ * @constant WhaleTxnsDataSchema
+ * @description Structured get_whale_txns output consumed by deterministic scoring
+ *   (transaction count drives the weak activity signal).
+ */
+export const WhaleTxnsDataSchema = z.object({
+  asset: z.string(),
+  transactions: z.array(z.object({ hash: z.string(), value: z.number() })),
+})
+
+/** @typedef {z.infer<typeof WhaleTxnsDataSchema>} WhaleTxnsData */
+export type WhaleTxnsData = z.infer<typeof WhaleTxnsDataSchema>
+
 export function getWhaleTxnsTool(): ToolDefinition {
   return {
     name: "get_whale_txns",

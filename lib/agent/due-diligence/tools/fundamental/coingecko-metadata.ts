@@ -36,6 +36,53 @@ const coingeckoIdParam = z.object({
   coingeckoId: z.string().describe("CoinGecko asset ID (e.g. 'bitcoin', 'ethereum')"),
 })
 
+/**
+ * @constant TokenomicsDataSchema
+ * @description Structured get_tokenomics output consumed by deterministic scoring:
+ *   total/max supply ratio drives the unlock-risk signal.
+ */
+export const TokenomicsDataSchema = z.object({
+  circulatingSupply: z.number().nullable(),
+  totalSupply: z.number().nullable(),
+  maxSupply: z.number().nullable(),
+  unlockEvents: z.array(z.object({ date: z.string(), amount: z.number(), source: z.string().optional() })),
+})
+
+/** @typedef {z.infer<typeof TokenomicsDataSchema>} TokenomicsData */
+export type TokenomicsData = z.infer<typeof TokenomicsDataSchema>
+
+/**
+ * @constant AthDataSchema
+ * @description Structured get_ath output consumed by deterministic scoring:
+ *   athChangePercent (drawdown from ATH) drives the discount/froth signal.
+ */
+export const AthDataSchema = z.object({
+  athUsd: z.number().nullable(),
+  athChangePercent: z.number().nullable(),
+  athDate: z.string().nullable(),
+})
+
+/** @typedef {z.infer<typeof AthDataSchema>} AthData */
+export type AthData = z.infer<typeof AthDataSchema>
+
+/**
+ * @constant DevActivityDataSchema
+ * @description Structured get_developer_activity output consumed by deterministic
+ *   scoring: commitCount4Weeks drives the development-activity signal.
+ */
+export const DevActivityDataSchema = z.object({
+  forks: z.number().nullable(),
+  stars: z.number().nullable(),
+  subscribers: z.number().nullable(),
+  totalIssues: z.number().nullable(),
+  closedIssues: z.number().nullable(),
+  pullRequestsMerged: z.number().nullable(),
+  commitCount4Weeks: z.number().nullable(),
+})
+
+/** @typedef {z.infer<typeof DevActivityDataSchema>} DevActivityData */
+export type DevActivityData = z.infer<typeof DevActivityDataSchema>
+
 export const coingeckoMetadataTools: ToolDefinition[] = [
   {
     name: "get_coin_metadata",

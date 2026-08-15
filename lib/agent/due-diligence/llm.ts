@@ -52,7 +52,7 @@ export async function think(
   options?: ThinkOptions
 ): Promise<ThinkResult> {
   const c = getClient()
-  if (!c) return { action: "return", score: null, confidence: null, signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
+  if (!c) return { action: "return", signals: [], reasoning: "LLM unavailable", conclusion: "LLM client not configured" }
 
   // reason: the user message always carries {"factor": "...", ...} — extract it
   // so failure logs identify which subagent the LLM call belonged to.
@@ -63,10 +63,9 @@ export async function think(
     if (parsed && typeof parsed.factor === "string") factor = parsed.factor
   } catch { /* non-JSON user message — keep "unknown" */ }
 
-  // reason: score/confidence must be null, not 0 — a fake 0 looks like a valid
-  // bearish analysis and pollutes overallScore/overallConfidence downstream
-  // (evaluate.ts filters on score !== null to count usable factors).
-  const fallback = { action: "return" as const, score: null, confidence: null, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
+  // reason: numeric scores are never LLM output (deterministic scoring computes
+  // them from the tool ledger), so the fallback carries narrative only.
+  const fallback = { action: "return" as const, signals: [], reasoning: "LLM call failed", conclusion: "THINK step failed after retry" }
 
   // reason: DeepSeek json_object mode only guarantees valid JSON when the prompt
   // explicitly demands it — append the instruction to the user message (new array,

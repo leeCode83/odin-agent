@@ -2,9 +2,7 @@ import { describe, it, expect } from "vitest"
 import { z } from "zod"
 import {
   makePlanningSystemPrompt,
-  PLAN_PROMPT,
   AGGREGATE_PROMPT,
-  REPLAN_PROMPT,
   buildDDFactorContext,
 } from "@/lib/agent/planning/prompts"
 import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
@@ -58,28 +56,25 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain("Use at least 2 tools before returning")
   })
 
-  it("binds entry_price to get_mark_price with no-trade fallback", () => {
+  it("forbids the LLM from outputting trading numbers (risk-engine owns them)", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
-    expect(prompt).toContain('"entry_price" MUST come from calling "get_mark_price"')
-    expect(prompt).toContain("never guessed")
+    expect(prompt).toContain("never output entry_price")
+    expect(prompt).toContain("stop_loss / take_profit / position_size / leverage / score / confidence")
+    expect(prompt).toContain("computed deterministically by the risk-engine tools")
   })
 
-  it("binds SL/TP to compute_sltp fed by compute_atr", () => {
-    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("balance", tools, "Validate")
-    expect(prompt).toContain('"suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp"')
-    expect(prompt).toContain('"compute_atr"')
-  })
-
-  it("binds position size to compute_position_size", () => {
-    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("aggressive", tools, "Validate")
-    expect(prompt).toContain('"suggested_position_size_usdc" MUST come from calling "compute_position_size"')
+  it("binds the levels to get_mark_price / compute_sltp / compute_position_size", () => {
+    const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
+    expect(prompt).toContain("The actual levels come from calling")
+    expect(prompt).toContain("get_mark_price")
+    expect(prompt).toContain("compute_sltp")
+    expect(prompt).toContain("compute_position_size")
   })
 
   it("returns no_trade only after fallback instead of inventing numbers when a required tool fails", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
     expect(prompt).toContain('If a required tool\'s result is unavailable or failed, try a reasonable fallback')
     expect(prompt).toContain('return "side": "no_trade" only when data is genuinely unavailable after fallback')
-    expect(prompt).toContain("instead of inventing numbers")
   })
 
   it("replaces the unconditional no_trade escape hatch with a graduated failure policy", () => {
@@ -102,25 +97,29 @@ describe("makePlanningSystemPrompt", () => {
     expect(prompt).toContain("PARTIAL_DATA")
   })
 
-  it("carries the required-tools hard rules for all 3 perspectives", () => {
+  it("carries the never-output-numbers hard rules for all 3 perspectives", () => {
     for (const perspective of ["conservative", "balance", "aggressive"] as const) {
       const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })(perspective, tools, "Validate")
-      expect(prompt).toContain('"entry_price" MUST come from calling "get_mark_price"')
-      expect(prompt).toContain('"suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp"')
-      expect(prompt).toContain('"suggested_position_size_usdc" MUST come from calling "compute_position_size"')
+      expect(prompt).toContain("never output entry_price")
+      expect(prompt).toContain("The actual levels come from calling")
     }
   })
 
-  it("describes the return format with planning fields (no leverage — risk engine owns it)", () => {
+  it("describes the return format with narrative fields only (no numbers, no leverage)", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
     expect(prompt).toContain('set "action" to "return"')
     expect(prompt).toContain('"side": "long" | "short" | "no_trade"')
-    expect(prompt).toContain('"entry_price"')
-    expect(prompt).toContain('"suggested_stop_loss"')
-    expect(prompt).toContain('"suggested_take_profit"')
+    expect(prompt).toContain('"signals"')
+    expect(prompt).toContain('"conclusion"')
+    expect(prompt).toContain('"risk_flags_text"')
+    // reason: money numbers and scores are never part of the LLM output schema.
+    expect(prompt).not.toContain('"entry_price"')
+    expect(prompt).not.toContain('"suggested_stop_loss"')
+    expect(prompt).not.toContain('"suggested_take_profit"')
+    expect(prompt).not.toContain('"suggested_position_size_usdc"')
     expect(prompt).not.toContain('"suggested_leverage"')
-    expect(prompt).toContain('"suggested_position_size_usdc"')
-    expect(prompt).toContain('"risk_flags"')
+    expect(prompt).not.toContain('"score"')
+    expect(prompt).not.toContain('"confidence"')
   })
 
   it("describes the tool_call return format", () => {
@@ -139,7 +138,7 @@ describe("makePlanningSystemPrompt", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
     expect(prompt).toContain('"reasoning": "...", // ALWAYS REQUIRED')
     expect(prompt).toContain('Think step by step in the reasoning field before deciding on an action.')
-    expect(prompt).toContain('Do NOT invent price levels.')
+    expect(prompt).toContain("Do NOT invent price levels")
   })
 
   it("appends the degraded-DD note when degradedFactors provided", () => {
@@ -166,31 +165,6 @@ describe("makePlanningSystemPrompt", () => {
     const prompt = makePlanningSystemPrompt({ targetProfitPercent: 100 })("conservative", tools, "Validate")
 
     expect(prompt).not.toContain("Note: DD analysis incomplete")
-  })
-})
-
-describe("PLAN_PROMPT", () => {
-  it("describes orchestrating 3 perspectives with instructions and priorities", () => {
-    expect(PLAN_PROMPT).toContain("conservative")
-    expect(PLAN_PROMPT).toContain("balance")
-    expect(PLAN_PROMPT).toContain("aggressive")
-    expect(PLAN_PROMPT).toContain("instruction")
-    expect(PLAN_PROMPT).toContain("priority")
-    expect(PLAN_PROMPT).toContain("DDReport")
-  })
-
-  it("returns a JSON object with a subagents array", () => {
-    expect(PLAN_PROMPT).toContain("subagents")
-  })
-
-  it("includes few-shot examples for perspectives", () => {
-    expect(PLAN_PROMPT).toContain("Example for conservative (bullish):")
-    expect(PLAN_PROMPT).toContain("Example for aggressive (bullish):")
-  })
-
-  it("no longer hardcodes the factor list", () => {
-    expect(PLAN_PROMPT).not.toContain("4 factors")
-    expect(PLAN_PROMPT).not.toContain("technical, onchain, sentiment, fundamental")
   })
 })
 
@@ -321,23 +295,21 @@ describe("AGGREGATE_PROMPT", () => {
     expect(AGGREGATE_PROMPT).not.toContain("consider overriding")
   })
 
-  it("includes profit_feasible and no_trade_reason fields", () => {
-    expect(AGGREGATE_PROMPT).toContain("profit_feasible")
+  it("keeps narrative fields but excludes money numbers (computed deterministically)", () => {
     expect(AGGREGATE_PROMPT).toContain("no_trade_reason")
+    expect(AGGREGATE_PROMPT).toContain("risk_flags_text")
+    // reason: prices/size/confidence are never LLM output — the prompt forbids
+    // them explicitly and its return schema omits them.
+    expect(AGGREGATE_PROMPT).toMatch(/must NEVER output them/i)
+    expect(AGGREGATE_PROMPT).not.toMatch(/- confidence_score:/)
+    expect(AGGREGATE_PROMPT).not.toMatch(/- profit_feasible:/)
+    expect(AGGREGATE_PROMPT).not.toMatch(/- entry_price:/)
+    expect(AGGREGATE_PROMPT).toMatch(/computed deterministically by the risk engine/i)
   })
 
   it("includes consensus and contradiction fields", () => {
     expect(AGGREGATE_PROMPT).toContain("consensus_alignment")
     expect(AGGREGATE_PROMPT).toContain("contradictions")
-  })
-
-  it("includes final plan parameters (no leverage — risk engine computes it deterministically)", () => {
-    expect(AGGREGATE_PROMPT).toContain("entry_price")
-    expect(AGGREGATE_PROMPT).toContain("stop_loss")
-    expect(AGGREGATE_PROMPT).toContain("take_profit")
-    expect(AGGREGATE_PROMPT).toContain("position_size_usdc")
-    expect(AGGREGATE_PROMPT).not.toContain("leverage_suggested")
-    expect(AGGREGATE_PROMPT).toMatch(/deterministically by the risk engine/i)
   })
 
   it("includes CoT instructions and negative constraints", () => {
@@ -346,36 +318,11 @@ describe("AGGREGATE_PROMPT", () => {
   })
 })
 
-describe("REPLAN_PROMPT", () => {
-  it("targets low-consensus perspectives with past reports", () => {
-    expect(REPLAN_PROMPT).toMatch(/low-consensus|low consensus/i)
-    expect(REPLAN_PROMPT).toMatch(/previous reports|past reports/i)
-  })
-
-  it("asks for targeted new instructions with priorities", () => {
-    expect(REPLAN_PROMPT).toContain("instruction")
-    expect(REPLAN_PROMPT).toContain("priority")
-    expect(REPLAN_PROMPT).toContain("perspective")
-  })
-
-  it("includes specific instruction for tool and example", () => {
-    expect(REPLAN_PROMPT).toContain("Specify which tool the perspective must call first")
-    expect(REPLAN_PROMPT).toContain("Example instruction:")
-  })
-})
-
 describe("orchestrator prompts — DeepSeek json_object requirement", () => {
   // reason: DeepSeek rejects response_format json_object with HTTP 400 unless
-  // the prompt mentions the word "json" somewhere. PLAN/REPLAN/AGGREGATE all
-  // use json_object, so every prompt must carry the keyword.
-  it("PLAN_PROMPT contains the JSON keyword", () => {
-    expect(PLAN_PROMPT).toMatch(/\bJSON\b/i)
-  })
-
-  it("REPLAN_PROMPT contains the JSON keyword", () => {
-    expect(REPLAN_PROMPT).toMatch(/\bJSON\b/i)
-  })
-
+  // the prompt mentions the word "json" somewhere. AGGREGATE uses json_object,
+  // so it must carry the keyword. (The PLAN/RE-PLAN prompts are gone — that
+  // step is deterministic now.)
   it("AGGREGATE_PROMPT contains the JSON keyword", () => {
     expect(AGGREGATE_PROMPT).toMatch(/\bJSON\b/i)
   })

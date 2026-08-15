@@ -17,7 +17,9 @@ import type {
   PlanningAggregationResult,
 } from "@/lib/agent/planning/types"
 import { computeAgreementBoostedScores } from "@/lib/agent/planning/consensus/scoring"
+import type { DeterministicScoringContext } from "@/lib/agent/planning/consensus/scoring"
 import { evaluateOverride } from "@/lib/agent/planning/consensus/override"
+import { RiskFlag } from "@/lib/agent/shared/risk-flags"
 
 /**
  * @constant UNIFORM_WEIGHTS
@@ -37,15 +39,8 @@ const UNIFORM_WEIGHTS: PerspectiveWeights = {
 const NO_TRADE_MAJORITY = 2
 
 /**
- * @constant FUNDING_FLAG_KEYWORD
- * @description Lowercase substring that marks a risk flag as funding-related
- * (spec §8.1 row 6 — funding regime overheated).
- */
-const FUNDING_FLAG_KEYWORD = "funding"
-
-/**
  * @constant FUNDING_FLAG_MAJORITY
- * @description Minimum reports flagging funding for NO_TRADE.
+ * @description Minimum reports emitting the funding_overheated enum flag for NO_TRADE.
  */
 const FUNDING_FLAG_MAJORITY = 2
 
@@ -81,20 +76,6 @@ const NO_TRADE_LOW_AVG_CONFIDENCE = 40
  * no-trade verdict (all individually below this threshold).
  */
 const NO_TRADE_MAX_CONFIDENCE = 50
-
-/**
- * @function flagReportsFunding
- * @description Counts reports whose joined-lowercase risk_flags mention funding.
- * // reason: joined-lowercase keeps the check case-insensitive and robust to
- * // flag phrasing ("Funding rate extreme", "funding_overheat", ...).
- * @param {PerspectiveReport[]} reports - The perspective reports.
- * @returns {number} Count of reports flagging funding.
- */
-function flagReportsFunding(reports: PerspectiveReport[]): number {
-  return reports.filter((r) =>
-    r.risk_flags.join(" ").toLowerCase().includes(FUNDING_FLAG_KEYWORD)
-  ).length
-}
 
 /**
  * @function sideCounts
@@ -206,11 +187,9 @@ function buildPerspectiveBreakdown(
     // confidence, fall back to score, floor at 0.
     confidence: r.confidence ?? r.score ?? 0,
     reason: r.reasoning,
-    // reason: same per-report keyword check as flagReportsFunding.
-    fundingFlag: r.risk_flags
-      .join(" ")
-      .toLowerCase()
-      .includes(FUNDING_FLAG_KEYWORD),
+    // reason: structured enum membership only — LLM free-text prose is
+    // narrative and never gates (P4 SA2).
+    fundingFlag: r.risk_flags.some((f) => f === RiskFlag.funding_overheated),
     toolsFailed: r.errors,
     // reason: a perspective counts as degraded when the run is degraded or
     // its own score is missing (its verdict lacks data support).
@@ -226,7 +205,7 @@ function buildPerspectiveBreakdown(
  *   1. All reports failed (score === null) → FAILED
  *   2. ≥2 reports no_trade → NO_TRADE / RE-DEPLOY from computeNoTradeDecision
  *      (strong minority or mixed conviction re-deploys instead)
- *   3. ≥2 reports flag funding in risk_flags → NO_TRADE (overheating)
+ *   3. ≥2 reports emit the funding_overheated enum flag → NO_TRADE (overheating)
  *   4. All reports same side + aggregation.confidence_score ≥ 60 +
  *      profit_feasible → ACCEPT
  *   5. Exactly 2/3 same side + aggregation.confidence_score ≥ 50 → ACCEPT
@@ -250,13 +229,18 @@ function buildPerspectiveBreakdown(
  *   (score null or missing). Omit when DD was complete.
  * @param {PerspectiveWeights} [weights] - Per-perspective weights for the
  *   weighted scoring layer (L1). Defaults to uniform (cold-start).
+ * @param {DeterministicScoringContext} [deterministic] - DD-level context
+ *   (factor scores + graph-memory pattern stats) that switches per-report
+ *   confidence in the L2 side scores to deterministic computation (SA3).
+ *   Absent → legacy confidence ?? score ?? 0 fallback.
  * @returns {ConsensusResult} The evaluation outcome.
  */
 export function evaluateConsensus(
   reports: PerspectiveReport[],
   aggregation: PlanningAggregationResult | null,
   degradedFactors?: string[],
-  weights: PerspectiveWeights = UNIFORM_WEIGHTS
+  weights: PerspectiveWeights = UNIFORM_WEIGHTS,
+  deterministic?: DeterministicScoringContext
 ): ConsensusResult {
   const contradictions = aggregation?.contradictions ?? []
   const degraded = degradedFactors !== undefined && degradedFactors.length > 0
@@ -268,8 +252,9 @@ export function evaluateConsensus(
   const breakdown = buildPerspectiveBreakdown(reports, degraded)
   // reason: L2 — weighted side scores (weight × confidence per side, boosted
   // by cross-perspective numerical agreement). Single source consumed by the
-  // L3 override below and surfaced on every result for transparency.
-  const sideScores = computeAgreementBoostedScores(reports, weights)
+  // L3 override below and surfaced on every result for transparency. When DD
+  // context is provided, per-report confidence is computed deterministically.
+  const sideScores = computeAgreementBoostedScores(reports, weights, deterministic)
   // reason: confidence falls back to score; nulls are dropped so the
   // decision only counts confidences that actually exist (1-3 elements).
   const confidences = reports
@@ -395,8 +380,10 @@ export function evaluateConsensus(
     }
   }
 
-  // Rule 3 — ≥2 reports flag funding (overheating)
-  const fundingFlagCount = flagReportsFunding(reports)
+  // Rule 3 — ≥2 reports emit the funding_overheated enum flag (overheating)
+  const fundingFlagCount = reports.filter((r) =>
+    r.risk_flags.some((f) => f === RiskFlag.funding_overheated)
+  ).length
   if (fundingFlagCount >= FUNDING_FLAG_MAJORITY) {
     return {
       decision: "NO_TRADE",

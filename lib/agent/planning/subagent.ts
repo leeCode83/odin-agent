@@ -3,8 +3,10 @@
  * @description Thin wrapper around the DD `runSubagent()` ReAct loop for the
  *   planning swarm's perspective subagents. No new loop code — this file only
  *   wires the planning-specific LLM think function, system prompt, and the
- *   stash-and-merge of planning fields (side, entry_price, suggested_*,
- *   risk_flags) that `FactorReport` does not carry.
+ *   stash-and-merge of planning fields (`side`, `risk_flags_text`). Trading
+ *   numbers (entry/SL/TP/size) come from the deterministic tool results
+ *   enforced by the verifier, and risk_flags come from structured tool data —
+ *   never from the LLM.
  * @module planning
  * @layer service
  */
@@ -12,13 +14,15 @@
 import type { DDReport } from "@/lib/agent/types"
 import type { ToolRegistry } from "@/lib/agent/due-diligence/tools/types"
 import type { Perspective, PerspectiveReport } from "@/lib/agent/planning/types"
-import type { SubAgentThought, LlmThinkMessage, ThinkOptions, ThinkResult } from "@/lib/agent/due-diligence/subagent"
+import type { SubAgentThought, LlmThinkMessage, ThinkOptions, ThinkResult, HistoryEntry } from "@/lib/agent/due-diligence/subagent"
 import { runSubagent } from "@/lib/agent/due-diligence/subagent"
 import { think } from "@/lib/agent/due-diligence/llm"
 import { makePlanningSystemPrompt, buildDDFactorContext } from "@/lib/agent/planning/prompts"
 import { verifyReportAgainstTools } from "@/lib/agent/planning/verifier"
 import { compactDDReport } from "@/lib/agent/planning/utils"
 import { extractDegradedFactors } from "@/lib/agent/shared/dd-utils"
+import { mergeRiskFlags } from "@/lib/agent/shared/risk-flags"
+import type { RiskFlag } from "@/lib/agent/shared/risk-flags"
 
 /**
  * @constant TOOL_PRIORITY
@@ -95,6 +99,30 @@ export function orderToolsByPriority(tools: string[], perspective: Perspective):
 }
 
 /**
+ * @function toolRiskFlags
+ * @description Extracts structured risk flags from the tool ledger: every
+ *   SUCCESSFUL tool result whose payload carries a `data.risk_flags` array (the
+ *   funding/liquidation tools emit enum flags this way). Non-enum entries and
+ *   free-text prose are dropped by mergeRiskFlags — only deterministic enum
+ *   values survive, so downstream gating (evaluateConsensus Rule 3) never sees
+ *   LLM prose (P4 SA2). Failed tool calls contribute nothing.
+ * @param {HistoryEntry[]} history - ReAct loop tool ledger from runSubagent.
+ * @returns {RiskFlag[]} Deduplicated structured flags in first-seen order.
+ */
+function toolRiskFlags(history: HistoryEntry[]): RiskFlag[] {
+  const groups: Array<ReadonlyArray<unknown>> = []
+  for (const entry of history) {
+    if (!entry.result.success) continue
+    const data = entry.result.data
+    if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+      const flags = (data as Record<string, unknown>).risk_flags
+      if (Array.isArray(flags)) groups.push(flags)
+    }
+  }
+  return mergeRiskFlags(groups)
+}
+
+/**
  * @function runPerspectiveSubagent
  * @description Runs one planning perspective subagent (conservative/balance/aggressive)
  *   through the DD ReAct loop.
@@ -102,17 +130,19 @@ export function orderToolsByPriority(tools: string[], perspective: Perspective):
  *   Wiring:
  *   - `llmThink`: closure over `ddReport` — appends the serialized DDReport to the
  *     context messages, calls DD `think()`, and stashes any `return` thought so its
- *     planning fields survive zod's stripping. Returns the thought to `runSubagent`
- *     unchanged.
+ *     planning fields (side, risk_flags_text) survive zod's stripping. Returns the
+ *     thought to `runSubagent` unchanged.
  *   - `getSystemPrompt`: `makePlanningSystemPrompt({ targetProfitPercent })` composed
  *     with (perspective, tools, instruction). When the DD report is partial
  *     (some factorReports have score null/missing), the failed factor names are
  *     passed in so the prompt carries the degraded-DD note (F3).
  *   - The `FactorReport` returned by `runSubagent` is merged with the stashed
- *     planning fields; missing extras fall back to defaults (`no_trade`, 0, []).
+ *     planning fields; score/confidence are deterministic (computed by runSubagent
+ *     from the tool ledger), risk_flags come from structured tool data, and the
+ *     trading numbers default to 0.
  *   - The merged report then passes through `verifyReportAgainstTools` (T13):
  *     the tool ledger (`factor.toolHistory`) hard-enforces entry price from
- *     `get_mark_price` and overrides SL/TP/size from the risk-engine tools.
+ *     `get_mark_price` and SL/TP/size from the risk-engine tools.
  * @param {Object} params - Perspective subagent configuration.
  * @param {Perspective} params.perspective - The perspective to emulate.
  * @param {string} params.instruction - Orchestrator instruction scoping the analysis.
@@ -136,8 +166,9 @@ export async function runPerspectiveSubagent(params: {
   // data-starved NO_TRADE as real market conviction.
   const degradedFactors = extractDegradedFactors(params.ddReport.factorReports ?? [])
   // reason: zod strips unknown keys in SubAgentThoughtSchema — the only way the
-  // wrapper can see side/entry_price/suggested_*/risk_flags is to stash the parsed
-  // return thought here before runSubagent discards it.
+  // wrapper can see side/risk_flags_text is to stash the parsed return thought
+  // here before runSubagent discards it. Numbers are NOT stashed: they are
+  // neither in the schema nor trusted from the LLM.
   let stash: Extract<SubAgentThought, { action: "return" }> | undefined
 
   const llmThink = async (
@@ -189,25 +220,32 @@ export async function runPerspectiveSubagent(params: {
 
   const merged: PerspectiveReport = {
     perspective: params.perspective,
+    // reason: score/confidence are already deterministic — runSubagent computes
+    // the score from the tool ledger (deterministicFactorScore) and confidence
+    // from execution signals; the LLM's self-assessed numbers never reach here.
     score: report.score,
     confidence: report.confidence,
     side: stash?.side ?? "no_trade",
-    entry_price: stash?.entry_price ?? 0,
+    entry_price: 0,
     signals: report.signals,
     dataSources: report.dataSources,
     reasoning: report.reasoning,
     iterations: report.iterations,
     conclusion: report.conclusion,
     errors: report.errors,
-    suggested_stop_loss: stash?.suggested_stop_loss ?? 0,
-    suggested_take_profit: stash?.suggested_take_profit ?? 0,
-    suggested_position_size_usdc: stash?.suggested_position_size_usdc ?? 0,
-    risk_flags: stash?.risk_flags ?? [],
+    suggested_stop_loss: 0,
+    suggested_take_profit: 0,
+    suggested_position_size_usdc: 0,
+    // reason: structured enum flags come from the deterministic tool data, not
+    // the LLM — mergeRiskFlags drops non-enum prose. The LLM's free-text risk
+    // narrative rides along in risk_flags_text (informational only).
+    risk_flags: toolRiskFlags(report.toolHistory ?? []),
+    risk_flags_text: stash?.risk_flags_text ?? "",
   }
 
-  // reason: T13 hard-enforcement — the LLM's trading numbers are reconciled
-  // against the actual tool results (entry must come from get_mark_price, SL/TP
-  // and size from the risk-engine tools). runSubagent surfaces the ledger via
+  // reason: T13 hard-enforcement — the trading numbers are reconciled against
+  // the actual tool results (entry must come from get_mark_price, SL/TP and
+  // size from the risk-engine tools). runSubagent surfaces the ledger via
   // factor.toolHistory; undefined (score-null force returns) degrades to [].
   return verifyReportAgainstTools(merged, report.toolHistory ?? [])
 }

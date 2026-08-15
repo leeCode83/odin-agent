@@ -37,6 +37,114 @@ function fail(error: string, start: number): ToolResult {
 const timeframeEnum = z.enum(["1h", "15m", "1d"])
 
 /**
+ * @constant RsiDataSchema
+ * @description Structured get_rsi output: full value series plus the latest value
+ *   (deterministic scoring consumes `latest`). Keeps the raw series for LLM context.
+ */
+export const RsiDataSchema = z.object({
+  values: z.array(z.number()),
+  latest: z.number().nullable(),
+})
+
+/** @typedef {z.infer<typeof RsiDataSchema>} RsiData */
+export type RsiData = z.infer<typeof RsiDataSchema>
+
+/**
+ * @constant MacdPointSchema
+ * @description One MACD output bar. Fields optional/nullable to absorb library variance.
+ */
+export const MacdPointSchema = z.object({
+  MACD: z.number().nullable().optional(),
+  signal: z.number().nullable().optional(),
+  histogram: z.number().nullable().optional(),
+})
+
+/**
+ * @constant MacdDataSchema
+ * @description Structured get_macd output: series plus latest point.
+ */
+export const MacdDataSchema = z.object({
+  values: z.array(MacdPointSchema),
+  latest: MacdPointSchema.nullable(),
+})
+
+/** @typedef {z.infer<typeof MacdDataSchema>} MacdData */
+export type MacdData = z.infer<typeof MacdDataSchema>
+
+/**
+ * @constant BbPointSchema
+ * @description One Bollinger band triple.
+ */
+export const BbPointSchema = z.object({
+  upper: z.number(),
+  middle: z.number(),
+  lower: z.number(),
+})
+
+/**
+ * @constant BbDataSchema
+ * @description Structured get_bb output: series, latest band, and last close
+ *   (scoring computes %B from latestClose against the latest band).
+ */
+export const BbDataSchema = z.object({
+  values: z.array(BbPointSchema),
+  latest: BbPointSchema.nullable(),
+  latestClose: z.number().nullable(),
+})
+
+/** @typedef {z.infer<typeof BbDataSchema>} BbData */
+export type BbData = z.infer<typeof BbDataSchema>
+
+/**
+ * @constant StochPointSchema
+ * @description One Stochastic %K/%D pair.
+ */
+export const StochPointSchema = z.object({
+  k: z.number(),
+  d: z.number(),
+})
+
+/**
+ * @constant StochDataSchema
+ * @description Structured get_stoch output: series plus latest %K/%D.
+ */
+export const StochDataSchema = z.object({
+  values: z.array(StochPointSchema),
+  latest: StochPointSchema.nullable(),
+})
+
+/** @typedef {z.infer<typeof StochDataSchema>} StochData */
+export type StochData = z.infer<typeof StochDataSchema>
+
+/**
+ * @constant VolumeDataSchema
+ * @description Structured get_volume output used by deterministic scoring.
+ */
+export const VolumeDataSchema = z.object({
+  avgVolume: z.number(),
+  currentVolume: z.number(),
+  volumeRatio: z.number(),
+  trend: z.enum(["increasing", "decreasing", "neutral"]),
+})
+
+/** @typedef {z.infer<typeof VolumeDataSchema>} VolumeData */
+export type VolumeData = z.infer<typeof VolumeDataSchema>
+
+/**
+ * @constant DivergenceDataSchema
+ * @description Structured get_divergence output used by deterministic scoring.
+ */
+export const DivergenceDataSchema = z.object({
+  regularBearish: z.boolean(),
+  regularBullish: z.boolean(),
+  hiddenBearish: z.boolean(),
+  hiddenBullish: z.boolean(),
+})
+
+/** @typedef {z.infer<typeof DivergenceDataSchema>} DivergenceData */
+export type DivergenceData = z.infer<typeof DivergenceDataSchema>
+
+/**
  * @function buildIndicators
  * @description Creates an array of 13 ToolDefinitions that read from a shared CandleMap.
  * @param {CandleMap} candleMap - Pre-fetched candle data keyed by timeframe.
@@ -71,7 +179,8 @@ function createRsiTool(candleMap: CandleMap): ToolDefinition {
       if (candles.length < params.period + 1) return fail(`Not enough candles for period ${params.period}`, start)
       const closes = candles.map((c) => c.close)
       const values = RSI.calculate({ period: params.period, values: closes })
-      return ok(values, start)
+      const latest = values.length > 0 ? values[values.length - 1] : null
+      return ok({ values, latest }, start)
     },
   }
 }
@@ -99,7 +208,11 @@ function createMacdTool(candleMap: CandleMap): ToolDefinition {
         SimpleMAOscillator: false,
         SimpleMASignal: false,
       })
-      return ok(values, start)
+      const last = values[values.length - 1]
+      const latest = last
+        ? { MACD: last.MACD ?? null, signal: last.signal ?? null, histogram: last.histogram ?? null }
+        : null
+      return ok({ values, latest }, start)
     },
   }
 }
@@ -151,7 +264,10 @@ function createBbTool(candleMap: CandleMap): ToolDefinition {
       if (candles.length < params.period + 1) return fail(`Not enough candles for period ${params.period}`, start)
       const closes = candles.map((c) => c.close)
       const values = BollingerBands.calculate({ period: params.period, stdDev: params.stddev, values: closes })
-      return ok(values, start)
+      const last = values[values.length - 1]
+      const latest = last ? { upper: last.upper, middle: last.middle, lower: last.lower } : null
+      const latestClose = candles.length > 0 ? candles[candles.length - 1].close : null
+      return ok({ values, latest, latestClose }, start)
     },
   }
 }
@@ -191,7 +307,9 @@ function createStochTool(candleMap: CandleMap): ToolDefinition {
       const lows = candles.map((c) => c.low)
       const closes = candles.map((c) => c.close)
       const values = Stochastic.calculate({ high: highs, low: lows, close: closes, period: params.k, signalPeriod: params.d })
-      return ok(values, start)
+      const last = values[values.length - 1]
+      const latest = last ? { k: last.k, d: last.d } : null
+      return ok({ values, latest }, start)
     },
   }
 }

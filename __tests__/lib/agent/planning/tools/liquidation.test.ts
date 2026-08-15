@@ -69,6 +69,7 @@ describe("check_liquidation_zones", () => {
     const result = await tools().check_liquidation_zones.execute({ asset: "ETH", entryPrice: 70250, stopLoss: 69900 })
     expect(result.success).toBe(true)
     expect(result.data.warning).toBe(true)
+    expect(result.data.risk_flags).toEqual(["liquidation_zone_proximity"])
     expect(result.data.zones.length).toBeGreaterThan(0)
   })
 
@@ -81,6 +82,7 @@ describe("check_liquidation_zones", () => {
     const result = await tools().check_liquidation_zones.execute({ asset: "ETH", entryPrice: 70250, stopLoss: 68000 })
     expect(result.success).toBe(true)
     expect(result.data.warning).toBe(false)
+    expect(result.data.risk_flags).toEqual([])
   })
 
   it("returns bid and ask cluster zones with labels", async () => {
@@ -143,6 +145,7 @@ describe("assess_cascade_risk", () => {
     const result = await tools().assess_cascade_risk.execute({ asset: "ETH" })
     expect(result.success).toBe(true)
     expect(result.data.cascadeRisk).toBe("high")
+    expect(result.data.risk_flags).toEqual(["cascade_risk"])
   })
 
   it("returns medium when funding elevated + large OI but deep book", async () => {
@@ -159,6 +162,7 @@ describe("assess_cascade_risk", () => {
     const result = await tools().assess_cascade_risk.execute({ asset: "ETH" })
     expect(result.success).toBe(true)
     expect(result.data.cascadeRisk).toBe("medium")
+    expect(result.data.risk_flags).toEqual(["cascade_risk"])
   })
 
   it("returns low when funding calm + moderate OI + deep book", async () => {
@@ -166,6 +170,7 @@ describe("assess_cascade_risk", () => {
     const result = await tools().assess_cascade_risk.execute({ asset: "ETH" })
     expect(result.success).toBe(true)
     expect(result.data.cascadeRisk).toBe("low")
+    expect(result.data.risk_flags).toEqual([])
   })
 
   it("labels itself approximation in description and notes", async () => {

@@ -14,6 +14,10 @@ import type {
   PerspectiveWeights,
   SideScores,
 } from "@/lib/agent/planning/types"
+import type {
+  DeterministicConfidenceInput,
+} from "@/lib/agent/shared/deterministic-confidence"
+import { deterministicConfidence } from "@/lib/agent/shared/deterministic-confidence"
 
 /**
  * @constant SIDES
@@ -35,25 +39,68 @@ const SPREAD_AGREE_THRESHOLD = 0.05
 const AGREE_MULTIPLIER = 1.1
 
 /**
+ * @interface DeterministicScoringContext
+ * @description DD-level inputs shared by every perspective's deterministic
+ *   confidence: factor scores and graph-memory pattern stats. Signals and
+ *   votes are read per-report from the report array itself.
+ */
+export interface DeterministicScoringContext {
+  factorScores: DeterministicConfidenceInput["factorScores"]
+  historicalMatches: DeterministicConfidenceInput["historicalMatches"]
+}
+
+/**
+ * @function confidenceOf
+ * @description Resolves a report's confidence for scoring. When deterministic
+ *   context is provided, the confidence is computed deterministically from the
+ *   report's own signals/votes plus the DD context — never from the LLM's
+ *   verbalized confidence. Otherwise falls back to the legacy
+ *   confidence ?? score ?? 0 chain (keeps callers that lack context unchanged).
+ * @param {PerspectiveReport} report - The report being scored.
+ * @param {PerspectiveReport[]} reports - All reports (for side votes).
+ * @param {DeterministicScoringContext | undefined} deterministic - DD context;
+ *   absent → legacy fallback chain.
+ * @returns {number} The deterministic or fallback confidence value.
+ */
+function confidenceOf(
+  report: PerspectiveReport,
+  reports: PerspectiveReport[],
+  deterministic?: DeterministicScoringContext
+): number {
+  if (!deterministic) return report.confidence ?? report.score ?? 0
+  return deterministicConfidence({
+    side: report.side,
+    factorScores: deterministic.factorScores,
+    historicalMatches: deterministic.historicalMatches,
+    signals: report.signals,
+    votes: reports.map((r) => r.side),
+  }).score
+}
+
+/**
  * @function computeSideScores
  * @description Per-side weighted consensus scores:
  *   score(side) = Σ over reports with r.side === side of (weights[r.perspective]
- *   × conf), where conf = r.confidence ?? r.score ?? 0 (same fallback chain
- *   evaluate.ts uses). All three keys always present, defaulting to 0.
+ *   × conf), where conf is the report's deterministic confidence (when
+ *   `deterministic` context is provided) or the legacy confidence ?? score ?? 0
+ *   chain otherwise. All three keys always present, defaulting to 0.
  *   Pure — no mutation of inputs.
  * @param {PerspectiveReport[]} reports - The perspective reports.
  * @param {PerspectiveWeights} weights - Per-perspective consensus weights.
+ * @param {DeterministicScoringContext} [deterministic] - DD context that
+ *   switches per-report confidence to deterministic computation (SA3).
  * @returns {SideScores} Weighted score per side, all three keys present.
  */
 export function computeSideScores(
   reports: PerspectiveReport[],
-  weights: PerspectiveWeights
+  weights: PerspectiveWeights,
+  deterministic?: DeterministicScoringContext
 ): SideScores {
   const scores: SideScores = { long: 0, short: 0, no_trade: 0 }
   for (const r of reports) {
-    // reason: same confidence ?? score ?? 0 fallback chain as evaluate.ts —
-    // nullable confidence prefers the explicit value, then score, then 0.
-    const conf = r.confidence ?? r.score ?? 0
+    // reason: deterministic confidence when context exists, else the same
+    // confidence ?? score ?? 0 fallback chain as evaluate.ts.
+    const conf = confidenceOf(r, reports, deterministic)
     scores[r.side] += weights[r.perspective] * conf
   }
   return scores
@@ -91,17 +138,21 @@ export function agreementMultiplier(
  * @function computeAgreementBoostedScores
  * @description Side scores with the agreement multiplier applied: starts from
  *   computeSideScores, then for "long" and "short" only (never no_trade)
- *   multiplies by agreementMultiplier and rounds to 2 decimals. Pure — builds
+ *   multiplies by agreementMultiplier and rounds to 2 decimals. Passes the
+ *   deterministic context through to computeSideScores. Pure — builds
  *   a fresh object, no mutation.
  * @param {PerspectiveReport[]} reports - The perspective reports.
  * @param {PerspectiveWeights} weights - Per-perspective consensus weights.
+ * @param {DeterministicScoringContext} [deterministic] - DD context that
+ *   switches per-report confidence to deterministic computation (SA3).
  * @returns {SideScores} Agreement-boosted per-side scores.
  */
 export function computeAgreementBoostedScores(
   reports: PerspectiveReport[],
-  weights: PerspectiveWeights
+  weights: PerspectiveWeights,
+  deterministic?: DeterministicScoringContext
 ): SideScores {
-  const scores = computeSideScores(reports, weights)
+  const scores = computeSideScores(reports, weights, deterministic)
   for (const side of SIDES) {
     if (side === "no_trade") continue
     // reason: 2-decimal rounding keeps boosted scores free of float noise

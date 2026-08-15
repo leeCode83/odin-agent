@@ -36,8 +36,6 @@ export function normalizeThought(raw: unknown): unknown {
   // requires a string, so default it rather than discarding the whole thought.
   if (p.action === "return") {
     if (typeof p.conclusion !== "string") p.conclusion = ""
-    if (typeof p.score !== "number") p.score = 0
-    if (typeof p.confidence !== "number") p.confidence = 0
     if (!Array.isArray(p.signals)) p.signals = []
     if (typeof p.reasoning !== "string") p.reasoning = "No reasoning provided — LLM returned incomplete response"
   }

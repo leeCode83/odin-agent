@@ -28,28 +28,31 @@ describe("SubAgentThoughtSchema", () => {
   it("validates return action", () => {
     const result = SubAgentThoughtSchema.parse({
       action: "return",
-      score: 75,
-      confidence: 80,
       signals: [{ name: "RSI", strength: 70, direction: "bullish" }],
       reasoning: "Analysis complete",
       conclusion: "Bullish",
     })
     expect(result.action).toBe("return")
     if (result.action !== "return") throw new Error("Expected return")
-    expect(result.score).toBe(75)
+    expect(result.conclusion).toBe("Bullish")
+    expect(result.signals).toHaveLength(1)
   })
 
-  it("allows null score and confidence on return", () => {
+  it("return variant carries narrative only — numeric score/confidence fields are stripped", () => {
     const result = SubAgentThoughtSchema.parse({
       action: "return",
-      score: null,
-      confidence: null,
+      score: 75,
+      confidence: 80,
+      entry_price: 65000,
       signals: [],
       reasoning: "No data",
       conclusion: "Inconclusive",
     })
     if (result.action !== "return") throw new Error("Expected return")
-    expect(result.score).toBeNull()
+    expect(result.conclusion).toBe("Inconclusive")
+    expect(result).not.toHaveProperty("score")
+    expect(result).not.toHaveProperty("confidence")
+    expect(result).not.toHaveProperty("entry_price")
   })
 
   it("rejects invalid action", () => {
@@ -58,52 +61,40 @@ describe("SubAgentThoughtSchema", () => {
     ).toThrow()
   })
 
-  it("return variant passes through optional planning fields", () => {
+  it("return variant passes through optional planning fields (side + risk_flags_text narrative)", () => {
     const result = SubAgentThoughtSchema.parse({
       action: "return",
-      score: 75,
-      confidence: 80,
       signals: [],
       reasoning: "Analysis complete",
       conclusion: "Bullish",
       side: "long",
-      entry_price: 65000,
-      suggested_stop_loss: 62000,
-      suggested_take_profit: 71000,
-      suggested_leverage: 5,
-      suggested_position_size_usdc: 100,
-      risk_flags: ["Funding positive"],
+      risk_flags_text: "Funding elevated but within norms",
     })
     if (result.action !== "return") throw new Error("Expected return")
     expect(result.side).toBe("long")
-    expect(result.entry_price).toBe(65000)
-    expect(result.suggested_stop_loss).toBe(62000)
-    expect(result.suggested_take_profit).toBe(71000)
-    expect(result.suggested_leverage).toBe(5)
-    expect(result.suggested_position_size_usdc).toBe(100)
-    expect(result.risk_flags).toEqual(["Funding positive"])
+    expect(result.risk_flags_text).toBe("Funding elevated but within norms")
+    // reason: money numbers are not part of the LLM output schema at all.
+    expect(result).not.toHaveProperty("entry_price")
+    expect(result).not.toHaveProperty("suggested_stop_loss")
+    expect(result).not.toHaveProperty("suggested_position_size_usdc")
+    expect(result).not.toHaveProperty("risk_flags")
   })
 
   it("return variant parses without planning fields (DD path unchanged)", () => {
     const result = SubAgentThoughtSchema.parse({
       action: "return",
-      score: 75,
-      confidence: 80,
       signals: [],
       reasoning: "Analysis complete",
       conclusion: "Bullish",
     })
     if (result.action !== "return") throw new Error("Expected return")
     expect(result.side).toBeUndefined()
-    expect(result.entry_price).toBeUndefined()
-    expect(result.risk_flags).toBeUndefined()
+    expect(result.risk_flags_text).toBeUndefined()
   })
 
   it("return variant accepts no_trade side", () => {
     const result = SubAgentThoughtSchema.parse({
       action: "return",
-      score: null,
-      confidence: null,
       signals: [],
       reasoning: "No setup",
       conclusion: "No trade",
@@ -117,8 +108,6 @@ describe("SubAgentThoughtSchema", () => {
     expect(() =>
       SubAgentThoughtSchema.parse({
         action: "return",
-        score: 75,
-        confidence: 80,
         signals: [],
         reasoning: "Analysis",
         conclusion: "Bullish",
@@ -164,7 +153,9 @@ describe("runSubagent", () => {
     })
 
     expect(report.factor).toBe("technical")
-    expect(report.score).toBe(75)
+    // deterministic score: no scoring-relevant tool data → insufficient-data 0
+    // (LLM self-assessed 75 ignored)
+    expect(report.score).toBe(0)
     // deterministic confidence: zero tool calls → floor (LLM verbalized 80 ignored)
     expect(report.confidence).toBe(15)
     expect(report.signals).toHaveLength(1)
@@ -239,7 +230,7 @@ describe("runSubagent", () => {
       getSystemPrompt: () => "You are a technical analyst.",
     })
 
-    expect(report.score).toBe(80)
+    expect(report.score).toBe(0)
     expect(report.iterations).toBe(2)
     expect(report.dataSources).toContain("hyperliquid")
     expect(mockThink).toHaveBeenCalledTimes(2)
@@ -274,7 +265,7 @@ describe("runSubagent", () => {
       getSystemPrompt: () => "You are a sentiment analyst.",
     })
 
-    expect(report.score).toBe(50)
+    expect(report.score).toBe(0)
     expect(report.iterations).toBe(2)
     expect(report.errors.length).toBeGreaterThanOrEqual(1)
     expect(report.errors[0]).toContain("unknown_tool")
@@ -316,7 +307,7 @@ describe("runSubagent", () => {
       getSystemPrompt: () => "You are an analyst.",
     })
 
-    expect(report.score).toBe(40)
+    expect(report.score).toBe(0)
     expect(report.errors.length).toBeGreaterThanOrEqual(1)
     expect(report.errors[0]).toContain("Invalid params")
   })
@@ -398,7 +389,7 @@ describe("runSubagent", () => {
     })
 
     expect(executeSpy).toHaveBeenCalledWith({ asset: "BTC" })
-    expect(report.score).toBe(80)
+    expect(report.score).toBe(0)
     expect(report.iterations).toBe(2)
     expect(report.dataSources).toContain("hyperliquid")
 

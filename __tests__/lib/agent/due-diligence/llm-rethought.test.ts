@@ -51,8 +51,8 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(75)
-      expect(result.confidence).toBe(80)
+      expect(result).not.toHaveProperty("score")
+      expect(result).not.toHaveProperty("confidence")
       expect(result.signals).toHaveLength(1)
       expect(result.signals[0]).toHaveProperty("name", "RSI")
     }
@@ -87,7 +87,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBeNull()
+      expect(result).not.toHaveProperty("score")
     }
   })
 
@@ -161,7 +161,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(75)
+      expect(result).not.toHaveProperty("score")
     }
     expect(mockCreate).toHaveBeenCalledTimes(2)
     const retryMessages = mockCreate.mock.calls[1][0].messages
@@ -212,7 +212,7 @@ describe("think()", () => {
     expect(result.action).toBe("return")
     // Fallback has null score (fake 0 would pollute scoring downstream)
     if (result.action === "return") {
-      expect(result.score).toBeNull()
+      expect(result).not.toHaveProperty("score")
     }
     expect(mockCreate).toHaveBeenCalledTimes(3) // 1 initial + 2 retries
   })
@@ -232,7 +232,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(70)
+      expect(result).not.toHaveProperty("score")
       expect(result.conclusion).toBe("Bullish momentum")
     }
   })
@@ -251,7 +251,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(60)
+      expect(result).not.toHaveProperty("score")
       expect(result.conclusion).toBe("")
     }
   })
@@ -271,7 +271,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(62)
+      expect(result).not.toHaveProperty("score")
       expect(result.conclusion).toBe("Neutral")
     }
   })
@@ -307,7 +307,7 @@ describe("think()", () => {
     const result = await think([{ role: "user", content: "test" }])
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(66)
+      expect(result).not.toHaveProperty("score")
     }
   })
 
@@ -380,7 +380,7 @@ describe("think() empty-response retry", () => {
 
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(75)
+      expect(result).not.toHaveProperty("score")
     }
     expect(mockCreate).toHaveBeenCalledTimes(2)
   })
@@ -397,7 +397,7 @@ describe("think() empty-response retry", () => {
     expect(result.action).toBe("return")
     // Fallback has null score (fake 0 would pollute scoring downstream)
     if (result.action === "return") {
-      expect(result.score).toBeNull()
+      expect(result).not.toHaveProperty("score")
     }
     expect(mockCreate).toHaveBeenCalledTimes(3)
   })
@@ -411,7 +411,7 @@ describe("think() empty-response retry", () => {
 
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBeNull()
+      expect(result).not.toHaveProperty("score")
     }
     expect(mockCreate).toHaveBeenCalledTimes(3)
   })
@@ -967,7 +967,7 @@ describe("think() with native tools", () => {
 
     expect(result.action).toBe("return")
     if (result.action === "return") {
-      expect(result.score).toBe(60)
+      expect(result).not.toHaveProperty("score")
     }
   })
 

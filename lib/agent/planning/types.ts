@@ -47,6 +47,9 @@ export const PerspectiveReportSchema = z.object({
   suggested_take_profit: z.number(),
   suggested_position_size_usdc: z.number(),
   risk_flags: z.array(z.string()),
+  // reason: narrative free-text risk prose from the perspective LLM (P4 SA2) —
+  // informational only, never gated on. Structured enum flags live in risk_flags.
+  risk_flags_text: z.string().optional(),
 })
 
 /**
@@ -277,9 +280,31 @@ export interface PlanningAgentOutput {
 }
 
 /**
+ * @type PlanningAggregationLlmResult
+ * @description Narrow result of the aggregation LLM: narrative only. No money
+ *   numbers (entry/SL/TP/size/leverage/confidence) and no profit_feasible — the
+ *   orchestrator computes all of those deterministically (deterministicConfidence,
+ *   computeTradeNumbers, computeProfitFeasibility) before building the final
+ *   PlanningAggregationResult. The schema deliberately rejects numeric fields.
+ */
+export type PlanningAggregationLlmResult = {
+  side: "long" | "short" | "no_trade"
+  thesis: string
+  reasoning: string
+  risk_flags_text: string
+  consensus_alignment: number
+  contradictions: string[]
+  no_trade_reason?: string
+}
+
+/**
  * @type PlanningAggregationResult
  * @description Aggregated reasoning across planning perspectives, with
- *   consensus metrics and a side widened to include `no_trade`.
+ *   consensus metrics and a side widened to include `no_trade`. Every numeric
+ *   field is filled deterministically by the orchestrator (never the LLM): the
+ *   LLM supplies only the narrative fields, and confidence_breakdown /
+ *   risk_flags / prices / profit_feasible come from deterministicConfidence,
+ *   mergeRiskFlags, and computeTradeNumbers.
  */
 export type PlanningAggregationResult = {
   side: "long" | "short" | "no_trade"

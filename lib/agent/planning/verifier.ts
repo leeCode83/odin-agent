@@ -1,16 +1,21 @@
 /**
  * @file planning/verifier.ts
- * @description Deterministic post-return validation for planning perspective
- *   reports (T13). Pure function — no I/O, no side effects — that reconciles
- *   the LLM's returned trading numbers against the actual tool results
- *   recorded in the ReAct loop history, so the LLM can never guess entry
- *   price, SL/TP, or position size.
+ * @description Deterministic post-return guard for planning perspective
+ *   reports (T13). Pure function — no I/O, no side effects — that enforces the
+ *   tool-required contract against the ReAct loop history: a trade is only
+ *   verifiable when get_mark_price, compute_sltp, AND compute_position_size
+ *   each produced a successful result. When any required tool did NOT run
+ *   successfully the trade is forced to no_trade — LLM-guessed numbers never
+ *   survive a skipped tool (no override-if-available fallback).
  *
  *   Enforcement model:
  *   - Hard: a proposed trade without a successful get_mark_price call is
  *     forced to no_trade with all numeric fields zeroed.
- *   - Override-if-available: entry/SL/TP/size are replaced by the LAST
- *     successful tool result when the tool ran; otherwise LLM values survive.
+ *   - Hard: without a successful compute_sltp call → forced to no_trade.
+ *   - Hard: without a successful compute_position_size call → forced to
+ *     no_trade.
+ *   - When all three tools succeeded, entry/SL/TP/size are ALWAYS taken from
+ *     the tool results (entry = last mark price, no 0.1% tolerance).
  * @module planning
  * @layer service
  */
@@ -20,6 +25,10 @@ import type { HistoryEntry } from "@/lib/agent/due-diligence/subagent"
 
 /** @constant {string} ENTRY_FLAG - Risk flag pushed when a trade lacks get_mark_price. */
 const ENTRY_FLAG = "verifier: entry_price tanpa get_mark_price"
+/** @constant {string} SLTP_FLAG - Risk flag pushed when a trade lacks compute_sltp. */
+const SLTP_FLAG = "verifier: SL/TP tanpa compute_sltp"
+/** @constant {string} SIZE_FLAG - Risk flag pushed when a trade lacks compute_position_size. */
+const SIZE_FLAG = "verifier: position size tanpa compute_position_size"
 
 /**
  * @function round2
@@ -78,18 +87,40 @@ function lastSuccessfulByTool(history: HistoryEntry[]): Record<string, unknown> 
 }
 
 /**
+ * @function forceNoTrade
+ * @description Demotes a report to no_trade, zeroes every trading number, and
+ *   pushes a risk flag (deduped). Pure — returns a new report object.
+ * @param {PerspectiveReport} report - Report to demote.
+ * @param {string} flag - Verifier risk flag naming the missing required tool.
+ * @returns {PerspectiveReport} Forced no_trade report.
+ */
+function forceNoTrade(report: PerspectiveReport, flag: string): PerspectiveReport {
+  return {
+    ...report,
+    side: "no_trade",
+    entry_price: 0,
+    suggested_stop_loss: 0,
+    suggested_take_profit: 0,
+    suggested_position_size_usdc: 0,
+    // reason: dedupe — the flag may already exist from a previous verifier pass.
+    risk_flags: report.risk_flags.includes(flag) ? report.risk_flags : [...report.risk_flags, flag],
+  }
+}
+
+/**
  * @function verifyReportAgainstTools
- * @description Reconciles a perspective report against the tool ledger:
+ * @description Guards a perspective report against the tool ledger:
  *
  *   1. `no_trade` side or null score → returned unchanged (nothing to enforce).
  *   2. A trade proposed with NO successful `get_mark_price` call → forced to
- *      `no_trade`, all trading numbers zeroed, risk flag pushed (deduped).
- *   3. `entry_price` more than 0.1% from the last mark price → overridden to
- *      the mark price.
- *   4. Successful `compute_sltp` → `suggested_stop_loss` / `suggested_take_profit`
- *      overridden from `{ stopLoss, takeProfit }` (LLM values kept when absent).
- *   5. Successful `compute_position_size` → `suggested_position_size_usdc`
- *      overridden from `{ positionSizeUsdc }` (LLM value kept when absent).
+ *      `no_trade`, all trading numbers zeroed, ENTRY_FLAG pushed (deduped).
+ *   3. No successful `compute_sltp` call → forced to `no_trade` (SLTP_FLAG).
+ *   4. No successful `compute_position_size` call → forced to `no_trade`
+ *      (SIZE_FLAG).
+ *   5. All three required tools succeeded → entry is set to the last mark
+ *      price, SL/TP from the last `compute_sltp` result, size from the last
+ *      `compute_position_size` result (no 0.1% tolerance — the mark price is
+ *      always authoritative).
  *
  *   Pure: returns a new report object; input report and history are never mutated.
  * @param {PerspectiveReport} report - Merged perspective report from runPerspectiveSubagent.
@@ -106,45 +137,32 @@ export function verifyReportAgainstTools(
   if (report.side === "no_trade" || report.score === null) return report
 
   const lastResult = lastSuccessfulByTool(toolHistory)
-  const markPrice = getNumberField(lastResult["get_mark_price"], "markPrice")
 
   // reason: hard rule — entry price must come from the market, not the LLM.
-  // Without a successful get_mark_price the trade is unverifiable, so the
-  // report is demoted to no_trade and every trading number is zeroed.
-  if (markPrice === undefined) {
-    const flag = ENTRY_FLAG
-    return {
-      ...report,
-      side: "no_trade",
-      entry_price: 0,
-      suggested_stop_loss: 0,
-      suggested_take_profit: 0,
-      suggested_position_size_usdc: 0,
-      // reason: dedupe — the flag may already exist from a previous verifier pass.
-      risk_flags: report.risk_flags.includes(flag) ? report.risk_flags : [...report.risk_flags, flag],
-    }
-  }
+  // Without a successful get_mark_price the trade is unverifiable.
+  const markPrice = getNumberField(lastResult["get_mark_price"], "markPrice")
+  if (markPrice === undefined) return forceNoTrade(report, ENTRY_FLAG)
 
-  // reason: override-if-available — a diverging LLM entry is replaced by the
-  // mark price; within 0.1% the LLM value is treated as a rounding artifact.
-  const entryMismatch = Math.abs(report.entry_price - markPrice) / markPrice
-  const entryPrice = entryMismatch > 0.001 ? round2(markPrice) : report.entry_price
-
+  // reason: hard rule — SL/TP must come from compute_sltp (ATR-based tool
+  // output). A trade whose stop levels were never computed cannot be sized or
+  // risked, so the LLM's numbers are not allowed to survive.
   const sltpPayload = lastResult["compute_sltp"]
   const stopLoss = getNumberField(sltpPayload, "stopLoss")
   const takeProfit = getNumberField(sltpPayload, "takeProfit")
+  if (stopLoss === undefined || takeProfit === undefined) return forceNoTrade(report, SLTP_FLAG)
 
+  // reason: hard rule — position size must come from compute_position_size.
   const sizePayload = lastResult["compute_position_size"]
   const positionSizeUsdc = getNumberField(sizePayload, "positionSizeUsdc")
+  if (positionSizeUsdc === undefined) return forceNoTrade(report, SIZE_FLAG)
 
   return {
     ...report,
-    entry_price: entryPrice,
-    // reason: SL/TP override-if-available — tool results win, LLM values
-    // survive only when the tool was never successfully called.
-    suggested_stop_loss: stopLoss !== undefined ? round2(stopLoss) : report.suggested_stop_loss,
-    suggested_take_profit: takeProfit !== undefined ? round2(takeProfit) : report.suggested_take_profit,
-    suggested_position_size_usdc:
-      positionSizeUsdc !== undefined ? round2(positionSizeUsdc) : report.suggested_position_size_usdc,
+    // reason: entry is always the mark price (rounded) — the LLM's entry is
+    // ignored entirely; the old 0.1% tolerance let LLM numbers survive.
+    entry_price: round2(markPrice),
+    suggested_stop_loss: round2(stopLoss),
+    suggested_take_profit: round2(takeProfit),
+    suggested_position_size_usdc: round2(positionSizeUsdc),
   }
 }

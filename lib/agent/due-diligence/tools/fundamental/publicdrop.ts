@@ -9,6 +9,21 @@ import type { ToolDefinition } from "@/lib/agent/due-diligence/tools/types"
 
 const PD_BASE = process.env.PUBLICDROP_BASE_URL || "https://api.publicdrop.org/v1"
 
+/**
+ * @constant InflationDataSchema
+ * @description Structured get_inflation_data output consumed by deterministic scoring:
+ *   currentRatePercent (annual inflation %) drives the inflation signal.
+ */
+export const InflationDataSchema = z.object({
+  currentRatePercent: z.number().nullable(),
+  nextRateChangeDate: z.string().nullable(),
+  nextRatePercent: z.number().nullable(),
+  historical: z.array(z.object({ date: z.string(), rate_percent: z.number() })),
+})
+
+/** @typedef {z.infer<typeof InflationDataSchema>} InflationData */
+export type InflationData = z.infer<typeof InflationDataSchema>
+
 async function pdFetch<T>(path: string): Promise<T | null> {
   try {
     const res = await fetch(`${PD_BASE}${path}`)

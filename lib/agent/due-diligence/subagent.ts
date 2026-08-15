@@ -15,6 +15,18 @@ import { toolRegistryToOpenAITools } from "@/lib/agent/due-diligence/tools/types
 import { normalizeSignal } from "@/lib/agent/shared/dd-utils"
 import { computeDeterministicConfidence } from "@/lib/agent/shared/confidence"
 import type { ExecutionSignals } from "@/lib/agent/shared/confidence"
+import {
+  scoreTechnical,
+  scoreSentiment,
+  scoreOnchain,
+  scoreFundamental,
+} from "@/lib/agent/due-diligence/scoring"
+import type {
+  TechnicalScoreInput,
+  SentimentScoreInput,
+  OnchainScoreInput,
+  FundamentalScoreInput,
+} from "@/lib/agent/due-diligence/scoring"
 
 /**
  * @constant SignalEntrySchema
@@ -36,6 +48,11 @@ const SignalEntrySchema = z.union([
  *   - `tool_call`: the LLM wants to invoke a tool.
  *   - `return`: the LLM has reached a conclusion and returns.
  *   signals accepts both string[] and SignalEntry[] for resilience against LLM format drift.
+ *   The return variant carries ONLY narrative/analysis fields (`signals`, `reasoning`,
+ *   `conclusion`, `side`, `risk_flags_text`). Numeric scores and trading numbers are
+ *   never LLM output — `score`/`confidence` are computed deterministically from the
+ *   tool ledger (see deterministicFactorScore), and entry/SL/TP/size come from the
+ *   tool results enforced by the planning verifier.
  */
 export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
   z.object({
@@ -46,20 +63,14 @@ export const SubAgentThoughtSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("return"),
-    score: z.number().int().min(0).max(100).nullable(),
-    confidence: z.number().int().min(0).max(100).nullable(),
     signals: z.array(SignalEntrySchema),
     reasoning: z.string(),
     conclusion: z.string(),
-    // reason: optional planning swarm fields — zod strips unknown keys, so the
-    // planning wrapper can only receive these from the LLM if the schema declares them.
+    // reason: optional planning swarm fields — `side` is the perspective's
+    // verdict (a decision, not a number); `risk_flags_text` is free-form prose
+    // narrative that never gates (structured enum flags come from tool data).
     side: z.enum(["long", "short", "no_trade"]).optional(),
-    entry_price: z.number().optional(),
-    suggested_stop_loss: z.number().optional(),
-    suggested_take_profit: z.number().optional(),
-    suggested_leverage: z.number().optional(),
-    suggested_position_size_usdc: z.number().optional(),
-    risk_flags: z.array(z.string()).optional(),
+    risk_flags_text: z.string().optional(),
   }),
 ])
 
@@ -222,6 +233,130 @@ function deriveSignals(history: HistoryEntry[], stopReason: FactorReport["stopRe
   }
   signals.uniqueTools = seenTools.size
   return signals
+}
+
+/**
+ * @function lastSuccessfulData
+ * @description Returns the `data` payload of the LAST successful call for a
+ *   tool name in the ledger (scanning newest first), or undefined when the tool
+ *   never ran or never succeeded. Failed calls never shadow an earlier success.
+ * @param {HistoryEntry[]} history - Full ReAct loop tool ledger.
+ * @param {string} toolName - Tool name to look up.
+ * @returns {unknown} The last successful payload, or undefined.
+ */
+function lastSuccessfulData(history: HistoryEntry[], toolName: string): unknown {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i]
+    if (h.toolName === toolName && h.result.success) return h.result.data
+  }
+  return undefined
+}
+
+/**
+ * @function deterministicFactorScore
+ * @description Computes the factor score deterministically from the tool ledger
+ *   via due-diligence/scoring.ts (scoreTechnical / scoreSentiment / scoreOnchain
+ *   / scoreFundamental). The last successful result of each relevant tool feeds
+ *   the matching scoring input; missing tools are skipped by the scoring layer.
+ *   Unknown factors (e.g. planning perspectives running through the same loop)
+ *   have no factor-specific formula and return null so the caller falls back to
+ *   the execution-signal confidence. Never reads a score from the LLM.
+ * @param {string} factor - The factor name (technical/sentiment/onchain/fundamental).
+ * @param {HistoryEntry[]} history - Full ReAct loop tool ledger.
+ * @returns {number | null} Deterministic 0-100 factor score, or null for
+ *   factors without a scoring formula.
+ */
+function deterministicFactorScore(factor: string, history: HistoryEntry[]): number | null {
+  switch (factor) {
+    case "technical": {
+      const input: TechnicalScoreInput = {
+        rsi: lastSuccessfulData(history, "get_rsi") as TechnicalScoreInput["rsi"],
+        macd: lastSuccessfulData(history, "get_macd") as TechnicalScoreInput["macd"],
+        bb: lastSuccessfulData(history, "get_bb") as TechnicalScoreInput["bb"],
+        stoch: lastSuccessfulData(history, "get_stoch") as TechnicalScoreInput["stoch"],
+        volume: lastSuccessfulData(history, "get_volume") as TechnicalScoreInput["volume"],
+        divergence: lastSuccessfulData(history, "get_divergence") as TechnicalScoreInput["divergence"],
+      }
+      return scoreTechnical(input).score
+    }
+    case "sentiment": {
+      const input: SentimentScoreInput = {
+        fearGreed: lastSuccessfulData(history, "get_fear_greed") as SentimentScoreInput["fearGreed"],
+        coinSentiment: lastSuccessfulData(history, "get_coin_sentiment") as SentimentScoreInput["coinSentiment"],
+        momentum: lastSuccessfulData(history, "get_asset_momentum") as SentimentScoreInput["momentum"],
+        funding: lastSuccessfulData(history, "get_funding_rate") as SentimentScoreInput["funding"],
+      }
+      return scoreSentiment(input).score
+    }
+    case "onchain": {
+      const input: OnchainScoreInput = {
+        funding: lastSuccessfulData(history, "get_funding_rate") as OnchainScoreInput["funding"],
+        oiDivergence: lastSuccessfulData(history, "detect_oi_funding_divergence") as OnchainScoreInput["oiDivergence"],
+        exchangeFlow: lastSuccessfulData(history, "get_exchange_flow") as OnchainScoreInput["exchangeFlow"],
+        whaleTxns: lastSuccessfulData(history, "get_whale_txns") as OnchainScoreInput["whaleTxns"],
+      }
+      return scoreOnchain(input).score
+    }
+    case "fundamental": {
+      const input: FundamentalScoreInput = {
+        tokenomics: lastSuccessfulData(history, "get_tokenomics") as FundamentalScoreInput["tokenomics"],
+        inflation: lastSuccessfulData(history, "get_inflation_data") as FundamentalScoreInput["inflation"],
+        devActivity: lastSuccessfulData(history, "get_developer_activity") as FundamentalScoreInput["devActivity"],
+        ath: lastSuccessfulData(history, "get_ath") as FundamentalScoreInput["ath"],
+      }
+      return scoreFundamental(input).score
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * @function buildReturnReport
+ * @description Assembles the FactorReport for a successful LLM return: score is
+ *   deterministic (deterministicFactorScore, falling back to the execution
+ *   confidence for factors without a formula), confidence is the execution-signal
+ *   confidence, and signals/conclusion come from the LLM's narrative. The raw
+ *   tool ledger rides along for the planning verifier.
+ * @param {Object} params - The runSubagent params (factor context).
+ * @param {Extract<SubAgentThought, { action: "return" }>} thought - The parsed
+ *   return thought from the LLM.
+ * @param {HistoryEntry[]} history - Full ReAct loop tool ledger.
+ * @param {number} iterations - Number of loop iterations used.
+ * @param {FactorReport["stopReason"]} signalStopReason - Stop reason feeding the
+ *   execution-signal confidence derivation.
+ * @returns {FactorReport} Deterministic-scored factor report.
+ */
+function buildReturnReport(
+  params: { factor: string },
+  thought: Extract<SubAgentThought, { action: "return" }>,
+  history: HistoryEntry[],
+  iterations: number,
+  signalStopReason: FactorReport["stopReason"]
+): FactorReport {
+  const factor = params.factor as FactorReport["factor"]
+  const executionConfidence = computeDeterministicConfidence(deriveSignals(history, signalStopReason))
+  const detScore = deterministicFactorScore(params.factor, history)
+  return {
+    factor,
+    // reason: deterministic score — the LLM's self-assessed score is never
+    // trusted; the factor formula (or the execution confidence fallback) decides.
+    score: detScore ?? executionConfidence,
+    confidence: executionConfidence,
+    signals: thought.signals.map(normalizeSignal),
+    dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
+    reasoning: thought.reasoning,
+    iterations,
+    conclusion: thought.conclusion,
+    errors: history.filter((h) => !h.result.success).map((h) => {
+      const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
+      return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
+    }),
+    stopReason: "llm_return",
+    // reason: surface the raw tool ledger so the planning verifier can
+    // hard-enforce deterministic values against actual tool results.
+    toolHistory: history,
+  }
 }
 
 /**
@@ -404,25 +539,7 @@ export async function runSubagent(params: {
     const thought = await params.llmThink([...contextMessages, ...toolMessages], thinkOptions)
 
     if (thought.action === "return") {
-      const factor = params.factor as FactorReport["factor"]
-      return {
-        factor,
-        score: thought.score,
-        confidence: computeDeterministicConfidence(deriveSignals(history, "llm_return")),
-        signals: thought.signals.map(normalizeSignal),
-        dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
-        reasoning: thought.reasoning,
-        iterations: i + 1,
-        conclusion: thought.conclusion,
-        errors: history.filter((h) => !h.result.success).map((h) => {
-          const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
-          return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
-        }),
-        stopReason: "llm_return",
-        // reason: surface the raw tool ledger so the planning verifier can
-        // hard-enforce deterministic values against actual tool results.
-        toolHistory: history,
-      }
+      return buildReturnReport(params, thought, history, i + 1, "llm_return")
     }
 
     // ACT — native tool_calls: execute each call, feed results back as API-level tool messages
@@ -549,25 +666,7 @@ export async function runSubagent(params: {
     const finalThought = await params.llmThink(forceReturnMessages)
 
     if (finalThought.action === "return") {
-      const factor = params.factor as FactorReport["factor"]
-      return {
-        factor,
-        score: finalThought.score,
-        confidence: computeDeterministicConfidence(deriveSignals(history, stopReason)),
-        signals: finalThought.signals.map(normalizeSignal),
-        dataSources: [...new Set(history.map((h) => h.result.metadata.source))],
-        reasoning: finalThought.reasoning,
-        iterations: maxLoops,
-        conclusion: finalThought.conclusion,
-        errors: history.filter((h) => !h.result.success).map((h) => {
-          const prefix = h.result.errorKind ? `[${h.result.errorKind}] ` : ""
-          return `${prefix}${h.toolName}: ${h.result.error || "unknown error"}`
-        }),
-        stopReason: "llm_return",
-        // reason: same ledger surfacing as the main llm_return path — the
-        // force-return report feeds the planning verifier identically.
-        toolHistory: history,
-      }
+      return buildReturnReport(params, finalThought, history, maxLoops, stopReason)
     }
   } catch {
     // fall through to nulls below

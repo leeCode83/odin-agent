@@ -75,6 +75,7 @@ describe("analyze_funding_regime", () => {
     expect(result.data.openInterest).toBe(1500000000)
     expect(result.data.markPrice).toBe(70500)
     expect(result.data.predictedFunding).toBe(0.00012)
+    expect(result.data.risk_flags).toEqual(["funding_overheated"])
     expect(result.metadata.source).toBe("hyperliquid")
   })
 
@@ -91,12 +92,14 @@ describe("analyze_funding_regime", () => {
     const result = await tools().analyze_funding_regime.execute({ asset: "ETH" })
     expect(result.success).toBe(true)
     expect(result.data.regime).toBe("overheated_short")
+    expect(result.data.risk_flags).toEqual(["funding_overheated"])
   })
 
   it("returns normal for funding within threshold", async () => {
     const result = await tools().analyze_funding_regime.execute({ asset: "ETH" })
     expect(result.success).toBe(true)
     expect(result.data.regime).toBe("normal")
+    expect(result.data.risk_flags).toEqual([])
   })
 
   it("returns null predictedFunding when HlPerp venue is unavailable", async () => {
@@ -163,6 +166,7 @@ describe("detect_oi_funding_divergence", () => {
     expect(result.success).toBe(true)
     expect(result.data.divergence).toBe(true)
     expect(result.data.signal).toBe("bearish")
+    expect(result.data.risk_flags).toEqual(["oi_divergence"])
     expect(result.data.priceChangePct).toBeGreaterThan(0)
   })
 
@@ -181,6 +185,7 @@ describe("detect_oi_funding_divergence", () => {
     expect(result.success).toBe(true)
     expect(result.data.divergence).toBe(true)
     expect(result.data.signal).toBe("bullish")
+    expect(result.data.risk_flags).toEqual(["oi_divergence"])
   })
 
   it("is neutral/overextended when price up + high OI turnover + strongly positive funding", async () => {
@@ -230,6 +235,7 @@ describe("detect_oi_funding_divergence", () => {
     expect(result.success).toBe(true)
     expect(result.data.divergence).toBe(false)
     expect(result.data.signal).toBe("neutral")
+    expect(result.data.risk_flags).toEqual([])
   })
 
   it("returns success:false when candles fetch fails", async () => {

@@ -44,9 +44,10 @@ describe("buildIndicators", () => {
     const tool = tools.find((t) => t.name === "get_rsi")!
     const result = await tool.execute({ period: 14, timeframe: "1h" })
     expect(result.success).toBe(true)
-    expect(Array.isArray(result.data)).toBe(true)
-    expect((result.data as number[]).length).toBeGreaterThan(0)
-    expect((result.data as number[]).every((v) => v >= 0 && v <= 100)).toBe(true)
+    const data = result.data as { values: number[]; latest: number | null }
+    expect(Array.isArray(data.values)).toBe(true)
+    expect(data.values.length).toBeGreaterThan(0)
+    expect(data.values.every((v) => v >= 0 && v <= 100)).toBe(true)
   })
 
   it("get_rsi returns error with insufficient candles", async () => {
@@ -63,10 +64,13 @@ describe("buildIndicators", () => {
     const tool = tools.find((t) => t.name === "get_macd")!
     const result = await tool.execute({ fast: 12, slow: 26, signal: 9, timeframe: "1h" })
     expect(result.success).toBe(true)
-    expect(Array.isArray(result.data)).toBe(true)
-    const data = result.data as Array<Record<string, number | undefined>>
-    expect(data.length).toBeGreaterThan(0)
-    expect(data[data.length - 1]).toHaveProperty("MACD")
+    const data = result.data as {
+      values: Array<Record<string, number | undefined>>
+      latest: Record<string, number | null> | null
+    }
+    expect(Array.isArray(data.values)).toBe(true)
+    expect(data.values.length).toBeGreaterThan(0)
+    expect(data.values[data.values.length - 1]).toHaveProperty("MACD")
   })
 
   it("get_ema returns EMA values", async () => {
@@ -89,9 +93,12 @@ describe("buildIndicators", () => {
     const tool = tools.find((t) => t.name === "get_bb")!
     const result = await tool.execute({ period: 20, stddev: 2, timeframe: "1h" })
     expect(result.success).toBe(true)
-    const data = result.data as Array<Record<string, number>>
-    expect(data.length).toBeGreaterThan(0)
-    const last = data[data.length - 1]
+    const data = result.data as {
+      values: Array<Record<string, number>>
+      latest: Record<string, number> | null
+    }
+    expect(data.values.length).toBeGreaterThan(0)
+    const last = data.values[data.values.length - 1]
     expect(last).toHaveProperty("upper")
     expect(last).toHaveProperty("middle")
     expect(last).toHaveProperty("lower")
@@ -119,9 +126,12 @@ describe("buildIndicators", () => {
     const tool = tools.find((t) => t.name === "get_stoch")!
     const result = await tool.execute({ k: 14, d: 3, timeframe: "1h" })
     expect(result.success).toBe(true)
-    const data = result.data as Array<Record<string, number | undefined>>
-    expect(data.length).toBeGreaterThan(0)
-    const last = data[data.length - 1]
+    const data = result.data as {
+      values: Array<Record<string, number | undefined>>
+      latest: Record<string, number | null> | null
+    }
+    expect(data.values.length).toBeGreaterThan(0)
+    const last = data.values[data.values.length - 1]
     expect(last).toHaveProperty("k")
   })
 

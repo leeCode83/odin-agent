@@ -2,8 +2,8 @@
  * @file planning/prompts.ts
  * @description Prompt builders and constants for the multi-perspective planning
  *   swarm — the perspective subagent ReAct system prompt (spec §7.2), the
- *   orchestrator PLAN prompt (§7.3), the aggregator prompt (§7.4), and the
- *   re-deploy prompt.
+ *   aggregator prompt (§7.4), and the fixed-perspective instruction templates
+ *   (SA5). The orchestrator PLAN/RE-PLAN step is deterministic (no LLM prompt).
  * @module planning
  * @layer service
  */
@@ -70,19 +70,13 @@ You MUST respond in JSON format. Do NOT use XML tags or <invoke> blocks — tool
   "action": "tool_call" | "return",
   "toolName": "...", // required when action is "tool_call"
   "params": {...}, // required when action is "tool_call"
-  "score": <0-100>, // required when action is "return"
-  "confidence": <0-100>, // required when action is "return"
   "side": "long" | "short" | "no_trade", // required when action is "return"
-  "entry_price": <number>, // required when action is "return"
   "signals": [...], // required when action is "return"
-  "suggested_stop_loss": <number>, // required when action is "return"
-  "suggested_take_profit": <number>, // required when action is "return"
-  "suggested_position_size_usdc": <number>, // required when action is "return"
   "conclusion": "...", // required when action is "return"
-  "risk_flags": [...] // required when action is "return"
+  "risk_flags_text": "..." // optional free-text risk narrative when action is "return"
 }
 \`\`\`
-Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels.
+Think step by step in the reasoning field before deciding on an action. Do NOT invent price levels — entry, stop-loss, take-profit, position size, and leverage are computed deterministically by the risk-engine tools (get_mark_price, compute_sltp, compute_position_size); you only choose the side and call the tools. Never output a number you did not read from a tool result, and never output entry_price / stop_loss / take_profit / position_size / leverage / score / confidence at all — those fields are not part of your output schema.
 
 Failure policy — tools and APIs can fail. When a tool or API fails:
 1. Try a reasonable fallback indicator or derived value first (e.g., mark price from a different source, ATR from an alternate timeframe).
@@ -102,11 +96,10 @@ Choose one:
 
 Use at least 2 tools before returning. Only return when you have validated the DDReport against current data.
 
-Hard rules — never guess trading numbers:
-- "entry_price" MUST come from calling "get_mark_price" (never guessed)
-- "suggested_stop_loss" and "suggested_take_profit" MUST come from calling "compute_sltp" (with "compute_atr" output as input)
-- "suggested_position_size_usdc" MUST come from calling "compute_position_size"
-- If a required tool's result is unavailable or failed, try a reasonable fallback indicator or derived value first and mark the analysis degraded; return "side": "no_trade" only when data is genuinely unavailable after fallback, instead of inventing numbers.
+Hard rules — never output trading numbers:
+- Entry, stop-loss, take-profit, position size, and leverage are computed deterministically by the tools and the risk engine — you must NEVER include them in your output.
+- "side" is your verdict: "long", "short", or "no_trade". The actual levels come from calling "get_mark_price", "compute_sltp", and "compute_position_size" — never guessed.
+- If a required tool's result is unavailable or failed, try a reasonable fallback indicator or derived value first and mark the analysis degraded; return "side": "no_trade" only when data is genuinely unavailable after fallback.
 
 When returning, the "signals" field MUST be an array of objects with:
 - name (string): signal name
@@ -116,33 +109,6 @@ When returning, the "signals" field MUST be an array of objects with:
 If you cannot provide full signal objects, fall back to plain strings like ["signal1", "signal2"] — they will be auto-converted.${degradedNote}`
   }
 }
-
-/**
- * @constant PLAN_PROMPT
- * @description System prompt for the orchestrator's PLAN step (spec §7.3).
- *   Decides which perspectives to deploy, their specific instructions, and
- *   priority order. The DDReport and targetProfitPercent arrive in the user
- *   message payload.
- * @note Includes few-shot examples to guide the model toward specific, actionable subagent instructions.
- */
-export const PLAN_PROMPT = `You are a trade planning orchestrator. You manage 3 perspective subagents (conservative, balance, aggressive).
-
-Given a DDReport and user's target profit percentage, decide:
-1. Which perspectives to deploy (always all 3 for the first iteration)
-2. Specific instruction for each perspective
-3. Priority order (1 = highest)
-
-For each perspective, write an instruction that tells the subagent:
-- What aspects of the DDReport to focus on
-- What tools to prioritize (risk calc, funding check, liquidation zones, web search)
-- Whether to be skeptical or trusting of the DDReport's conclusions
-
-Example for conservative (bullish): "Validate DDReport's SL levels, use compute_atr to confirm stop distance is safe, check funding regime."
-Example for aggressive (bullish): "Confirm upside momentum with current order book, use liquidation zone tool to find entry."
-Example for aggressive (bearish): "Confirm downside pressure with current order book, validate short entry zones, check funding rate for short viability."
-
-You MUST respond in JSON format.
-Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
 
 /**
  * @function buildDDFactorContext
@@ -217,11 +183,13 @@ export function buildDDFactorContext(
 /**
  * @constant AGGREGATE_PROMPT
  * @description System prompt for the aggregator LLM (spec §7.4). Merges the
- *   three PerspectiveReports into one final trade plan with consensus metrics,
- *   profit feasibility, and an optional no-trade reason.
+ *   three PerspectiveReports into NARRATIVE consensus only — side, thesis,
+ *   reasoning, risk prose, and contradictions. The LLM never outputs money
+ *   numbers or confidence: those are computed deterministically downstream
+ *   (deterministicConfidence, computeTradeNumbers, computeProfitFeasibility).
  * @note Includes CoT reasoning steps and a negative constraint against omitting contradictions.
  */
-export const AGGREGATE_PROMPT = `You are a trade plan aggregator. Merge 3 perspective reports into one final trade plan.
+export const AGGREGATE_PROMPT = `You are a trade plan aggregator. Merge 3 perspective reports into one narrative consensus.
 
 Input:
 - 3 PerspectiveReports (conservative, balance, aggressive)
@@ -231,48 +199,69 @@ Input:
 Tasks:
 1. Determine consensus: do all 3 agree on side (long/short/no_trade)?
 2. Synthesize thesis: combine the strongest points from each perspective
-3. Set final parameters: entry, SL, TP, direction, position size (prefer median across perspectives). Leverage is NOT part of your output — it is computed deterministically by the risk engine from entry price, volatility, and confidence. Never output a leverage value.
-4. Check profit feasibility: does expected profit (based on take_profit - entry) meet the user's target profit?
-5. Flag contradictions: if perspectives disagree, note what they disagree on
+3. Flag contradictions: if perspectives disagree, note what they disagree on
 
 Work through each step below before writing the final JSON. Do NOT omit contradictions. If perspectives disagree on side, list the disagreement explicitly.
 
 The final side and confidence are NOT decided here — the deterministic consensus layer evaluates the perspective reports, weights them by historical reliability, and may override a no_trade majority when a strong minority signal qualifies. Never attempt to override the side yourself; your job is synthesis only. If 2+ perspectives concluded no_trade, reflect that in the reasoning and contradictions rather than forcing a trade.
 
+All trading numbers (entry, stop-loss, take-profit, position size, leverage) and the confidence score are computed deterministically by the risk engine and consensus layers — you must NEVER output them. Do not output entry_price, stop_loss, take_profit, position_size_usdc, leverage, confidence_score, confidence_breakdown, or profit_feasible.
+
 Return JSON with:
 - side: "long" | "short" | "no_trade"
 - thesis: string
 - reasoning: string
-- confidence_score: number (0-100)
-- confidence_breakdown: { factor_alignment: number (0-100), historical_match: number (0-100), signal_strength: number (0-100) }
-- risk_flags: string[]
-- entry_price: number
-- stop_loss: number
-- take_profit: number
-- position_size_usdc: number
+- risk_flags_text: string (free-text risk narrative, informational only)
 - consensus_alignment: number (0-100)
 - contradictions: string[]
-- profit_feasible: boolean
 - no_trade_reason: string (only when side is "no_trade")`
 
 /**
- * @constant REPLAN_PROMPT
- * @description System prompt for the orchestrator's RE-PLAN step. Generates
- *   targeted new instructions for low-consensus perspectives, informed by the
- *   previous perspective reports.
- * @note Instructs the model to name a specific tool, what threshold must be met, and provides a few-shot example.
+ * @interface FixedPerspectiveFacts
+ * @description Interpolation-ready fact strings extracted from a DDReport for
+ *   the fixed perspective instruction templates (SA5). Pre-rendered by the
+ *   fixed planner so the templates stay static and safe — they never touch the
+ *   raw report and cannot crash on missing fields.
  */
-export const REPLAN_PROMPT = `You are re-deploying perspective subagents that produced low-consensus results.
+export interface FixedPerspectiveFacts {
+  asset: string
+  category: string
+  scores: string
+  riskHighlights: string
+}
 
-Given the list of low-consensus perspectives and the previous reports from all perspectives, provide new targeted instructions for each low-consensus perspective. The new instruction should:
-- Point out what the previous analysis missed or over-weighted
-- Suggest specific tools to re-check (risk calc, funding regime, liquidation zones, web search)
-- Set a clear expectation for what a good analysis must confirm before returning
-- Specify which tool the perspective must call first and what threshold must be met before returning
+/**
+ * @function CONSERVATIVE_INSTRUCTION_TEMPLATE
+ * @description Static instruction template for the conservative perspective
+ *   (SA5). Risk posture: skeptical, capital-preservation — validates the
+ *   DDReport, prioritizes risk checks (ATR/SL safety, funding regime), and
+ *   rejects the trade unless risk/reward is clearly favorable.
+ * @param {FixedPerspectiveFacts} facts - Interpolated DDReport facts.
+ * @returns {string} Conservative perspective instruction.
+ */
+export const CONSERVATIVE_INSTRUCTION_TEMPLATE = (facts: FixedPerspectiveFacts): string =>
+  `Validate the DDReport for ${facts.asset} (${facts.category}) before committing. Factor scores: ${facts.scores}. Risk highlights: ${facts.riskHighlights}. Be skeptical of the DDReport's conclusions — prioritize risk validation: confirm stop-loss distance is safe with compute_atr, verify the funding regime is not extreme, and reject the trade unless risk/reward is clearly favorable. Prefer tighter stops and smaller position sizes.`
 
-Example instruction:
-"Previous report ignored high funding rates. Use funding_rate_check tool first. You must confirm funding rate is below 0.05% before entering long."
-"Previous report missed bearish onchain flow. Use onchain_flow tool first. You must confirm outflow trend before entering short."
+/**
+ * @function BALANCE_INSTRUCTION_TEMPLATE
+ * @description Static instruction template for the balance perspective (SA5).
+ *   Risk posture: measured middle ground — weighs the DDReport's conclusions
+ *   against current market data, checks funding and liquidation zones, and
+ *   sizes the position within normal parameters.
+ * @param {FixedPerspectiveFacts} facts - Interpolated DDReport facts.
+ * @returns {string} Balance perspective instruction.
+ */
+export const BALANCE_INSTRUCTION_TEMPLATE = (facts: FixedPerspectiveFacts): string =>
+  `Validate the DDReport for ${facts.asset} (${facts.category}). Factor scores: ${facts.scores}. Risk highlights: ${facts.riskHighlights}. Weigh the DDReport's conclusions against current market data — confirm direction with order book and technical tools, check funding and liquidation zones, and size the position within normal parameters. Take the trade only when the thesis holds with acceptable risk.`
 
-You MUST respond in JSON format.
-Return: { "subagents": [{ "perspective": "conservative"|"balance"|"aggressive", "instruction": "...", "priority": number }] }`
+/**
+ * @function AGGRESSIVE_INSTRUCTION_TEMPLATE
+ * @description Static instruction template for the aggressive perspective
+ *   (SA5). Risk posture: high risk appetite — trusts the DDReport's thesis,
+ *   prioritizes momentum/entry confirmation over risk aversion, and accepts
+ *   wider stops and larger positions within risk-engine limits.
+ * @param {FixedPerspectiveFacts} facts - Interpolated DDReport facts.
+ * @returns {string} Aggressive perspective instruction.
+ */
+export const AGGRESSIVE_INSTRUCTION_TEMPLATE = (facts: FixedPerspectiveFacts): string =>
+  `Trust the DDReport's thesis for ${facts.asset} (${facts.category}). Factor scores: ${facts.scores}. Risk highlights: ${facts.riskHighlights}. Prioritize upside/downside confirmation over risk aversion — confirm momentum with the current order book, use liquidation zone tools to find the best entry, and check the funding rate supports the direction. Accept higher risk: wider stops, larger position sizes within risk-engine limits, and act on strength rather than waiting for perfect confirmation.`

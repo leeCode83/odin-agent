@@ -25,6 +25,22 @@ export const getTrendingCoins: ToolDefinition<z.ZodObject<Record<string, never>>
   },
 }
 
+/**
+ * @constant CoinSentimentDataSchema
+ * @description Structured get_coin_sentiment output consumed by deterministic scoring:
+ *   upPercent (community up-vote share 0-100) drives the crowd-sentiment signal.
+ */
+export const CoinSentimentDataSchema = z.object({
+  coinId: z.string(),
+  votesUp: z.number().nullable(),
+  votesDown: z.number().nullable(),
+  upPercent: z.number().nullable(),
+  downPercent: z.number().nullable(),
+})
+
+/** @typedef {z.infer<typeof CoinSentimentDataSchema>} CoinSentimentData */
+export type CoinSentimentData = z.infer<typeof CoinSentimentDataSchema>
+
 export const getCoinSentiment: ToolDefinition<
   z.ZodObject<{ coinId: z.ZodString }>
 > = {
@@ -35,9 +51,17 @@ export const getCoinSentiment: ToolDefinition<
     const start = Date.now()
     try {
       const data = await fetchCoinData(params.coinId)
+      const community = (data?.community_data ?? {}) as Record<string, unknown>
+      const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
       return {
         success: true,
-        data,
+        data: {
+          coinId: params.coinId,
+          votesUp: num(community.votes_up),
+          votesDown: num(community.votes_down),
+          upPercent: num(community.sentiment_votes_up_percentage),
+          downPercent: num(community.sentiment_votes_down_percentage),
+        },
         metadata: { source: "coingecko", latencyMs: Date.now() - start },
       }
     } catch (err) {

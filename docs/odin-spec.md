@@ -122,15 +122,34 @@ Odin non-custodial, pakai konsep **Hyperliquid API Wallet (Agent Wallet)**:
 
 ## 6. Metodologi Planning & Decision (Hybrid)
 
-Bukan pure-LLM decision — kombinasi reasoning + kode deterministic:
+Bukan pure-LLM decision — dua lapis dengan **pemisahan tegas**: LLM hanya untuk reasoning naratif, **semua angka (money, confidence, risk flag, feasibility) dihitung kode deterministic**.
 
-1. **LLM reasoning (thinking mode)** — synthesize DD Report jadi trading thesis (arah, alasan, risk factor).
-2. **Structured confidence scoring** — confidence tiap factor (DD) & perspective (Planning) dihitung **deterministik dari execution signals** (formula di `lib/agent/shared/confidence.ts`: tool success, error jenis, empty data, cakupan tool, alasan berhenti), bukan verbalisasi LLM — confidence LLM diabaikan, `null` tetap `null` (faktor dianggap failed).
-3. **Self-consistency check** — reasoning dijalankan 2–3x (temperature rendah); hasil konsisten → confidence naik, hasil beda-beda → confidence turun otomatis (proxy uncertainty).
-4. **Deterministic risk engine** (kode biasa, bukan LLM) — hitung position size pakai fixed-fractional risk model (risk maks 1–2% equity per trade), tentukan SL/TP dari volatility (ATR-based).
-5. **Gate logic** (kode biasa) — bandingkan confidence & position size ke threshold user → auto-execute atau push approval ke dashboard.
+### 6.1 Lapisan LLM — narasi saja
 
-Prinsip: LLM buat "mikir" (thesis & confidence), kode deterministic buat "hitung risiko" (position size, SL/TP) — biar angka penting gak murni hasil LLM hallucination.
+LLM menghasilkan **hanya teks**: thesis, arah (side), alasan, risk narrative. Schema (zod) di prompt/tool **tidak punya field numerik** — kalau LLM memaksakan angka, zod otomatis strip.
+
+1. **ReAct subagents (DD pipeline)** — tiap faktor (technical, onchain, sentiment, fundamental) jalan sebagai subagent dengan reasoning loop ReAct: LLM pilih tool, baca hasil, summarize. Output LLM per faktor cuma **conclusion/narrative**, bukan angka — skor faktor dihitung deterministik (§6.2 poin 5).
+2. **Thesis & side** — synthesize DD Report jadi trading thesis (arah, alasan, risk narrative). Entry / SL / TP / position size **tidak pernah** berasal dari LLM.
+
+### 6.2 Lapisan deterministic — semua angka di sini
+
+1. **Compute trade numbers** (`lib/agent/planning/compute-trade-numbers.ts`) — orchestrator planning (`lib/agent/planning/agent.ts` → `enrichAggregation`) merakit semuanya dalam kode dari hasil tool call: **entry = mark price**, **SL/TP = hasil tool `compute_sltp`**, **position size = hasil tool `compute_position_size`**, **leverage = `computeLeverage` (ATR-based)**, **profit_feasible = `computeProfitFeasibility`**.
+2. **Deterministic confidence** (`lib/agent/shared/deterministic-confidence.ts`) — `confidence_score` (0–100) + breakdown {`factor_alignment`: skor DD factor vs side; `historical_match`: hasil `get_graph_patterns`; `signal_strength`: signal tervalidasi + agreement multiplier}. Pure function; autonomy gate membaca objek confidence deterministic ini, **bukan angka LLM**.
+3. **Structured risk flags** (`lib/agent/shared/risk-flags.ts`) — enum: `funding_overheated`, `oi_divergence`, `liquidation_zone_proximity`, `cascade_risk`, `low_liquidity`, `insufficient_data`. Tools mengemisi enum ini; rule NO_TRADE overheating consensus membaca **enum membership**, bukan substring match di prose LLM. Teks LLM hanya disimpan sebagai narasi `risk_flags_text`.
+4. **Deterministic risk engine** — position size fixed-fractional (risk maks 1–2% equity per trade), SL/TP dari volatility (ATR-based).
+5. **DD factor scoring** (`lib/agent/due-diligence/scoring.ts`) — `scoreTechnical` / `scoreSentiment` / `scoreOnchain` / `scoreFundamental` pure functions dari tool output (RSI band, MACD, BB, stoch, volume, funding regime, OI divergence, exchange netflow, whale txns, Fear & Greed, community votes, tokenomics, inflation, dev activity, ATH drawdown). Baseline 50, additive, clamp [0,100].
+6. **Gate logic** (kode biasa) — bandingkan confidence & position size ke threshold user → auto-execute atau push approval ke dashboard.
+7. **Circuit breaker** — putuskan pipeline saat kegagalan/state tidak sehat, supaya posisi tidak dieksekusi dalam kondisi data atau sistem abnormal.
+
+### 6.3 NO_TRADE keras
+
+Prinsip: **tanpa data deterministik → tanpa angka → tanpa trade.** Verifier (`lib/agent/planning/verifier.ts`) hard-enforce: trade tanpa `get_mark_price` / `compute_sltp` / `compute_position_size` sukses → paksa `no_trade`. `NO_TRADE` keras: input deterministik hilang → no trade, **tidak ada LLM fallback**.
+
+### 6.4 Perspective subagents (fixed)
+
+**Tidak ada step LLM PLAN/RE-PLAN** — `lib/agent/planning/fixed-planner.ts` selalu deploy **3 perspective tetap**: conservative / balance / aggressive, dengan template instruction statis yang diparameterisasi DD report (`lib/agent/planning/prompts.ts`). `llm.ts` plan()/rePlan() sudah dihapus. Self-consistency antar perspective tetap dipakai sebagai proxy uncertainty: perspective konsisten → confidence naik, hasil beda-beda → confidence turun otomatis.
+
+Prinsip inti: **LLM buat "mikir" (thesis, arah, narasi), kode deterministic buat "hitung" (entry/SL/TP/size, confidence, risk flags, feasibility)** — angka penting tidak pernah murni hasil LLM hallucination.
 
 ## 7. Format DD Report (Standardized)
 

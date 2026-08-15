@@ -2,6 +2,22 @@ import { z } from "zod"
 import { fetchGlobalMarket, fetchAssetMomentum } from "@/lib/data/sentiment/alternativeme"
 import type { ToolDefinition } from "../types"
 
+/**
+ * @constant AssetMomentumDataSchema
+ * @description Structured get_asset_momentum output consumed by deterministic scoring
+ *   (percent_change_24h drives the momentum signal).
+ */
+export const AssetMomentumDataSchema = z.object({
+  price_usd: z.number().nullable(),
+  percent_change_1h: z.number().nullable(),
+  percent_change_24h: z.number().nullable(),
+  percent_change_7d: z.number().nullable(),
+  volume_24h_usd: z.number().nullable(),
+})
+
+/** @typedef {z.infer<typeof AssetMomentumDataSchema>} AssetMomentumData */
+export type AssetMomentumData = z.infer<typeof AssetMomentumDataSchema>
+
 export const getGlobalMarket: ToolDefinition<z.ZodObject<Record<string, never>>> = {
   name: "get_global_market",
   description: "Fetches total crypto market cap and 24h volume from Alternative.me for macro sentiment assessment.",
