@@ -5,12 +5,8 @@ import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
 import { DashboardProvider } from "@/context/dashboard-context"
 import { NavBar } from "@/components/dashboard/nav-bar"
-import { WalletInit } from "@/components/dashboard/wallet-init"
-import { BalanceCard } from "@/components/dashboard/balance-card"
 import { DDSection } from "@/components/dashboard/dd-section"
 import { PlanSection } from "@/components/dashboard/plan-section"
-import { ExecSection } from "@/components/dashboard/exec-section"
-import { StatusSection } from "@/components/dashboard/status-section"
 
 function DashboardInner() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -42,36 +38,20 @@ function DashboardInner() {
             Odin Agent
           </h1>
           <p className="text-zinc-500 text-sm max-w-md mx-auto">
-            AI-powered trading intelligence on Hyperliquid. Analyze. Plan. Execute.
+            AI-powered trading intelligence on Hyperliquid. Analyze. Plan.
           </p>
         </div>
 
         {/* Bento Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Row 1: Wallet + Balance (spans 2 cols on lg) */}
-          <div className="lg:col-span-1">
-            <WalletInit />
-          </div>
-          <div className="lg:col-span-2">
-            <BalanceCard />
-          </div>
-
-          {/* Row 2: DD Section (full width) */}
+          {/* Row 1: DD Section (full width) */}
           <div className="lg:col-span-3">
             <DDSection />
           </div>
 
-          {/* Row 3: Plan (2 cols) + Exec (1 col) */}
-          <div className="lg:col-span-2">
-            <PlanSection />
-          </div>
-          <div className="lg:col-span-1">
-            <ExecSection />
-          </div>
-
-          {/* Row 4: Status (full width) */}
+          {/* Row 2: Plan (full width) */}
           <div className="lg:col-span-3">
-            <StatusSection />
+            <PlanSection />
           </div>
         </div>
       </main>

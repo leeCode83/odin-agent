@@ -8,17 +8,16 @@
  * @module dashboard
  */
 
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
-import { ClipboardList, Loader2, Check, X, TrendingUp, TrendingDown, Minus } from "lucide-react"
+import { ClipboardList, Loader2, Play, X, TrendingUp, TrendingDown, Minus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import { usePlanning } from "@/hooks/use-planning"
-import { useTradeDecision } from "@/hooks/use-trade-decision"
 import { useDashboard } from "@/context/dashboard-context"
 
 const MAX_TARGET_PROFIT_PERCENT = 1000
@@ -34,7 +33,7 @@ export function PlanSection() {
   const cardRef = useRef<HTMLDivElement>(null)
   const { asset, ddReport, tradePlan, setTradePlan, walletAddress } = useDashboard()
   const { loading: planLoading, generatePlan, targetProfitPercent, setTargetProfitPercent } = usePlanning()
-  const { approveTrade, rejectTrade, approving, rejecting } = useTradeDecision()
+  const [startingPaperTrade, setStartingPaperTrade] = useState(false)
 
   useGSAP(() => {
     if (!cardRef.current) return
@@ -57,14 +56,32 @@ export function PlanSection() {
     generatePlan(asset, "dashboard-user", walletAddress)
   }
 
-  const handleApprove = async () => {
+  const handleStartPaperTrade = async () => {
     if (!tradePlan || !walletAddress) return
-    await approveTrade(tradePlan, walletAddress, "dashboard-user", ddReport ?? undefined)
+    setStartingPaperTrade(true)
+    try {
+      const res = await fetch("/api/agent/paper-trading", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset: tradePlan.asset,
+          userId: "dashboard-user",
+          walletAddress,
+          duration: "24h",
+          targetProfitPercent,
+          planReport: tradePlan,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      console.log("Paper trade started")
+    } catch (err) {
+      console.error("Paper trade start error:", err)
+    } finally {
+      setStartingPaperTrade(false)
+    }
   }
 
-  const handleReject = async () => {
-    if (!tradePlan) return
-    await rejectTrade(tradePlan, "dashboard-user")
+  const handleClear = () => {
     setTradePlan(null)
   }
 
@@ -187,22 +204,20 @@ export function PlanSection() {
 
                   <div className="flex gap-2">
                     <Button
-                      onClick={handleApprove}
-                      // reason: a NO_TRADE plan must never reach execution
-                      disabled={approving || isNoTrade}
+                      onClick={handleStartPaperTrade}
+                      disabled={startingPaperTrade || isNoTrade}
                       className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer"
                     >
-                      {approving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Check className="w-4 h-4 mr-2" />}
-                      Approve & Execute
+                      {startingPaperTrade ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                      Start Paper Trade
                     </Button>
                     <Button
-                      onClick={handleReject}
-                      disabled={rejecting}
+                      onClick={handleClear}
                       variant="destructive"
                       className="flex-1 cursor-pointer"
                     >
                       <X className="w-4 h-4 mr-2" />
-                      Reject
+                      Clear
                     </Button>
                   </div>
                 </div>
